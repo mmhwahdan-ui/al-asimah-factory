@@ -46,19 +46,31 @@ function fmtNum(n, decimals = 2) {
 }
 
 function isWarehouseKeeperOnly(user = currentUser) {
-  return Boolean(user && user.roleKey === 'warehouse_keeper');
+  if (!user) return false;
+  return Boolean(
+    user.roleKey === 'warehouse_keeper' ||
+    user.id === 'u-6' ||
+    (user.name && user.name.includes('مخزن')) ||
+    (user.roleTitle && user.roleTitle.includes('مخزن'))
+  );
 }
 
 function canSeeFinancialPrices(user = currentUser) {
   return !isWarehouseKeeperOnly(user);
 }
 
+// المرتجع يدخل المخزن مرة أخرى بعد موافقة المدير التنفيذي أو مدير المشروعات أو المحاسب فقط
+function canApproveSalesReturn(user = currentUser) {
+  if (!user) return false;
+  return ['ceo', 'projects_manager', 'accountant', 'accounts_manager', 'accounting_manager'].includes(user.roleKey);
+}
+
 function sanitizeTextForWarehouseKeeper(str) {
   if (!str || canSeeFinancialPrices()) return str || '';
   return String(str)
     .replace(/\s*[×xX]\s*[0-9.,]+\s*ج(?:\.م)?\s*=\s*[0-9.,]+\s*(?:ج\.م|ج)?/g, '')
-    .replace(/\s*(?:بصافي|بقيمة|بسعر|إجمالي|خصم)\s*[0-9.,]+\s*(?:ج\.م|ج)/g, '')
-    .replace(/[0-9.,]+\s*ج\.م/g, '');
+    .replace(/\s*(?:بصافي|بقيمة|بسعر|إجمالي|خصم|إلى)\s*[0-9.,]+\s*(?:ج\.م|جنيه|ج)/g, '')
+    .replace(/[0-9.,]+\s*(?:ج\.م|جنيه)/g, '');
 }
 
 function fmtMoney(n) {
@@ -227,6 +239,10 @@ function inferActionScope(actionText = '') {
     permKeys.push('approvals', 'warehouses', 'production');
     targetTab = 'approvals';
   }
+  if (txt.includes('مرتجع')) {
+    permKeys.push('warehouses', 'approvals', 'salesAccounting');
+    targetTab = 'warehouses';
+  }
   if (txt.includes('صلاحية') || txt.includes('الباسورد')) {
     permKeys.push('settingsUsers');
     targetTab = 'settings';
@@ -245,6 +261,12 @@ function canUserSeeNotification(user, logItem) {
   if (isFullAdmin(user)) return true; // المدير التنفيذي ومدير المشروعات يرون كافة الإشعارات والتعديلات
   if (Array.isArray(logItem.hiddenFromRoles) && logItem.hiddenFromRoles.includes(user.roleKey)) {
     return false;
+  }
+  if (isWarehouseKeeperOnly(user)) {
+    const act = String(logItem.action || '');
+    if (act.includes('سعر القطعة') || act.includes('معاملة مالية') || act.includes('تحصيل دفعة') || act.includes('سند مالي') || act.includes('مديونية')) {
+      return false;
+    }
   }
   if (logItem.targetUserId && logItem.targetUserId !== 'all') {
     return logItem.targetUserId === user.id || logItem.actorId === user.id;
@@ -327,7 +349,7 @@ function renderLiveBannerDOM() {
   `;
 }
 
-function checkIncomingNotifications(prevLogs = [], newLogs = [], prevChats = [], newChats = [], prevOrders = [], newOrders = []) {
+function checkIncomingNotifications(prevLogs = [], newLogs = [], prevChats = [], newChats = [], prevOrders = [], newOrders = [], prevReturns = [], newReturns = []) {
   if (!currentUser) return;
   const seen = getSeenNotifIds();
 
@@ -389,6 +411,42 @@ function checkIncomingNotifications(prevLogs = [], newLogs = [], prevChats = [],
           targetTab: 'approvals'
         });
         markNotifIdsSeen([stageAlertKey]);
+        return;
+      }
+    }
+  }
+
+  // 2) Direct live check for Sales Returns (مرتجع مبيعات يدخل المخزن بعد موافقة التنفيذي أو المشروعات أو المحاسب فقط)
+  const prevReturnStatusMap = new Map((prevReturns || []).map(r => [r.id, r.status]));
+  for (const ret of (newReturns || [])) {
+    if (!ret || !ret.id) continue;
+    const curStatus = ret.status || 'pending_approval';
+    const oldStatus = prevReturnStatusMap.get(ret.id);
+    const retAlertKey = `ret_status_${ret.id}_${curStatus}`;
+
+    if (curStatus !== oldStatus && !seen.has(retAlertKey)) {
+      if (curStatus === 'pending_approval' && canApproveSalesReturn(currentUser)) {
+        playLongAlertSound(true);
+        showLiveBannerAlert({
+          id: retAlertKey,
+          userName: ret.requestedBy || 'أمين المخزن',
+          roleTitle: 'طلب موافقة على مرتجع مبيعات للمخزن',
+          action: `🔄 طلب إدخال مرتجع مبيعات (${ret.returnNumber}) من العميل (${ret.clientName}) بكمية (${fmtNum(ret.sheetsCount || 0, 0)} قطعة — ${ret.thicknessMm}مم ${ret.directionLabel} × ${ret.gradeName}) بانتظار موافقتك ليدخل رصيد المخزن!`,
+          targetTab: 'warehouses'
+        });
+        markNotifIdsSeen([retAlertKey]);
+        return;
+      }
+      if (curStatus === 'approved' && isWarehouseOrAdmin) {
+        playLongAlertSound(true);
+        showLiveBannerAlert({
+          id: retAlertKey,
+          userName: ret.approvedBy || 'الإدارة/الحسابات',
+          roleTitle: 'تمت الموافقة على دخول المرتجع للمخزن',
+          action: `✅ تمت موافقة (${ret.approvedBy || 'الإدارة'}) على مرتجع المبيعات (${ret.returnNumber}) للعميل (${ret.clientName}) — دخلت الكمية (${fmtNum(ret.sheetsCount || 0, 0)} قطعة) إلى رصيد المخزن الآن!`,
+          targetTab: 'warehouses'
+        });
+        markNotifIdsSeen([retAlertKey]);
         return;
       }
     }
@@ -502,7 +560,7 @@ function normalizeState(s) {
 
   const arrayKeys = [
     'users', 'pallets', 'rawMaterials', 'scrapItems', 'spareParts',
-    'productionOrders', 'approvalRequests', 'warehouseMovements',
+    'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
     'partners', 'palletMovements', 'financialTransactions',
     'auditLogs', 'chatMessages', 'deletedIds'
   ];
@@ -514,7 +572,7 @@ function normalizeState(s) {
   if (s.users.length === 0) s.users = def.users;
 
   // Keep newest records first (index 0) so new orders, movements, and notifications always appear at the top
-  const descTimeKeys = ['productionOrders', 'warehouseMovements', 'financialTransactions', 'palletMovements', 'auditLogs'];
+  const descTimeKeys = ['productionOrders', 'warehouseMovements', 'salesReturns', 'financialTransactions', 'palletMovements', 'auditLogs'];
   for (const tk of descTimeKeys) {
     s[tk].sort((a, b) => {
       const tA = new Date(a?.updatedAt || a?.timestamp || a?.createdAt || a?.date || 0).getTime() || 0;
@@ -582,7 +640,7 @@ function smartMergeClientState(current, incoming) {
   const delSet = new Set(deletedIds);
   const listKeys = [
     'users', 'pallets', 'rawMaterials', 'scrapItems', 'spareParts',
-    'productionOrders', 'approvalRequests', 'warehouseMovements',
+    'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
     'partners', 'palletMovements', 'financialTransactions', 'auditLogs', 'chatMessages'
   ];
   const merged = {
@@ -646,7 +704,7 @@ function getDefaultInitialState() {
       { id: 'u-8', code: 'USR-08', name: 'مستخدم احتياطي', roleKey: 'reserve_user', roleTitle: 'حساب احتياطي / طوارئ وجرد', pin: '8888', avatarColor: '#64748b', active: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: true, production: true, approvals: true, approveFinancial: false, approveExecutive: false, approveWarehouse: false, salesAccounting: false, clientsSuppliers: false, reports: true, settingsUsers: false } }
     ],
     pallets: [], rawMaterials: [], scrapItems: [], spareParts: [], productionOrders: [],
-    approvalRequests: [], warehouseMovements: [], partners: [], palletMovements: [], financialTransactions: [],
+    approvalRequests: [], warehouseMovements: [], salesReturns: [], partners: [], palletMovements: [], financialTransactions: [],
     treasuryBalances: { cashVault: 0, bankAccount: 0, checksUnderCollection: 0 },
     auditLogs: [], chatMessages: [], deletedIds: []
   };
@@ -742,7 +800,8 @@ async function loadData() {
       markNotifIdsSeen([
         ...(state.auditLogs || []).map(l => l.id),
         ...(state.chatMessages || []).map(c => c.id),
-        ...(state.productionOrders || []).map(o => `ord_stage_${o.id}_${o.stage || o.status}`)
+        ...(state.productionOrders || []).map(o => `ord_stage_${o.id}_${o.stage || o.status}`),
+        ...(state.salesReturns || []).map(r => `ret_status_${r.id}_${r.status || 'pending_approval'}`)
       ]);
     }
   }
@@ -761,11 +820,12 @@ setInterval(async () => {
         const prevLogs = state?.auditLogs || [];
         const prevChats = state?.chatMessages || [];
         const prevOrders = state?.productionOrders || [];
+        const prevReturns = state?.salesReturns || [];
         state = mergedFresh;
         localStorage.setItem(STORAGE_KEY, newJson);
         if (currentUser) {
           currentUser = state.users.find(u => u.id === currentUser.id) || currentUser;
-          checkIncomingNotifications(prevLogs, state.auditLogs || [], prevChats, state.chatMessages || [], prevOrders, state.productionOrders || []);
+          checkIncomingNotifications(prevLogs, state.auditLogs || [], prevChats, state.chatMessages || [], prevOrders, state.productionOrders || [], prevReturns, state.salesReturns || []);
         }
         const modalOpen = document.getElementById('modal-root')?.innerHTML.trim() !== '';
         const activeTag = document.activeElement?.tagName;
@@ -1039,12 +1099,15 @@ function render() {
     return false;
   }).length;
 
+  const pendingReturnsCount = (state.salesReturns || []).filter(r => (r.status || 'pending_approval') === 'pending_approval').length;
+
   const pendingApprovalsCount =
     (state.productionOrders || []).filter(o => {
       const st = o.stage || o.status;
       return st === 'pending_accountant_release' || st === 'ready_for_car_dispatch';
     }).length +
-    (state.approvalRequests || []).filter(r => r.stage === 'pending_financial' || r.stage === 'pending_warehouse').length;
+    (state.approvalRequests || []).filter(r => r.stage === 'pending_financial' || r.stage === 'pending_warehouse').length +
+    (canApproveSalesReturn(currentUser) ? pendingReturnsCount : 0);
   const openTasksForMeCount = (state.chatMessages || []).filter(c =>
     c.msgType === 'task' && c.taskStatus !== 'completed' &&
     canUserSeeChatMessage(currentUser, c) &&
@@ -1080,12 +1143,13 @@ function render() {
 
         <nav class="sidebar-nav">
           <button class="nav-item ${activeTab === 'dashboard' ? 'active' : ''}" onclick="setTab('dashboard')">
-            <span>📊 لوحة القيادة والمؤشرات</span>
+            <span>${canSeeFinancialPrices() ? '📊 لوحة القيادة والمؤشرات' : '📊 لوحة متابعة كميات المخازن'}</span>
           </button>
 
           ${hasPerm('warehouses') ? `
           <button class="nav-item ${activeTab === 'warehouses' ? 'active' : ''}" onclick="setTab('warehouses')">
-            <span>🏭 المخازن الأربعة والرصيد</span>
+            <span>${canSeeFinancialPrices() ? '🏭 المخازن الأربعة والرصيد' : '🏭 أرصدة كميات المخازن'}</span>
+            ${pendingReturnsCount > 0 ? `<span class="nav-badge" style="background:#7c3aed;">${pendingReturnsCount}</span>` : ''}
           </button>
           ` : ''}
 
@@ -1098,12 +1162,12 @@ function render() {
 
           ${hasPerm('approvals') ? `
           <button class="nav-item ${activeTab === 'approvals' ? 'active' : ''}" onclick="setTab('approvals')">
-            <span>✅ اعتماد أذون الصرف والسيارات</span>
+            <span>${canSeeFinancialPrices() ? '✅ اعتماد أذون الصرف والسيارات' : '✅ أذون تحميل وصرف السيارات'}</span>
             ${pendingApprovalsCount > 0 ? `<span class="nav-badge">${pendingApprovalsCount}</span>` : ''}
           </button>
           ` : ''}
 
-          ${hasPerm('salesAccounting') || hasPerm('clientsSuppliers') ? `
+          ${canSeeFinancialPrices() && (hasPerm('salesAccounting') || hasPerm('clientsSuppliers')) ? `
           <button class="nav-item ${activeTab === 'accounting' ? 'active' : ''}" onclick="setTab('accounting')">
             <span>💰 حسابات ومبيعات العملاء</span>
           </button>
@@ -1116,13 +1180,15 @@ function render() {
 
           ${hasPerm('reports') ? `
           <button class="nav-item ${activeTab === 'reports' ? 'active' : ''}" onclick="setTab('reports')">
-            <span>📈 التقارير الشاملة والربحية</span>
+            <span>${canSeeFinancialPrices() ? '📈 التقارير الشاملة والربحية' : '📈 تقارير جرد كميات المخازن'}</span>
           </button>
           ` : ''}
 
+          ${canSeeFinancialPrices() ? `
           <button class="nav-item ${activeTab === 'settings' ? 'active' : ''}" onclick="setTab('settings')">
             <span>🔧 الأصناف والـ 8 مستخدمين</span>
           </button>
+          ` : ''}
 
           <button class="nav-item" onclick="openPasswordsManagerModal()">
             <span>🔑 تغيير الباسوردات</span>
@@ -1229,6 +1295,9 @@ function renderLoginScreen() {
 }
 
 function renderActiveTabContent() {
+  if (!canSeeFinancialPrices() && (activeTab === 'accounting' || activeTab === 'settings')) {
+    activeTab = 'warehouses';
+  }
   switch (activeTab) {
     case 'dashboard': return renderDashboard();
     case 'warehouses': return renderWarehouses();
@@ -1678,7 +1747,8 @@ function renderDashboard() {
   });
 
   const pendingReqs = (state.approvalRequests || []).filter(r => r.stage === 'pending_financial' || r.stage === 'pending_warehouse');
-  const totalActionableOrders = activeVisibleOrders.length + pendingReqs.length;
+  const pendingSalesReturns = (state.salesReturns || []).filter(r => r.status === 'pending_approval');
+  const totalActionableOrders = activeVisibleOrders.length + pendingReqs.length + pendingSalesReturns.length;
 
   // Quick calculator computation
   const qcMetrics = calculateVeneerMetrics(
@@ -1691,6 +1761,45 @@ function renderDashboard() {
   const qcTotalValue = qcMetrics.totalVolumeM3 * Number(quickCalc.pricePerM3 || 0);
 
   return `
+    ${pendingSalesReturns.length > 0 && canApproveSalesReturn(currentUser) ? `
+      <div class="card" style="background:rgba(124,58,237,0.12);border:2px solid #7c3aed;padding:16px 20px;margin-bottom:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <div style="font-weight:900;font-size:1.06rem;color:#6d28d9;">
+              🔄 بانتظار موافقة (المدير التنفيذي أو مدير المشروعات أو المحاسب فقط): يوجد (${pendingSalesReturns.length}) طلب مرتجع مبيعات ليدخل رصيد المخزن مرة أخرى!
+            </div>
+            <div style="font-size:0.88rem;margin-top:6px;display:flex;flex-direction:column;gap:4px;">
+              ${pendingSalesReturns.map(sr => `
+                <div>
+                  • <strong>${sr.returnNumber}</strong> — العميل: <strong>${sr.clientName || 'عميل'}</strong> — الكمية: <strong>${fmtNum(sr.sheetsCount || 0, 0)} قطعة</strong> (${sr.thkMm} مم ${sr.directionLabel || ''} × ${sr.gradeName || ''}) — مسجل بواسطة: ${sr.requestedBy || ''}
+                  <button class="btn btn-sm btn-success" style="margin-right:8px;padding:3px 10px;" onclick="approveSalesReturn('${sr.id}')">✅ موافقة وإدخال الكمية للمخزن الآن</button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          <button class="btn btn-primary" style="background:#7c3aed;" onclick="activeWarehouseSubTab='finished'; setTab('warehouses');">
+            🔄 عرض سجل مرتجعات المبيعات
+          </button>
+        </div>
+      </div>
+    ` : ''}
+
+    ${pendingSalesReturns.length > 0 && !canApproveSalesReturn(currentUser) && isWarehouseOrAdmin ? `
+      <div class="card" style="background:rgba(245,158,11,0.12);border:2px solid #f59e0b;padding:14px 18px;margin-bottom:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <div style="font-weight:900;font-size:1rem;color:#b45309;">
+              ⏳ يوجد (${pendingSalesReturns.length}) مرتجع مبيعات مسجل وبانتظار موافقة (المدير التنفيذي أو مدير المشروعات أو المحاسب فقط) ليدخل رصيد المخزن مرة أخرى.
+            </div>
+            <div style="font-size:0.85rem;margin-top:4px;">
+              ${pendingSalesReturns.map(sr => `<strong>${sr.returnNumber}</strong> (${fmtNum(sr.sheetsCount || 0, 0)} قطعة — ${sr.thkMm} مم ${sr.directionLabel || ''} × ${sr.gradeName || ''})`).join(' — ')}
+            </div>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="activeWarehouseSubTab='finished'; setTab('warehouses');">عرض حالة المرتجع</button>
+        </div>
+      </div>
+    ` : ''}
+
     ${isWarehouseOrAdmin && prepOrdersForWarehouse.length > 0 ? `
       <div class="card" style="background:rgba(217,119,6,0.12);border:2px solid #d97706;padding:16px 20px;margin-bottom:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
@@ -1760,13 +1869,13 @@ function renderDashboard() {
     <!-- Top Stats -->
     <div class="stats-grid">
       <div class="stat-card">
-        <span class="stat-title">رصيد مخزن القشرة التامة (250×125)</span>
-        <div class="stat-value">${fmtNum(totalVolumeM3, 3)} م³</div>
-        <div class="stat-sub"><strong>${totalPallets}</strong> بالتة | <strong>${fmtNum(totalSheets, 0)}</strong> فرخ | <strong>${fmtNum(totalAreaM2, 1)}</strong> م²</div>
+        <span class="stat-title">رصيد كميات مخزن القشرة التامة (250×125)</span>
+        <div class="stat-value">${fmtNum(totalSheets, 0)} فرخ</div>
+        <div class="stat-sub"><strong>${fmtNum(totalVolumeM3, 3)}</strong> م³ | <strong>${totalPallets}</strong> بالتة | <strong>${fmtNum(totalAreaM2, 1)}</strong> م²</div>
       </div>
 
       <div class="stat-card accent">
-        <span class="stat-title">${canSeeFinancialPrices() ? 'قيمة مخزون القشرة الجاهزة' : 'إجمالي المساحة المربعة للقشرة بالمخزن'}</span>
+        <span class="stat-title">${canSeeFinancialPrices() ? 'قيمة مخزون القشرة الجاهزة' : 'إجمالي المساحة والحجم للقشرة بالمخزن'}</span>
         <div class="stat-value">${canSeeFinancialPrices() ? fmtMoney(totalVeneerValue) : fmtNum(totalAreaM2, 2) + ' م²'}</div>
         <div class="stat-sub">مصنفة حسب التخانة (قص / سدا) ودرجة الجودة (A, B, C)</div>
       </div>
@@ -1778,27 +1887,31 @@ function renderDashboard() {
       </div>
 
       <div class="stat-card ${totalActionableOrders > 0 ? 'danger' : 'success'}" style="cursor:pointer;" onclick="setTab('production')">
-        <span class="stat-title">أوامر تجهيز الطلبيات والاعتمادات الجارية</span>
+        <span class="stat-title">أوامر التجهيز والمرتجعات الجارية</span>
         <div class="stat-value">${totalActionableOrders} طلب جاري</div>
-        <div class="stat-sub">اضغط لفتح أوامر التجهيز | نواقص الخامات: <strong>${totalAlerts}</strong></div>
+        <div class="stat-sub">مرتجعات بانتظار الموافقة: <strong>${pendingSalesReturns.length}</strong> | نواقص الخامات: <strong>${totalAlerts}</strong></div>
       </div>
     </div>
 
     <!-- Quick Action Buttons -->
     <div class="card" style="padding:16px 20px;">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-        <div style="font-weight:800;font-size:0.98rem;">⚡ إجراءات سريعة حسب صلاحياتك (${currentUser.name}):</div>
+        <div style="font-weight:800;font-size:0.98rem;">⚡ حركات المخازن والإجراءات السريعة (${currentUser.name}):</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;">
           ${hasPerm('warehouseIssueReceive') ? `
-            <button class="btn btn-primary" onclick="openAddPalletModal()">➕ إضافة بالتة قشرة جديدة للمخزن</button>
+            <button class="btn btn-primary" onclick="openWarehouseOpShortcut('in')">📥 إضافة كميات إنتاج للمخزن</button>
+            <button class="btn" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openWarehouseOpShortcut('sales_return')">🔄 إضافة مرتجع مبيعات (يدخل المخزن بعد الموافقة)</button>
+            <button class="btn btn-success" onclick="openWarehouseOpShortcut('out')">📤 خروج الكميات حسب المبيعات</button>
+            <button class="btn btn-accent" onclick="openWarehouseOpShortcut('rework')">♻️ خروج الكميات لإعادة التشغيل</button>
+            <button class="btn btn-outline" onclick="openAddPalletModal()">➕ إضافة بالتة بالباركود</button>
           ` : ''}
-          ${hasPerm('production') ? `
+          ${hasPerm('production') && !isWarehouseKeeperOnly(currentUser) ? `
             <button class="btn btn-accent" onclick="openNewClientOrderPrepModal()">📋 أمر تجهيز طلبية جديدة للعميل</button>
           ` : ''}
           ${hasPerm('approvals') ? `
-            <button class="btn btn-success" onclick="setTab('approvals')">✅ اعتماد أذون الصرف وتحميل السيارات</button>
+            <button class="btn btn-outline" onclick="setTab('approvals')">✅ أذون الصرف وتحميل السيارات</button>
           ` : ''}
-          <button class="btn btn-outline" onclick="setTab('warehouses')">🔍 استعراض المخازن الأربعة</button>
+          <button class="btn btn-outline" onclick="setTab('warehouses')">🔍 أرصدة كميات المخازن الأربعة</button>
         </div>
       </div>
     </div>
@@ -2049,17 +2162,39 @@ function renderFinishedVeneerWarehouse() {
   }
 
   return `
+    <!-- Quick Warehouse Operations Bar (إضافة كميات إنتاج | إضافة مرتجع مبيعات | خروج حسب المبيعات | خروج لإعادة التشغيل) -->
+    <div class="card" style="background:linear-gradient(135deg, rgba(15,118,110,0.08), rgba(124,58,237,0.08));border:2px solid var(--primary);padding:14px 18px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+        <div>
+          <div style="font-weight:900;font-size:1.02rem;color:var(--primary);">
+            ⚙️ حركات كميات المخزن المعتمدة (إنتاج / مرتجع مبيعات / خروج مبيعات / إعادة تشغيل):
+          </div>
+          <small style="color:var(--text-muted);">
+            ⚠️ <strong>ملاحظة هامة:</strong> مرتجع المبيعات لا يدخل رصيد المخزن مرة أخرى إلا بعد موافقة <strong>(المدير التنفيذي أو مدير المشروعات أو المحاسب فقط)</strong>.
+          </small>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="openWarehouseOpShortcut('in')">📥 إضافة كميات إنتاج</button>
+          <button class="btn" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openWarehouseOpShortcut('sales_return')">🔄 إضافة مرتجع مبيعات</button>
+          <button class="btn btn-success" onclick="openWarehouseOpShortcut('out')">📤 خروج الكميات حسب المبيعات</button>
+          <button class="btn btn-accent" onclick="openWarehouseOpShortcut('rework')">♻️ خروج الكميات لإعادة التشغيل</button>
+        </div>
+      </div>
+    </div>
+
+    ${renderSalesReturnsSection()}
+
     <div class="card">
       <div class="card-header">
         <div>
           <div class="card-title">🪵 جدول مصفوفة مخزن القشرة الخشبية (التخانة [قص / سدا] × الجودة) — مقاس 250×125 سم</div>
           <small style="color:var(--text-muted);">
-            العمود الأول يميناً: <strong>التخانة واتجاهها (قص / سدا)</strong> | الصف الأول أعلى: <strong>درجة الجودة</strong> | اضغط على أي خلية لتسجيل (دخول / خروج مبيعات / إعادة تشغيل / تعديل الرصيد بأي تاريخ)
+            العمود الأول يميناً: <strong>التخانة واتجاهها (قص / سدا)</strong> | الصف الأول أعلى: <strong>درجة الجودة</strong> | اضغط على أي خلية لتسجيل (📥 إضافة كميات إنتاج / 🔄 مرتجع مبيعات / 📤 خروج حسب المبيعات / ♻️ خروج لإعادة التشغيل)
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-sm ${veneerViewMode === 'matrix' ? 'btn-primary' : 'btn-outline'}" onclick="veneerViewMode='matrix'; render();">
-            ${canSeeFinancialPrices() ? '📊 عرض جدول المخازن + جدول الأسعار السفلي' : '📊 عرض جدول أرصدة المخازن (بالكميات)'}
+            ${canSeeFinancialPrices() ? '📊 عرض جدول المخازن + جدول الأسعار السفلي' : '📊 عرض جدول أرصدة كميات المخازن'}
           </button>
           <button class="btn btn-sm ${veneerViewMode === 'pallets' ? 'btn-primary' : 'btn-outline'}" onclick="veneerViewMode='pallets'; render();">
             🏷️ سجل البالتات المفصل والباركود (${inStockPallets.length})
@@ -2087,8 +2222,8 @@ function renderFinishedVeneerWarehouse() {
       ${veneerViewMode === 'matrix' ? `
         <!-- TABLE 1: 2D WAREHOUSE STOCK MATRIX (THICKNESS [QAS/SADA] x GRADE) -->
         <div style="margin-bottom:8px;font-weight:800;font-size:0.98rem;color:var(--primary);display:flex;align-items:center;justify-content:space-between;">
-          <span>1️⃣ الجدول الأول: أرصدة المخازن بالقطعة (الفرخ) والمتر المكعب (م³)</span>
-          <small style="color:var(--text-muted);">اضغط على أي خلية لتسجيل دخول أو خروج للمبيعات أو إعادة تشغيل في أي تاريخ</small>
+          <span>1️⃣ جدول أرصدة كميات المخازن بالقطعة (الفرخ) والمتر المكعب (م³)</span>
+          <small style="color:var(--text-muted);">اضغط على أي خلية لتسجيل إضافة كميات إنتاج أو مرتجع مبيعات أو خروج مبيعات أو إعادة تشغيل</small>
         </div>
         <div class="matrix-wrapper" style="margin-bottom:28px;">
           <table class="matrix-table">
@@ -2178,10 +2313,11 @@ function renderFinishedVeneerWarehouse() {
                         <div style="font-size:0.7rem;color:var(--text-muted);">اضغط للإضافة</div>
                       `}
                       <div class="cell-action-hint" onclick="event.stopPropagation();">
-                        <button class="cell-mini-btn" title="دخول / إضافة رصيد" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'in')">+ دخول</button>
+                        <button class="cell-mini-btn" title="إضافة كميات إنتاج" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'in')">📥 + إنتاج</button>
+                        <button class="cell-mini-btn" style="background:rgba(124,58,237,0.14);color:#6d28d9;border-color:#8b5cf6;" title="إضافة مرتجع مبيعات (يدخل المخزن بعد موافقة التنفيذي أو المشروعات أو المحاسب)" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'sales_return')">🔄 مرتجع</button>
                         ${hasStock ? `
-                          <button class="cell-mini-btn" style="background:rgba(16,185,129,0.15);color:#059669;border-color:#10b981;" title="خروج للمبيعات (يسمع فوراً في الأرصدة)" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'out')">📤 بيع/خروج</button>
-                          <button class="cell-mini-btn" title="إعادة تشغيل / فرز" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'rework')">♻️ تشغيل</button>
+                          <button class="cell-mini-btn" style="background:rgba(16,185,129,0.15);color:#059669;border-color:#10b981;" title="خروج الكميات حسب المبيعات" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'out')">📤 خروج مبيعات</button>
+                          <button class="cell-mini-btn" title="خروج الكميات لإعادة التشغيل" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'rework')">♻️ إعادة تشغيل</button>
                         ` : ''}
                       </div>
                     </td>
@@ -2434,6 +2570,126 @@ function renderFinishedVeneerWarehouse() {
   `;
 }
 
+function renderSalesReturnsSection() {
+  const returnsList = state.salesReturns || [];
+  const pendingCount = returnsList.filter(r => r.status === 'pending_approval').length;
+  const canApprove = canApproveSalesReturn(currentUser);
+  const showPrices = canSeeFinancialPrices();
+
+  return `
+    <div class="card" style="border:2px solid ${pendingCount > 0 ? '#7c3aed' : 'var(--border)'};background:${pendingCount > 0 ? 'rgba(124,58,237,0.04)' : 'var(--bg-surface)'};margin-bottom:18px;">
+      <div class="card-header">
+        <div>
+          <div class="card-title" style="color:#6d28d9;">
+            🔄 سجل مرتجع المبيعات واعتماد دخوله للمخزن مرة أخرى (${returnsList.length} سجل ${pendingCount > 0 ? `— ⏳ ${pendingCount} بانتظار الموافقة` : ''})
+          </div>
+          <small style="color:var(--text-muted);">
+            🔒 <strong>قاعدة النظام الإلزامية:</strong> عند تسجيل مرتجع مبيعات، <strong>لا تضاف الكمية لرصيد المخزن فوراً</strong>، بل تدخل المخزن مرة أخرى فقط بعد موافقة <strong>(المدير التنفيذي أو مدير المشروعات أو المحاسب فقط)</strong>.
+          </small>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openWarehouseOpShortcut('sales_return')">
+            ➕ تسجيل مرتجع مبيعات جديد
+          </button>
+        </div>
+      </div>
+
+      ${returnsList.length === 0 ? `
+        <div style="padding:14px 16px;font-size:0.88rem;color:var(--text-muted);background:var(--bg-elevated);border-radius:10px;">
+          لا توجد مرتجعات مبيعات مسجلة حالياً. لتسجيل مرتجع مبيعات اضغط على <strong>"🔄 إضافة مرتجع مبيعات"</strong> أعلى الصفحة أو داخل أي خلية، وسيتم إرساله لاعتماد (المدير التنفيذي أو مدير المشروعات أو المحاسب) ليدخل المخزن.
+        </div>
+      ` : `
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>رقم المرتجع والتاريخ</th>
+                <th>العميل</th>
+                <th>الصنف والتخانة والجودة</th>
+                <th>الكمية المرتجعة</th>
+                ${showPrices ? '<th>قيمة المرتجع</th>' : ''}
+                <th>مسجل بواسطة / السبب</th>
+                <th>حالة دخول المخزن</th>
+                <th>اعتماد (التنفيذي / المشروعات / المحاسب فقط)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${returnsList.map(r => {
+                const isPending = r.status === 'pending_approval';
+                const isApproved = r.status === 'approved';
+                return `
+                  <tr style="${isPending ? 'background:rgba(124,58,237,0.08);' : ''}">
+                    <td>
+                      <strong>${r.returnNumber || 'RET'}</strong><br/>
+                      <small style="color:var(--text-muted);">📅 ${r.date || fmtDate(r.createdAt)}</small>
+                    </td>
+                    <td><strong>${r.clientName || 'عميل مبيعات'}</strong></td>
+                    <td>
+                      <strong>${r.woodTypeName || 'قشرة خشبية'}</strong><br/>
+                      <span class="badge badge-info">${r.thkMm} مم (${r.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص'})</span>
+                      <span class="badge" style="background:#0f766e;color:#fff;">${r.gradeName || ''}</span>
+                    </td>
+                    <td>
+                      <strong style="font-size:0.98rem;color:var(--primary);">${fmtNum(r.sheetsCount || 0, 0)} قطعة (فرخ)</strong><br/>
+                      <small style="color:var(--text-muted);">${fmtNum(r.volumeM3 || 0, 4)} م³ | ${fmtNum(r.areaM2 || 0, 2)} م²</small>
+                    </td>
+                    ${showPrices ? `
+                      <td>
+                        <strong>${fmtMoney(r.totalReturnAmount || 0)}</strong><br/>
+                        <small style="color:var(--text-muted);">سعر القطعة: ${fmtNum(r.unitPrice || 0, 2)} ج</small>
+                      </td>
+                    ` : ''}
+                    <td>
+                      <strong>${r.requestedBy || '-'}</strong><br/>
+                      <small style="color:var(--text-muted);">${r.notes || 'مرتجع مبيعات من عميل'}</small>
+                    </td>
+                    <td>
+                      ${isPending ? `
+                        <span class="badge badge-warning" style="font-size:0.82rem;">
+                          ⏳ معلق — بانتظار موافقة (التنفيذي / المشروعات / المحاسب) ليدخل المخزن
+                        </span>
+                      ` : isApproved ? `
+                        <span class="badge badge-success" style="font-size:0.82rem;">
+                          ✅ تمت الموافقة (${r.approvedBy || ''}) ودخلت الكمية رصيد المخزن
+                        </span>
+                      ` : `
+                        <span class="badge badge-danger" style="font-size:0.82rem;">
+                          ❌ مرفوض (${r.rejectedBy || ''}) — لم يدخل المخزن
+                        </span>
+                      `}
+                    </td>
+                    <td>
+                      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                        ${isPending && canApprove ? `
+                          <button class="btn btn-sm btn-success" onclick="approveSalesReturn('${r.id}')">
+                            ✅ موافقة وإدخال الكمية للمخزن
+                          </button>
+                          <button class="btn btn-sm btn-danger" onclick="rejectSalesReturn('${r.id}')">
+                            ❌ رفض
+                          </button>
+                        ` : isPending ? `
+                          <span style="font-size:0.78rem;color:var(--text-muted);font-weight:700;">
+                            🔒 يعتمد فقط من التنفيذي أو مدير المشروعات أو المحاسب
+                          </span>
+                        ` : ''}
+                        ${isFullAdmin(currentUser) ? `
+                          <button class="btn btn-sm btn-outline" style="color:var(--danger);border-color:var(--danger);" onclick="deleteSalesReturnRecord('${r.id}')">
+                            🗑️ حذف
+                          </button>
+                        ` : ''}
+                      </div>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `}
+    </div>
+  `;
+}
+
 function renderRawMaterialsWarehouse() {
   return `
     <div class="card">
@@ -2671,7 +2927,7 @@ function renderWarehouseMovements() {
                     ${m.directionLabel}
                   </span>
                 </td>
-                <td>${m.itemSummary}<br/><small style="color:var(--text-muted);">مرجع: ${m.referenceCode || '-'}</small></td>
+                <td>${sanitizeTextForWarehouseKeeper(m.itemSummary)}<br/><small style="color:var(--text-muted);">مرجع: ${m.referenceCode || '-'}</small></td>
                 <td>
                   <strong>${sanitizeTextForWarehouseKeeper(m.quantitySummary)}</strong>
                   ${canSeeFinancialPrices() && m.totalSaleAmount ? `<br/><span style="color:var(--success);font-weight:700;">قيمة البيع: ${fmtMoney(m.totalSaleAmount)}</span>` : ''}
@@ -2813,7 +3069,7 @@ function renderProduction() {
       <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(210px, 1fr));gap:10px;font-size:0.83rem;">
         <div style="background:var(--bg-surface);padding:10px 12px;border-radius:10px;border-right:4px solid #d97706;">
           <strong>1️⃣ المحاسب يطلب التجهيز والبيان</strong><br/>
-          <span style="color:var(--text-muted);">يحدد العميل + عدة تخانات (قص/سدا) وجودات + تعديل الأسعار والخصم في بيان العميل.</span>
+          <span style="color:var(--text-muted);">${canSeeFinancialPrices() ? 'يحدد العميل + عدة تخانات (قص/سدا) وجودات + تعديل الأسعار والخصم في بيان العميل.' : 'يحدد العميل + عدة تخانات (قص/سدا) وجودات والكميات المطلوبة بالقطعة والمتر المكعب.'}</span>
         </div>
         <div style="background:var(--bg-surface);padding:10px 12px;border-radius:10px;border-right:4px solid #2563eb;">
           <strong>2️⃣ موافقة التنفيذي / مدير المشروعات</strong><br/>
@@ -2833,7 +3089,7 @@ function renderProduction() {
     <div class="card">
       <div class="card-header">
         <div>
-          <div class="card-title">📋 أوامر تجهيز طلبية للعميل (متعدد التخانات والجودات + بيان العميل وتعديل الأسعار والخصم)</div>
+          <div class="card-title">${canSeeFinancialPrices() ? '📋 أوامر تجهيز طلبية للعميل (متعدد التخانات والجودات + بيان العميل وتعديل الأسعار والخصم)' : '📋 أوامر تجهيز طلبية للعميل (كميات التخانات والجودات المطلوب تجهيزها بالمخزن)'}</div>
           <small style="color:var(--text-muted);">
             حسابك الحالي: <strong>${currentUser.name} (${currentUser.roleTitle})</strong>
             ${hiddenForWarehouseCount > 0 ? ` | 🔒 يوجد (${hiddenForWarehouseCount}) طلبية قيد مراجعة المدير التنفيذي/مدير المشروعات ستظهر لك فور موافقتهما` : ''}
@@ -2992,6 +3248,8 @@ function renderApprovals() {
   const waitingAccountantOrders = releaseOrders.filter(o => o.stage === 'pending_accountant_release');
 
   return `
+    ${renderSalesReturnsSection()}
+
     ${readyForCarOrders.length > 0 && isWarehouseOrAdmin ? `
       <div class="card" style="background:rgba(220,38,38,0.08);border:2px solid var(--danger);padding:16px 20px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
@@ -3429,7 +3687,7 @@ function renderReports() {
   return `
     <div class="card">
       <div class="card-header">
-        <div class="card-title">📈 تقرير جرد وتقييم القشرة الخشبية حسب نوع الخشب</div>
+        <div class="card-title">📈 ${canSeeFinancialPrices() ? 'تقرير جرد وتقييم القشرة الخشبية حسب نوع الخشب' : 'تقرير جرد أرصدة كميات القشرة الخشبية بالمخازن (كميات فقط)'}</div>
         <button class="btn btn-outline" onclick="window.print()">🖨️ طباعة التقرير</button>
       </div>
       <div class="table-responsive">
@@ -3473,7 +3731,7 @@ function renderReports() {
             </tr>
           </thead>
           <tbody>
-            ${(state.auditLogs || []).slice(0, 30).map(l => `
+            ${(state.auditLogs || []).filter(l => canUserSeeNotification(currentUser, l)).slice(0, 30).map(l => `
               <tr>
                 <td>${new Date(l.timestamp).toLocaleString('ar-EG')}</td>
                 <td><strong>${l.userName}</strong></td>
@@ -4380,7 +4638,7 @@ function openClientOrderStatementModal(orderId) {
       <div class="modal-box" style="max-width:940px;">
         <div class="card-header">
           <div>
-            <div class="card-title">📄 بيان للعميل بالطلبية (${ord.orderNumber}) — تعديل البيان والأسعار والخصم وإرجاع/تحديث أرصدة المخازن</div>
+            <div class="card-title">${canSeeFinancialPrices() ? `📄 بيان للعميل بالطلبية (${ord.orderNumber}) — تعديل البيان والأسعار والخصم وإرجاع/تحديث أرصدة المخازن` : `📄 بيان كميات الطلبية للتجهيز بالمخزن (${ord.orderNumber}) — كميات فقط`}</div>
             <small style="color:var(--text-muted);">
               العميل: <strong>${ord.clientName} (${ord.clientCode || 'CL'})</strong> | التاريخ: <strong>${ord.date}</strong> | الحالة: ${getOrderStageBadge(ord)}
             </small>
@@ -5811,7 +6069,9 @@ function addWoodTypePrompt() {
   const name = prompt('اسم نوع الخشب الجديد (مثال: خشب ماهوجني / خشب تيك):');
   if (!name) return;
   const code = prompt('كود مختصر (3 حروف):', 'MAH') || 'WOD';
-  const price = Number(prompt('متوسط سعر المتر المكعب الخام:', '18000') || 15000);
+  const price = canSeeFinancialPrices()
+    ? Number(prompt('متوسط سعر المتر المكعب الخام:', '18000') || 15000)
+    : 0;
   state.catalog.woodTypes.push({
     id: uid('wt'),
     name,
@@ -5831,7 +6091,7 @@ function openAddThicknessModal() {
         <div class="card-header">
           <div>
             <div class="card-title">➕ إضافة تخانة قشرة جديدة (تحديد الاتجاه: قص / سدا)</div>
-            <small style="color:var(--text-muted);">كل اتجاه (قص أو سدا) يعتبر منتجاً مستقلاً بصف خاص وسعر قطعة مستقل في جميع درجات الجودة</small>
+            <small style="color:var(--text-muted);">كل اتجاه (قص أو سدا) يعتبر منتجاً مستقلاً بصف خاص في جميع درجات الجودة</small>
           </div>
           <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
         </div>
@@ -5846,8 +6106,8 @@ function openAddThicknessModal() {
             <div class="form-group">
               <label>اتجاه القشرة لهذه التخانة (قص ولا سدا؟)</label>
               <select id="new-thk-dir" class="form-control" required style="font-weight:800;border-color:var(--primary);">
-                <option value="qas">✂️ اتجاه قص (منتج مستقل بسعره)</option>
-                <option value="sada">📏 اتجاه سدا (منتج مستقل بسعره)</option>
+                <option value="qas">✂️ اتجاه قص (صف مستقل بالمخزن)</option>
+                <option value="sada">📏 اتجاه سدا (صف مستقل بالمخزن)</option>
                 <option value="both">🔄 إضافة الاتجاهين معاً (صف قص + صف سدا منفصلين)</option>
               </select>
             </div>
@@ -6001,7 +6261,9 @@ function addGradePrompt() {
   const code = prompt('رمز درجة الجودة الجديدة (مثال: A أو B أو C أو A+):', 'A');
   if (!code) return;
   const name = prompt('اسم درجة الجودة في الجدول:', `جودة (${code.trim()})`) || code.trim();
-  const defaultPiecePrice = Number(prompt('سعر القطعة الواحدة الافتراضي لهذه الجودة بالجنيه (اختياري — يمكن تعديله داخل كل خلية):', '50') || 0);
+  const defaultPiecePrice = canSeeFinancialPrices()
+    ? Number(prompt('سعر القطعة الواحدة الافتراضي لهذه الجودة بالجنيه (اختياري — يمكن تعديله داخل كل خلية):', '50') || 0)
+    : 0;
   const newGradeId = uid('gr');
 
   state.catalog.grades.push({
@@ -6020,7 +6282,7 @@ function addGradePrompt() {
     }
   }
 
-  saveState(`إضافة درجة جودة جديدة للجدول العلوي والسفلي: ${name}`);
+  saveState(`إضافة درجة جودة جديدة للجدول: ${name}`);
 }
 
 function deleteGradeFromMatrix(gradeId) {
@@ -6043,23 +6305,68 @@ function deleteGradeFromMatrix(gradeId) {
   saveState(`إلغاء درجة الجودة (${gradeObj.name}) لعدم وجود رصيد لها`);
 }
 
-// Interactive Cell Modal (In / Out Sales / Rework / Direct Set Balance — with Past Dates & Piece Price)
+// Interactive Cell Modal (In Production / Sales Return / Out Sales / Rework / Direct Set Balance)
 let activeCellContext = null;
+
+function openWarehouseOpShortcut(opType = 'in') {
+  const thicknesses = getSortedThicknesses();
+  const grades = state.catalog?.grades || [];
+
+  // Ensure default thickness/grade exist if catalog was empty
+  if (thicknesses.length === 0) {
+    state.catalog.thicknesses = [
+      { id: 'th-1.5-qas', mm: 1.5, direction: 'qas', directionLabel: 'اتجاه قص', label: '1.5 مم — اتجاه قص', category: 'اتجاه قص', standardSheetsPerPallet: 400 }
+    ];
+  }
+  if (grades.length === 0) {
+    state.catalog.grades = [
+      { id: 'gr-a', code: 'A', name: 'درجة أولى ممتازة (A)', color: '#0f766e', defaultPricePerM3: 20000 }
+    ];
+  }
+
+  const thkList = getSortedThicknesses();
+  const grdList = state.catalog.grades;
+
+  // If operation is 'out' or 'rework', prefer selecting a cell that currently has stock > 0
+  if (opType === 'out' || opType === 'rework') {
+    const stockedPallet = (state.pallets || []).find(p => p.status === 'in_stock' && Number(p.sheetsCount || 0) > 0);
+    if (stockedPallet) {
+      const tId = stockedPallet.thicknessId || `th-${stockedPallet.thicknessMm}-${stockedPallet.direction || 'qas'}`;
+      openMatrixCellModal(tId, stockedPallet.gradeId || grdList[0].id, opType);
+      return;
+    }
+  }
+
+  openMatrixCellModal(thkList[0].id, grdList[0].id, opType);
+}
+
+function switchMatrixModalCell(newThkId, newGradeId) {
+  if (!activeCellContext) return;
+  const currentOp = activeCellContext.op || 'in';
+  const currentDate = document.getElementById('cell-date')?.value || activeCellContext.opDate || todayStr();
+  openMatrixCellModal(newThkId || activeCellContext.thkId, newGradeId || activeCellContext.gradeId, currentOp);
+  if (activeCellContext) {
+    activeCellContext.op = currentOp;
+    activeCellContext.opDate = currentDate;
+    const selectedWoodId = document.getElementById('cell-wood')?.value || (state.catalog.woodTypes?.[0]?.id || 'wt-general');
+    renderMatrixCellModalUI(selectedWoodId, 100);
+  }
+}
 
 function openMatrixCellModal(thkIdOrMm, gradeId, defaultOp = 'in') {
   const thkObj = state.catalog.thicknesses.find(
     t => t.id === thkIdOrMm || String(t.mm) === String(thkIdOrMm)
-  ) || {
-    id: `th-${thkIdOrMm}-qas`,
+  ) || state.catalog.thicknesses[0] || {
+    id: `th-${thkIdOrMm || 1.5}-qas`,
     mm: Number(thkIdOrMm) || 1.5,
     direction: 'qas',
     directionLabel: 'اتجاه قص',
-    label: `${thkIdOrMm} مم`,
+    label: `${thkIdOrMm || 1.5} مم`,
     standardSheetsPerPallet: 400
   };
 
   const gradeObj = state.catalog.grades.find(g => g.id === gradeId) || state.catalog.grades[0] || {
-    id: gradeId,
+    id: gradeId || 'gr-a',
     name: 'عام',
     code: 'A',
     defaultPricePerM3: 20000
@@ -6071,21 +6378,27 @@ function openMatrixCellModal(thkIdOrMm, gradeId, defaultOp = 'in') {
   const matchingPallets = (state.pallets || []).filter(p =>
     p.status === 'in_stock' &&
     matchPalletToThicknessRow(p, thkObj) &&
-    p.gradeId === gradeId &&
+    p.gradeId === gradeObj.id &&
     (veneerFilterWood === 'all' || p.woodTypeId === veneerFilterWood)
   );
 
   const currentSheets = matchingPallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
   const currentM3 = matchingPallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
   const currentM2 = matchingPallets.reduce((s, p) => s + Number(p.areaM2 || 0), 0);
-  const unitPiecePrice = getCellUnitPrice(thkObj.id, gradeId);
+  const unitPiecePrice = getCellUnitPrice(thkObj.id, gradeObj.id);
+
+  // Restrict 'set' to full admin only
+  let effectiveOp = defaultOp;
+  if (effectiveOp === 'set' && !isFullAdmin(currentUser)) {
+    effectiveOp = 'in';
+  }
 
   activeCellContext = {
     thkId: thkObj.id,
     thkMm: Number(thkObj.mm),
     direction: thkObj.direction || 'qas',
     directionLabel: thkObj.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص',
-    gradeId,
+    gradeId: gradeObj.id,
     gradeName: gradeObj.name,
     gradeCode: gradeObj.code,
     unitPiecePrice,
@@ -6094,7 +6407,7 @@ function openMatrixCellModal(thkIdOrMm, gradeId, defaultOp = 'in') {
     currentM3,
     currentM2,
     opDate: todayStr(),
-    op: currentSheets === 0 && (defaultOp === 'out' || defaultOp === 'rework') ? 'in' : defaultOp
+    op: effectiveOp
   };
 
   renderMatrixCellModalUI(selectedWoodId, thkObj.standardSheetsPerPallet || 400);
@@ -6106,6 +6419,8 @@ function renderMatrixCellModalUI(selectedWoodId, defaultSheets = 400) {
   const modalRoot = document.getElementById('modal-root');
   const isSada = ctx.direction === 'sada';
   const clients = (state.partners || []).filter(pt => pt.type === 'client');
+  const thicknesses = getSortedThicknesses();
+  const grades = state.catalog?.grades || [];
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
@@ -6113,36 +6428,62 @@ function renderMatrixCellModalUI(selectedWoodId, defaultSheets = 400) {
         <div class="card-header">
           <div>
             <div class="card-title">
-              🪵 حركة خلية المخزن: تخانة (${ctx.thkMm} مم — <span style="color:${isSada ? '#0284c7' : '#d97706'};">${ctx.directionLabel}</span>) × جودة (${ctx.gradeName})
+              🪵 حركة كميات المخزن: تخانة (${ctx.thkMm} مم — <span style="color:${isSada ? '#0284c7' : '#d97706'};">${ctx.directionLabel}</span>) × جودة (${ctx.gradeName})
             </div>
             <small style="color:var(--text-muted);">
               المقاس: 250 × 125 سم | الرصيد المتاح حالياً بالخلية: <strong>${fmtNum(ctx.currentSheets, 0)} قطعة (${fmtNum(ctx.currentM3, 4)} م³)</strong>
-              ${canSeeFinancialPrices() ? `| سعر القطعة بالجدول السفلي: <strong>${fmtNum(ctx.unitPiecePrice, 2)} ج.م</strong>` : ''}
+              ${canSeeFinancialPrices() ? `| سعر القطعة: <strong>${fmtNum(ctx.unitPiecePrice, 2)} ج.م</strong>` : ''}
             </small>
           </div>
           <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
         </div>
 
-        <!-- Operation Selector Tabs -->
-        <div class="tabs-bar" style="margin-bottom:16px;">
+        <!-- Operation Selector Tabs (إضافة كميات إنتاج | إضافة مرتجع مبيعات | خروج حسب المبيعات | خروج لإعادة التشغيل) -->
+        <div class="tabs-bar" style="margin-bottom:14px;">
           <button type="button" class="tab-btn ${ctx.op === 'in' ? 'active' : ''}" onclick="activeCellContext.op='in'; renderMatrixCellModalUI('${selectedWoodId}', ${defaultSheets});">
-            📥 دخول للمخزن (إضافة رصيد)
+            📥 إضافة كميات إنتاج
+          </button>
+          <button type="button" class="tab-btn ${ctx.op === 'sales_return' ? 'active' : ''}" onclick="activeCellContext.op='sales_return'; renderMatrixCellModalUI('${selectedWoodId}', ${defaultSheets});">
+            🔄 إضافة مرتجع مبيعات
           </button>
           <button type="button" class="tab-btn ${ctx.op === 'out' ? 'active' : ''}" onclick="activeCellContext.op='out'; renderMatrixCellModalUI('${selectedWoodId}', ${defaultSheets});">
-            📤 خروج للمبيعات (يسمع فوراً في الأرصدة)
+            📤 خروج حسب المبيعات
           </button>
           <button type="button" class="tab-btn ${ctx.op === 'rework' ? 'active' : ''}" onclick="activeCellContext.op='rework'; renderMatrixCellModalUI('${selectedWoodId}', ${defaultSheets});">
-            ♻️ إعادة تشغيل / فرز
+            ♻️ خروج لإعادة التشغيل
           </button>
-          <button type="button" class="tab-btn ${ctx.op === 'set' ? 'active' : ''}" onclick="activeCellContext.op='set'; renderMatrixCellModalUI('${selectedWoodId}', ${ctx.currentSheets});">
-            ✏️ تعديل رصيد المخزن مباشرة
-          </button>
+          ${isFullAdmin(currentUser) ? `
+            <button type="button" class="tab-btn ${ctx.op === 'set' ? 'active' : ''}" onclick="activeCellContext.op='set'; renderMatrixCellModalUI('${selectedWoodId}', ${ctx.currentSheets});">
+              ✏️ تعديل رصيد مباشر
+            </button>
+          ` : ''}
         </div>
+
+        ${ctx.op === 'sales_return' ? `
+          <div style="background:rgba(124,58,237,0.1);border:2px solid #7c3aed;padding:12px 16px;border-radius:10px;margin-bottom:14px;font-size:0.86rem;">
+            🔄 <strong style="color:#6d28d9;">قاعدة إضافة مرتجع المبيعات للمخزن:</strong><br/>
+            عند تسجيل مرتجع مبيعات، <strong>يدخل المرتجع المخزن مرة أخرى بعد موافقة (المدير التنفيذي أو مدير المشروعات أو المحاسب فقط)</strong>.
+          </div>
+        ` : ''}
 
         <form onsubmit="submitMatrixCellOperation(event)">
           <div class="form-grid">
             <div class="form-group">
-              <label style="color:var(--primary);font-weight:800;">📅 تاريخ الحركة (يمكنك اختيار أي تاريخ سابق أو اليوم)</label>
+              <label style="font-weight:800;">التخانة والاتجاه (قص / سدا)</label>
+              <select id="cell-select-thk" class="form-control" style="font-weight:800;" onchange="switchMatrixModalCell(this.value, '${ctx.gradeId}')">
+                ${thicknesses.map(t => `<option value="${t.id}" ${t.id === ctx.thkId ? 'selected' : ''}>${t.mm} مم — ${t.direction === 'sada' ? '📏 اتجاه سدا' : '✂️ اتجاه قص'}</option>`).join('')}
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label style="font-weight:800;">درجة الجودة</label>
+              <select id="cell-select-grade" class="form-control" style="font-weight:800;" onchange="switchMatrixModalCell('${ctx.thkId}', this.value)">
+                ${grades.map(g => `<option value="${g.id}" ${g.id === ctx.gradeId ? 'selected' : ''}>${g.name} (${g.code})</option>`).join('')}
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label style="color:var(--primary);font-weight:800;">📅 تاريخ الحركة</label>
               <input id="cell-date" type="date" class="form-control" value="${ctx.opDate || todayStr()}" onchange="activeCellContext.opDate=this.value" required style="border-color:var(--primary);font-weight:700;" />
             </div>
 
@@ -6155,13 +6496,14 @@ function renderMatrixCellModalUI(selectedWoodId, defaultSheets = 400) {
             </div>
 
             <div class="form-group">
-              <label>
-                ${ctx.op === 'in' ? 'الكمية الواردة (عدد القطع / الأفرخ 250×125)' :
-                  ctx.op === 'out' ? 'الكمية المباعة / المنصرفة (عدد القطع)' :
-                  ctx.op === 'rework' ? 'الكمية المسحوبة لإعادة التشغيل (قطعة)' :
+              <label style="font-weight:800;">
+                ${ctx.op === 'in' ? '📥 كمية الإنتاج الواردة للمخزن (عدد القطع / الأفرخ 250×125)' :
+                  ctx.op === 'sales_return' ? '🔄 كمية مرتجع المبيعات المطلوبة للإرجاع للمخزن (عدد القطع)' :
+                  ctx.op === 'out' ? '📤 الكمية الخارجة حسب المبيعات (عدد القطع)' :
+                  ctx.op === 'rework' ? '♻️ الكمية الخارجة لإعادة التشغيل (عدد القطع)' :
                   'الرصيد الفعلي الجديد للخلية (عدد القطع)'}
               </label>
-              <input id="cell-sheets" type="number" min="0" class="form-control" value="${ctx.op === 'set' ? ctx.currentSheets : Math.min(defaultSheets, ctx.op === 'in' ? defaultSheets : (ctx.currentSheets || defaultSheets))}" oninput="updateMatrixCellModalPreview()" required />
+              <input id="cell-sheets" type="number" min="0" class="form-control" value="${ctx.op === 'set' ? ctx.currentSheets : Math.min(defaultSheets, (ctx.op === 'in' || ctx.op === 'sales_return') ? defaultSheets : (ctx.currentSheets || defaultSheets))}" oninput="updateMatrixCellModalPreview()" required />
             </div>
 
             ${canSeeFinancialPrices() ? `
@@ -6176,9 +6518,9 @@ function renderMatrixCellModalUI(selectedWoodId, defaultSheets = 400) {
               <input id="cell-m3-input" type="number" step="0.0001" class="form-control" placeholder="اكتب الـ م³ للتحويل..." oninput="syncSheetsFromM3Input(this.value)" />
             </div>
 
-            ${ctx.op === 'out' ? `
+            ${(ctx.op === 'out' || ctx.op === 'sales_return') ? `
               <div class="form-group">
-                <label>العميل / المشتري (يسمع في الحسابات والخزينة فوراً)</label>
+                <label>${ctx.op === 'sales_return' ? 'اسم العميل صاحب المرتجع' : 'اسم العميل / المبيعات'}</label>
                 <input id="cell-client-name" class="form-control" list="clients-datalist" placeholder="اكتب اسم العميل أو اختره..." value="${clients[0]?.name || 'عميل مبيعات قشرة'}" required />
                 <datalist id="clients-datalist">
                   ${clients.map(c => `<option value="${c.name}"></option>`).join('')}
@@ -6220,12 +6562,13 @@ function renderMatrixCellModalUI(selectedWoodId, defaultSheets = 400) {
           ` : ''}
 
           <div class="form-group" style="margin-top:12px;">
-            <label>البيان / الملاحظات (رقم التشغيلة أو اسم العميل أو تفاصيل العمل السابق)</label>
+            <label>البيان / الملاحظات (رقم التشغيلة أو سبب المرتجع أو رقم الطلبية)</label>
             <input id="cell-notes" class="form-control" placeholder="${
-              ctx.op === 'in' ? 'مثال: وارد إنتاج أو رصيد أعمال سابقة...' :
-              ctx.op === 'out' ? 'مثال: فاتورة بيع قشرة نقدي/آجل...' :
-              ctx.op === 'rework' ? 'مثال: إعادة فرز وقص عيوب الأطراف...' :
-              'مثال: إثبات رصيد مخزني لتاريخ سابق...'
+              ctx.op === 'in' ? 'مثال: إضافة كميات إنتاج جديدة للمخزن...' :
+              ctx.op === 'sales_return' ? 'مثال: مرتجع مبيعات من عميل بانتظار موافقة الإدارة/الحسابات...' :
+              ctx.op === 'out' ? 'مثال: خروج كميات على حسب المبيعات...' :
+              ctx.op === 'rework' ? 'مثال: خروج كميات لإعادة التشغيل والفرز...' :
+              'مثال: إثبات رصيد مخزني...'
             }" />
           </div>
 
@@ -6233,10 +6576,11 @@ function renderMatrixCellModalUI(selectedWoodId, defaultSheets = 400) {
 
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
             <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
-            <button type="submit" class="btn btn-primary">
-              ${ctx.op === 'in' ? '📥 تأكيد الدخول وإضافة الرصيد' :
-                ctx.op === 'out' ? '📤 تأكيد البيع والخروج وتسميع الأرصدة فوراً' :
-                ctx.op === 'rework' ? '♻️ تنفيذ إعادة التشغيل وتحديث الخلايا' :
+            <button type="submit" class="btn btn-primary" style="${ctx.op === 'sales_return' ? 'background:#7c3aed;' : ''}">
+              ${ctx.op === 'in' ? '📥 تأكيد إضافة كميات الإنتاج للمخزن' :
+                ctx.op === 'sales_return' ? '🔄 تسجيل مرتجع المبيعات وإرساله للموافقة (التنفيذي / المشروعات / المحاسب)' :
+                ctx.op === 'out' ? '📤 تأكيد خروج الكميات حسب المبيعات' :
+                ctx.op === 'rework' ? '♻️ تأكيد خروج الكميات لإعادة التشغيل' :
                 '✏️ حفظ الرصيد الفعلي الجديد'}
             </button>
           </div>
@@ -6271,7 +6615,7 @@ function updateMatrixCellModalPreview(updateM3Box = true) {
   }
 
   let afterSheets = ctx.currentSheets;
-  if (ctx.op === 'in') afterSheets = ctx.currentSheets + sheets;
+  if (ctx.op === 'in' || ctx.op === 'sales_return') afterSheets = ctx.currentSheets + sheets;
   else if (ctx.op === 'out' || ctx.op === 'rework') afterSheets = Math.max(0, ctx.currentSheets - sheets);
   else if (ctx.op === 'set') afterSheets = sheets;
 
@@ -6293,7 +6637,7 @@ function updateMatrixCellModalPreview(updateM3Box = true) {
       </div>
       ` : ''}
       <div class="calc-preview-item">
-        <span>رصيد الخلية بعد العملية</span>
+        <span>${ctx.op === 'sales_return' ? 'رصيد الخلية بعد موافقة الإدارة/المحاسب' : 'رصيد الخلية بعد العملية'}</span>
         <strong style="color:var(--accent);">${fmtNum(afterSheets, 0)} قطعة (${fmtNum(afterM.totalVolumeM3, 4)} م³)</strong>
       </div>
       ${canSeeFinancialPrices() ? `
@@ -6401,40 +6745,41 @@ function submitMatrixCellOperation(e) {
   const woodId = document.getElementById('cell-wood').value;
   const woodObj = state.catalog.woodTypes.find(w => w.id === woodId) || state.catalog.woodTypes[0] || { id: 'wt-general', name: 'قشرة خشبية (250×125)' };
   const sheets = Number(document.getElementById('cell-sheets').value || 0);
-  const unitPrice = Math.max(0, Number(document.getElementById('cell-unit-price')?.value || 0));
+  const unitPrice = Math.max(0, Number(document.getElementById('cell-unit-price')?.value || ctx.unitPiecePrice || 0));
   const notes = document.getElementById('cell-notes').value.trim();
   const now = new Date().toISOString();
   const m = calculateVeneerMetrics(250, 125, ctx.thkMm, sheets);
   const cellKey = getCellPriceKey(ctx.thkId, ctx.gradeId);
 
-  // Persist unit piece price in the mirror table automatically
-  if (unitPrice > 0) {
+  // Persist unit piece price in the mirror table automatically if user has financial permission
+  if (unitPrice > 0 && canSeeFinancialPrices()) {
     state.catalog.cellPrices = state.catalog.cellPrices || {};
     state.catalog.cellPrices[cellKey] = unitPrice;
   }
 
   const totalAmount = +(sheets * unitPrice).toFixed(2);
 
+  // 1) PRODUCTION IN (إضافة كميات إنتاج)
   if (ctx.op === 'in') {
     if (sheets <= 0) {
       alert('يرجى إدخال عدد قطع أكبر من صفر!');
       return;
     }
-    addSheetsToCellPallets(ctx.thkId, ctx.gradeId, woodId, sheets, notes, opDate, unitPrice);
+    addSheetsToCellPallets(ctx.thkId, ctx.gradeId, woodId, sheets, notes || 'إضافة كميات إنتاج', opDate, unitPrice);
     state.warehouseMovements.unshift({
       id: uid('mov'),
       voucherNumber: `IN-${Date.now().toString().slice(-5)}`,
       date: opDate,
       warehouseType: 'finished_veneers',
-      warehouseLabel: 'جدول مخزن القشرة (دخول)',
+      warehouseLabel: 'مخزن القشرة التامة (إضافة كميات إنتاج)',
       direction: 'in',
-      directionLabel: 'حركة دخول للخلية',
-      movementCategory: 'stock_in',
+      directionLabel: 'إضافة كميات إنتاج',
+      movementCategory: 'production_in',
       cellKey,
       sheetsCount: sheets,
       unitSheetPrice: unitPrice,
       totalSaleAmount: totalAmount,
-      itemSummary: `دخول قشرة ${woodObj.name} — تخانة ${ctx.thkMm} مم (${ctx.directionLabel}) × ${ctx.gradeName} (${notes || 'إضافة مخزنية'})`,
+      itemSummary: `إضافة كميات إنتاج قشرة ${woodObj.name} — تخانة ${ctx.thkMm} مم (${ctx.directionLabel}) × ${ctx.gradeName} (${notes || 'إنتاج جديد'})`,
       referenceCode: `${ctx.thkMm}mm-${ctx.direction}-${ctx.gradeCode}`,
       quantitySummary: `${sheets} قطعة | ${m.totalVolumeM3} م³`,
       performedBy: currentUser.name,
@@ -6442,10 +6787,59 @@ function submitMatrixCellOperation(e) {
       updatedAt: now
     });
     closeModal();
-    saveState(`دخول ${sheets} قطعة بتاريخ ${opDate} لخلية تخانة ${ctx.thkMm} مم (${ctx.directionLabel}) × ${ctx.gradeName}`);
+    saveState(`📥 إضافة كميات إنتاج (${sheets} قطعة — ${m.totalVolumeM3} م³) بتاريخ ${opDate} لخلية تخانة ${ctx.thkMm} مم (${ctx.directionLabel}) × ${ctx.gradeName}`);
     return;
   }
 
+  // 2) SALES RETURN (إضافة مرتجع مبيعات — لا يدخل المخزن إلا بعد موافقة المدير التنفيذي أو مدير المشروعات أو المحاسب فقط)
+  if (ctx.op === 'sales_return') {
+    if (sheets <= 0) {
+      alert('يرجى إدخال كمية مرتجع المبيعات (عدد القطع أكبر من صفر)!');
+      return;
+    }
+    const clientName = (document.getElementById('cell-client-name')?.value || 'عميل مبيعات').trim();
+    const retNum = `RET-${Date.now().toString().slice(-5)}`;
+    const newRet = {
+      id: uid('sret'),
+      returnNumber: retNum,
+      date: opDate,
+      clientName,
+      woodTypeId: woodObj.id,
+      woodTypeName: woodObj.name,
+      thkId: ctx.thkId,
+      thkMm: ctx.thkMm,
+      direction: ctx.direction,
+      directionLabel: ctx.directionLabel,
+      gradeId: ctx.gradeId,
+      gradeCode: ctx.gradeCode,
+      gradeName: ctx.gradeName,
+      sheetsCount: sheets,
+      areaM2: m.totalAreaM2,
+      volumeM3: m.totalVolumeM3,
+      unitPrice,
+      totalReturnAmount: totalAmount,
+      notes: notes || 'مرتجع مبيعات من عميل',
+      status: 'pending_approval',
+      requestedBy: currentUser.name,
+      requestedByRole: currentUser.roleKey,
+      approvedBy: '',
+      approvedAt: '',
+      createdAt: now,
+      updatedAt: now
+    };
+
+    state.salesReturns = state.salesReturns || [];
+    state.salesReturns.unshift(newRet);
+    markNotifIdsSeen([`sret_pend_${newRet.id}`]);
+
+    closeModal();
+    saveState(
+      `🔄 تسجيل طلب مرتجع مبيعات رقم (${retNum}) من العميل (${clientName}) بكمية (${sheets} قطعة — تخانة ${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName}) — بانتظار موافقة (المدير التنفيذي أو مدير المشروعات أو المحاسب فقط) ليدخل المخزن مرة أخرى`
+    );
+    return;
+  }
+
+  // 3) SALES OUT (خروج الكميات على حسب المبيعات)
   if (ctx.op === 'out') {
     if (sheets <= 0 || sheets > ctx.currentSheets) {
       alert(`الكمية المطلوبة للخروج (${sheets} قطعة) أكبر من الرصيد المتاح في الخلية (${ctx.currentSheets} قطعة)!`);
@@ -6460,23 +6854,23 @@ function submitMatrixCellOperation(e) {
       voucherNumber: voucherNo,
       date: opDate,
       warehouseType: 'finished_veneers',
-      warehouseLabel: 'جدول مخزن القشرة (خروج مبيعات)',
+      warehouseLabel: 'مخزن القشرة التامة (خروج حسب المبيعات)',
       direction: 'out',
-      directionLabel: 'خروج مبيعات من الخلية',
+      directionLabel: 'خروج حسب المبيعات',
       movementCategory: 'sales_exit',
       cellKey,
       sheetsCount: sheets,
       unitSheetPrice: unitPrice,
       totalSaleAmount: totalAmount,
-      itemSummary: `بيع/خروج قشرة ${woodObj.name} — تخانة ${ctx.thkMm} مم (${ctx.directionLabel}) × ${ctx.gradeName} إلى (${clientName}) ${notes ? '— ' + notes : ''}`,
+      itemSummary: `خروج كميات حسب المبيعات — قشرة ${woodObj.name} تخانة ${ctx.thkMm} مم (${ctx.directionLabel}) × ${ctx.gradeName} للعميل (${clientName}) ${notes ? '— ' + notes : ''}`,
       referenceCode: `${ctx.thkMm}mm-${ctx.direction}-${ctx.gradeCode}`,
-      quantitySummary: `${sheets} قطعة × ${fmtNum(unitPrice, 2)} ج = ${fmtMoney(totalAmount)}`,
+      quantitySummary: `${sheets} قطعة | ${m.totalVolumeM3} م³`,
       performedBy: currentUser.name,
       approvedBy: currentUser.name,
       updatedAt: now
     });
 
-    // Immediately reflect in Financial Transactions & Treasury so all users see updated balances right away
+    // Immediately reflect in Financial Transactions & Treasury so accounting users see updated balances right away
     if (totalAmount > 0) {
       state.financialTransactions.unshift({
         id: uid('fin'),
@@ -6498,10 +6892,11 @@ function submitMatrixCellOperation(e) {
     }
 
     closeModal();
-    saveState(`خروج مبيعات ${sheets} قطعة (${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName}) بتاريخ ${opDate} بقيمة ${fmtMoney(totalAmount)} — تم التسميع الفوري في الأرصدة`);
+    saveState(`📤 خروج كميات حسب المبيعات (${sheets} قطعة — ${m.totalVolumeM3} م³) من خلية (${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName}) للعميل (${clientName}) بتاريخ ${opDate}`);
     return;
   }
 
+  // 4) REWORK OUT (خروج الكميات لإعادة التشغيل)
   if (ctx.op === 'rework') {
     if (sheets <= 0 || sheets > ctx.currentSheets) {
       alert(`الكمية المطلوبة لإعادة التشغيل (${sheets} قطعة) أكبر من الرصيد المتاح في الخلية (${ctx.currentSheets} قطعة)!`);
@@ -6535,15 +6930,15 @@ function submitMatrixCellOperation(e) {
       voucherNumber: `RWK-${Date.now().toString().slice(-5)}`,
       date: opDate,
       warehouseType: 'finished_veneers',
-      warehouseLabel: 'إعادة تشغيل وفرز قشرة',
+      warehouseLabel: 'مخزن القشرة التامة (خروج لإعادة التشغيل)',
       direction: 'out',
-      directionLabel: 'حركة إعادة تشغيل',
+      directionLabel: 'خروج لإعادة التشغيل',
       movementCategory: 'rework',
       cellKey,
       sheetsCount: sheets,
       unitSheetPrice: unitPrice,
       totalSaleAmount: 0,
-      itemSummary: `سحب ${sheets} قطعة (${ctx.thkMm}مم ${ctx.directionLabel}) ⬅ إنتاج ${goodSheets} قطعة (${targetThkObj.mm}مم ${targetGradeObj.code}) + هالك ${scrapMetrics.totalVolumeM3} م³`,
+      itemSummary: `خروج لإعادة التشغيل: سحب ${sheets} قطعة (${ctx.thkMm}مم ${ctx.directionLabel}) ⬅ ناتج سليم ${goodSheets} قطعة (${targetThkObj.mm}مم ${targetGradeObj.code}) + هالك ${scrapMetrics.totalVolumeM3} م³`,
       referenceCode: `REWORK-${ctx.thkMm}mm`,
       quantitySummary: `${sheets} قطعة (${m.totalVolumeM3} م³)`,
       performedBy: currentUser.name,
@@ -6552,11 +6947,16 @@ function submitMatrixCellOperation(e) {
     });
 
     closeModal();
-    saveState(`إعادة تشغيل ${sheets} قطعة بتاريخ ${opDate} من خلية (${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName})`);
+    saveState(`♻️ خروج كميات لإعادة التشغيل (${sheets} قطعة) بتاريخ ${opDate} من خلية (${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName})`);
     return;
   }
 
+  // 5) DIRECT SET (تعديل الرصيد المباشر — للمدير التنفيذي ومدير المشروعات فقط)
   if (ctx.op === 'set') {
+    if (!isFullAdmin(currentUser)) {
+      alert('⛔ تعديل الرصيد المباشر مسموح فقط للمدير التنفيذي أو مدير المشروعات!');
+      return;
+    }
     const diff = sheets - ctx.currentSheets;
     if (diff > 0) {
       addSheetsToCellPallets(ctx.thkId, ctx.gradeId, woodId, diff, notes || 'تسوية رصيد / رصيد سابق', opDate, unitPrice);
@@ -6586,6 +6986,136 @@ function submitMatrixCellOperation(e) {
     closeModal();
     saveState(`تعديل رصيد خلية (${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName}) بتاريخ ${opDate} إلى ${sheets} قطعة`);
   }
+}
+
+// ============================================================================
+// SALES RETURN APPROVAL WORKFLOW (الموافقة للمدير التنفيذي أو مدير المشروعات أو المحاسب فقط)
+// ============================================================================
+function approveSalesReturn(retId) {
+  if (!canApproveSalesReturn(currentUser)) {
+    alert('⛔ عفواً، الموافقة على دخول مرتجع المبيعات للمخزن مرة أخرى مسموحة فقط لـ (المدير التنفيذي أو مدير المشروعات أو المحاسب فقط)!');
+    return;
+  }
+
+  const ret = (state.salesReturns || []).find(r => r.id === retId);
+  if (!ret) return;
+  if (ret.status === 'approved') {
+    alert('تمت الموافقة على هذا المرتجع وإدخاله للمخزن بالفعل.');
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const opDate = ret.date || todayStr();
+  const unitPrice = Number(ret.unitPrice || getCellUnitPrice(ret.thkId, ret.gradeId) || 0);
+  const totalReturnAmount = +(Number(ret.sheetsCount || 0) * unitPrice).toFixed(2);
+  const cellKey = getCellPriceKey(ret.thkId, ret.gradeId);
+
+  // 1) Add returned quantity back into the warehouse stock cell!
+  addSheetsToCellPallets(
+    ret.thkId,
+    ret.gradeId,
+    ret.woodTypeId || 'wt-general',
+    Number(ret.sheetsCount || 0),
+    `مرتجع مبيعات معتمد (${ret.returnNumber}) — العميل: ${ret.clientName || ''}`,
+    opDate,
+    unitPrice
+  );
+
+  // 2) Record official warehouse movement (RET-...)
+  state.warehouseMovements = state.warehouseMovements || [];
+  state.warehouseMovements.unshift({
+    id: uid('mov'),
+    voucherNumber: ret.returnNumber || `RET-${Date.now().toString().slice(-5)}`,
+    date: opDate,
+    warehouseType: 'finished_veneers',
+    warehouseLabel: 'مخزن القشرة التامة (دخول مرتجع مبيعات معتمد)',
+    direction: 'in',
+    directionLabel: 'دخول مرتجع مبيعات معتمد',
+    movementCategory: 'sales_return_in',
+    cellKey,
+    sheetsCount: Number(ret.sheetsCount || 0),
+    unitSheetPrice: unitPrice,
+    totalSaleAmount: totalReturnAmount,
+    itemSummary: `دخول مرتجع مبيعات معتمد (${ret.returnNumber}) من العميل (${ret.clientName || 'عميل'}) — تخانة ${ret.thkMm} مم (${ret.directionLabel || ''}) × ${ret.gradeName || ''} — بموافقة: ${currentUser.name}`,
+    referenceCode: ret.returnNumber,
+    quantitySummary: `${ret.sheetsCount} قطعة | ${ret.volumeM3} م³`,
+    performedBy: ret.requestedBy || currentUser.name,
+    approvedBy: currentUser.name,
+    updatedAt: now
+  });
+
+  // 3) Credit the client's account if totalReturnAmount > 0
+  if (totalReturnAmount > 0) {
+    state.financialTransactions = state.financialTransactions || [];
+    state.financialTransactions.unshift({
+      id: uid('fin'),
+      voucherNo: `CRD-${ret.returnNumber}`,
+      date: opDate,
+      type: 'client_credit',
+      typeLabel: 'إشعار دائن (مرتجع مبيعات معتمد)',
+      partnerName: ret.clientName || 'عميل مبيعات',
+      description: `مرتجع مبيعات معتمد رقم (${ret.returnNumber}) — ${ret.sheetsCount} قطعة (${ret.thkMm} مم ${ret.directionLabel || ''} × ${ret.gradeName || ''})`,
+      totalAmount: totalReturnAmount,
+      paidAmount: totalReturnAmount,
+      remainingAmount: 0,
+      paymentMethod: 'تسوية مرتجع مبيعات',
+      createdBy: ret.requestedBy || currentUser.name,
+      approvedBy: currentUser.name,
+      updatedAt: now
+    });
+  }
+
+  // 4) Update salesReturn status
+  ret.status = 'approved';
+  ret.approvedBy = currentUser.name;
+  ret.approvedByRole = currentUser.roleTitle;
+  ret.approvedAt = now;
+  ret.updatedAt = now;
+
+  markNotifIdsSeen([`sret_app_${ret.id}`]);
+  saveState(
+    `✅ موافقة (${currentUser.name} - ${currentUser.roleTitle}) على مرتجع المبيعات رقم (${ret.returnNumber}) للعميل (${ret.clientName}) — تم إدخال (${ret.sheetsCount} قطعة) إلى رصيد المخزن مرة أخرى`
+  );
+}
+
+function rejectSalesReturn(retId) {
+  if (!canApproveSalesReturn(currentUser)) {
+    alert('⛔ عفواً، هذه الصلاحية للمدير التنفيذي أو مدير المشروعات أو المحاسب فقط!');
+    return;
+  }
+  const ret = (state.salesReturns || []).find(r => r.id === retId);
+  if (!ret) return;
+  if (!confirm(`هل أنت متأكد من رفض طلب مرتجع المبيعات رقم (${ret.returnNumber}) وعدم إدخاله للمخزن؟`)) return;
+
+  ret.status = 'rejected';
+  ret.rejectedBy = currentUser.name;
+  ret.updatedAt = new Date().toISOString();
+  saveState(`❌ رفض طلب مرتجع المبيعات رقم (${ret.returnNumber}) بواسطة ${currentUser.name}`);
+}
+
+function deleteSalesReturnRecord(retId) {
+  if (!isFullAdmin(currentUser)) {
+    alert('⛔ الحذف متاح للمدير التنفيذي أو مدير المشروعات فقط.');
+    return;
+  }
+  const ret = (state.salesReturns || []).find(r => r.id === retId);
+  if (!ret) return;
+  const wasApproved = ret.status === 'approved';
+  const msg = wasApproved
+    ? `⚠️ هذا المرتجع (${ret.returnNumber}) قد دخل المخزن بالفعل (${ret.sheetsCount} قطعة). عند الحذف سيتم خصم الكمية من الخلية وإلغاء حركة الدخول تلقائياً. هل تريد المتابعة؟`
+    : `هل أنت متأكد من حذف طلب مرتجع المبيعات رقم (${ret.returnNumber})؟`;
+  if (!confirm(msg)) return;
+
+  if (wasApproved) {
+    deductSheetsFromCellPallets(ret.thkId, ret.gradeId, ret.woodTypeId || 'wt-general', Number(ret.sheetsCount || 0), Number(ret.unitPrice || 0));
+    const movToDel = (state.warehouseMovements || []).filter(m => m.referenceCode === ret.returnNumber || m.voucherNumber === ret.returnNumber);
+    for (const m of movToDel) markRecordIdDeleted(m.id);
+    state.warehouseMovements = (state.warehouseMovements || []).filter(m => m.referenceCode !== ret.returnNumber && m.voucherNumber !== ret.returnNumber);
+  }
+
+  markRecordIdDeleted(ret.id);
+  state.salesReturns = (state.salesReturns || []).filter(r => r.id !== retId);
+  saveState(`🗑️ حذف سجل مرتجع المبيعات رقم (${ret.returnNumber}) بواسطة ${currentUser.name}`);
 }
 
 function toggleUserPerm(userId, permKey, checked) {
@@ -7123,23 +7653,41 @@ function downloadBackupJson() {
 }
 
 function exportPalletsCsv() {
+  const showPrices = canSeeFinancialPrices();
   const rows = [
-    ['كود البالتة', 'نوع الخشب', 'الطول سم', 'العرض سم', 'التخانة مم', 'درجة الجودة', 'عدد الأفرخ', 'المساحة م2', 'الحجم م3', 'القيمة', 'الحالة']
+    showPrices
+      ? ['كود البالتة', 'نوع الخشب', 'الطول سم', 'العرض سم', 'التخانة مم', 'درجة الجودة', 'عدد الأفرخ', 'المساحة م2', 'الحجم م3', 'القيمة', 'الحالة']
+      : ['كود البالتة', 'نوع الخشب', 'الطول سم', 'العرض سم', 'التخانة مم', 'درجة الجودة', 'عدد الأفرخ', 'المساحة م2', 'الحجم م3', 'الحالة']
   ];
   for (const p of (state.pallets || [])) {
-    rows.push([
-      p.palletCode,
-      p.woodTypeName,
-      p.lengthCm,
-      p.widthCm,
-      p.thicknessMm,
-      p.gradeName,
-      p.sheetsCount,
-      p.areaM2,
-      p.volumeM3,
-      p.totalValue,
-      p.status === 'in_stock' ? 'متاح' : 'منصرف'
-    ]);
+    rows.push(
+      showPrices
+        ? [
+            p.palletCode,
+            p.woodTypeName,
+            p.lengthCm,
+            p.widthCm,
+            p.thicknessMm,
+            p.gradeName,
+            p.sheetsCount,
+            p.areaM2,
+            p.volumeM3,
+            p.totalValue,
+            p.status === 'in_stock' ? 'متاح' : 'منصرف'
+          ]
+        : [
+            p.palletCode,
+            p.woodTypeName,
+            p.lengthCm,
+            p.widthCm,
+            p.thicknessMm,
+            p.gradeName,
+            p.sheetsCount,
+            p.areaM2,
+            p.volumeM3,
+            p.status === 'in_stock' ? 'متاح' : 'منصرف'
+          ]
+    );
   }
   const csvContent = '\uFEFF' + rows.map(r => r.join(',')).join('\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
