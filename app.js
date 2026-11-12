@@ -91,7 +91,22 @@ function fmtDate(iso) {
 }
 
 function getCellPriceKey(thkId, gradeId) {
-  return `${thkId}__${gradeId}`;
+  const safeThk = String(thkId || '').trim().replace(/[.#$/\[\]]/g, '_dot_');
+  const safeGrd = String(gradeId || '').trim().replace(/[.#$/\[\]]/g, '_dot_');
+  return `${safeThk}__${safeGrd}`;
+}
+
+function sanitizeCellPricesMap(rawPrices = {}) {
+  const clean = {};
+  if (!rawPrices || typeof rawPrices !== 'object') return clean;
+  for (const [k, v] of Object.entries(rawPrices)) {
+    const safeKey = String(k).replace(/[.#$/\[\]]/g, '_dot_');
+    const val = (v && typeof v === 'object') ? Number(v.price || 0) : Number(v || 0);
+    if (val > 0 || !(safeKey in clean)) {
+      clean[safeKey] = val;
+    }
+  }
+  return clean;
 }
 
 function getSortedThicknesses() {
@@ -101,13 +116,40 @@ function getSortedThicknesses() {
   });
 }
 
-function getCellUnitPrice(thkId, gradeId) {
+function getCellUnitPrice(thkId, gradeId, thkMm = null, direction = null) {
   if (!state || !state.catalog) return 0;
-  state.catalog.cellPrices = state.catalog.cellPrices || {};
-  const key = getCellPriceKey(thkId, gradeId);
-  const entry = state.catalog.cellPrices[key];
-  if (entry && typeof entry === 'object') return Number(entry.price || 0);
-  return Number(entry || 0);
+  state.catalog.cellPrices = sanitizeCellPricesMap(state.catalog.cellPrices || {});
+
+  // 1. Direct lookup by sanitized key (e.g. th-1_dot_5-qas__gr-...)
+  const safeKey = getCellPriceKey(thkId, gradeId);
+  const directVal = Number(state.catalog.cellPrices[safeKey] || 0);
+  if (directVal > 0) return directVal;
+
+  // 2. Lookup by matching thickness row (mm + direction) in catalog.thicknesses
+  const thkObj = (state.catalog.thicknesses || []).find(t =>
+    t.id === thkId ||
+    (thkMm !== null && Number(t.mm) === Number(thkMm) && (t.direction || 'qas') === (direction || 'qas'))
+  );
+  if (thkObj) {
+    const altKey = getCellPriceKey(thkObj.id, gradeId);
+    const altVal = Number(state.catalog.cellPrices[altKey] || 0);
+    if (altVal > 0) return altVal;
+
+    const canonicalId = `th-${Number(thkObj.mm)}-${thkObj.direction || 'qas'}`;
+    const canonKey = getCellPriceKey(canonicalId, gradeId);
+    const canonVal = Number(state.catalog.cellPrices[canonKey] || 0);
+    if (canonVal > 0) return canonVal;
+  }
+
+  // 3. Fallback: check pallets in this cell that have unitSheetPrice > 0
+  if (thkObj) {
+    const matchingPallet = (state.pallets || []).find(
+      p => matchPalletToThicknessRow(p, thkObj) && p.gradeId === gradeId && Number(p.unitSheetPrice || 0) > 0
+    );
+    if (matchingPallet) return Number(matchingPallet.unitSheetPrice);
+  }
+
+  return 0;
 }
 
 // Wood Veneer Engineering Calculations (250cm x 125cm x Thickness mm)
@@ -556,7 +598,7 @@ function normalizeState(s) {
   s.catalog.thicknesses = Array.isArray(s.catalog.thicknesses) ? s.catalog.thicknesses : [];
   s.catalog.grades = Array.isArray(s.catalog.grades) ? s.catalog.grades : [];
   s.catalog.dimensions = Array.isArray(s.catalog.dimensions) && s.catalog.dimensions.length > 0 ? s.catalog.dimensions : def.catalog.dimensions;
-  s.catalog.cellPrices = s.catalog.cellPrices && typeof s.catalog.cellPrices === 'object' ? s.catalog.cellPrices : {};
+  s.catalog.cellPrices = sanitizeCellPricesMap(s.catalog.cellPrices && typeof s.catalog.cellPrices === 'object' ? s.catalog.cellPrices : {});
 
   const arrayKeys = [
     'users', 'pallets', 'rawMaterials', 'scrapItems', 'spareParts',
@@ -653,7 +695,7 @@ function smartMergeClientState(current, incoming) {
       thicknesses: smartMergeListClient(current.catalog?.thicknesses, incoming.catalog?.thicknesses, delSet),
       grades: smartMergeListClient(current.catalog?.grades, incoming.catalog?.grades, delSet),
       dimensions: smartMergeListClient(current.catalog?.dimensions, incoming.catalog?.dimensions, delSet),
-      cellPrices: { ...(current.catalog?.cellPrices || {}), ...(incoming.catalog?.cellPrices || {}) }
+      cellPrices: sanitizeCellPricesMap({ ...(current.catalog?.cellPrices || {}), ...(incoming.catalog?.cellPrices || {}) })
     },
     deletedIds
   };
@@ -4186,24 +4228,59 @@ function getAvailableSheetsInCell(thkId, thkMm, direction, gradeId) {
 }
 
 function createDefaultDraftOrderItem() {
-  const firstWood = state.catalog.woodTypes[0] || { id: 'wt-general', name: 'قشرة خشبية (250×125)' };
-  const firstThk = state.catalog.thicknesses[0] || { id: 'th-1.5-qas', mm: 1.5, direction: 'qas', directionLabel: 'اتجاه قص' };
-  const firstGrade = state.catalog.grades[0] || { id: 'gr-general', code: 'A', name: 'جودة A' };
-  const defaultUnitPrice = getCellUnitPrice(firstThk.id, firstGrade.id) || 50;
+  const firstWood = state.catalog.woodTypes?.[0] || { id: 'wt-general', name: 'قشرة خشبية (250×125)' };
+  const sortedThk = getSortedThicknesses();
+  const grades = state.catalog.grades || [];
+
+  let chosenThk = sortedThk[0] || { id: 'th-1.5-qas', mm: 1.5, direction: 'qas', directionLabel: 'اتجاه قص' };
+  let chosenGrade = grades[0] || { id: 'gr-general', code: 'A', name: 'جودة A' };
+
+  // Prefer selecting a (thickness, grade) cell that has a price in the price table (and isn't already used in draftOrderItems if possible)
+  const usedKeys = new Set((draftOrderItems || []).map(i => getCellPriceKey(i.thicknessId, i.gradeId)));
+  let foundUnusedPriced = false;
+  for (const t of sortedThk) {
+    for (const g of grades) {
+      const p = getCellUnitPrice(t.id, g.id, t.mm, t.direction);
+      const avail = getAvailableSheetsInCell(t.id, t.mm, t.direction, g.id);
+      if ((p > 0 || avail > 0) && !usedKeys.has(getCellPriceKey(t.id, g.id))) {
+        chosenThk = t;
+        chosenGrade = g;
+        foundUnusedPriced = true;
+        break;
+      }
+    }
+    if (foundUnusedPriced) break;
+  }
+
+  if (!foundUnusedPriced) {
+    for (const t of sortedThk) {
+      for (const g of grades) {
+        if (getCellUnitPrice(t.id, g.id, t.mm, t.direction) > 0) {
+          chosenThk = t;
+          chosenGrade = g;
+          foundUnusedPriced = true;
+          break;
+        }
+      }
+      if (foundUnusedPriced) break;
+    }
+  }
+
+  const autoTablePrice = getCellUnitPrice(chosenThk.id, chosenGrade.id, chosenThk.mm, chosenThk.direction);
 
   return {
     id: uid('itm'),
     woodTypeId: firstWood.id,
     woodTypeName: firstWood.name,
-    thicknessId: firstThk.id,
-    thicknessMm: Number(firstThk.mm || 1.5),
-    direction: firstThk.direction || 'qas',
-    directionLabel: firstThk.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص',
-    gradeId: firstGrade.id,
-    gradeCode: firstGrade.code || 'A',
-    gradeName: firstGrade.name || 'جودة A',
+    thicknessId: chosenThk.id,
+    thicknessMm: Number(chosenThk.mm || 1.5),
+    direction: chosenThk.direction || 'qas',
+    directionLabel: chosenThk.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص',
+    gradeId: chosenGrade.id,
+    gradeCode: chosenGrade.code || 'A',
+    gradeName: chosenGrade.name || 'جودة A',
     sheetsCount: 200,
-    unitPrice: defaultUnitPrice
+    unitPrice: autoTablePrice
   };
 }
 
@@ -4332,14 +4409,14 @@ function removeDraftOrderItemRow(idx) {
 function onDraftItemThicknessSelect(idx, thkId) {
   const item = draftOrderItems[idx];
   if (!item) return;
-  const thkObj = state.catalog.thicknesses.find(t => t.id === thkId);
+  const thkObj = (state.catalog.thicknesses || []).find(t => t.id === thkId);
   if (thkObj) {
     item.thicknessId = thkObj.id;
     item.thicknessMm = Number(thkObj.mm);
     item.direction = thkObj.direction || 'qas';
     item.directionLabel = thkObj.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص';
-    const cellPrice = getCellUnitPrice(item.thicknessId, item.gradeId);
-    if (cellPrice > 0) item.unitPrice = cellPrice;
+    // Automatically set unitPrice from the price table (جدول الأسعار) while keeping it editable
+    item.unitPrice = getCellUnitPrice(item.thicknessId, item.gradeId, item.thicknessMm, item.direction);
   }
   renderDraftOrderItemsTable();
 }
@@ -4347,14 +4424,21 @@ function onDraftItemThicknessSelect(idx, thkId) {
 function onDraftItemGradeSelect(idx, gradeId) {
   const item = draftOrderItems[idx];
   if (!item) return;
-  const gradeObj = state.catalog.grades.find(g => g.id === gradeId);
+  const gradeObj = (state.catalog.grades || []).find(g => g.id === gradeId);
   if (gradeObj) {
     item.gradeId = gradeObj.id;
     item.gradeCode = gradeObj.code;
     item.gradeName = gradeObj.name;
-    const cellPrice = getCellUnitPrice(item.thicknessId, item.gradeId);
-    if (cellPrice > 0) item.unitPrice = cellPrice;
+    // Automatically set unitPrice from the price table (جدول الأسعار) while keeping it editable
+    item.unitPrice = getCellUnitPrice(item.thicknessId, item.gradeId, item.thicknessMm, item.direction);
   }
+  renderDraftOrderItemsTable();
+}
+
+function resetDraftItemToTablePrice(idx) {
+  const item = draftOrderItems[idx];
+  if (!item) return;
+  item.unitPrice = getCellUnitPrice(item.thicknessId, item.gradeId, item.thicknessMm, item.direction);
   renderDraftOrderItemsTable();
 }
 
@@ -4364,10 +4448,16 @@ function updateDraftItemNumeric(idx, field, val) {
   if (field === 'thicknessMm') {
     item.thicknessMm = Number(val || 1.5);
     item.thicknessId = `th-${item.thicknessMm}-${item.direction || 'qas'}`;
+    item.unitPrice = getCellUnitPrice(item.thicknessId, item.gradeId, item.thicknessMm, item.direction);
+    renderDraftOrderItemsTable();
+    return;
   } else if (field === 'direction') {
     item.direction = val;
     item.directionLabel = val === 'sada' ? 'اتجاه سدا' : 'اتجاه قص';
     item.thicknessId = `th-${item.thicknessMm}-${val}`;
+    item.unitPrice = getCellUnitPrice(item.thicknessId, item.gradeId, item.thicknessMm, item.direction);
+    renderDraftOrderItemsTable();
+    return;
   } else if (field === 'gradeName') {
     item.gradeName = val;
   } else if (field === 'sheetsCount') {
@@ -4382,7 +4472,8 @@ function renderDraftOrderItemsTable() {
   const container = document.getElementById('draft-order-items-container');
   if (!container) return;
 
-  const hasCatalogThk = (state.catalog.thicknesses || []).length > 0;
+  const sortedThk = getSortedThicknesses();
+  const hasCatalogThk = sortedThk.length > 0;
   const hasCatalogGrades = (state.catalog.grades || []).length > 0;
 
   container.innerHTML = `
@@ -4394,7 +4485,7 @@ function renderDraftOrderItemsTable() {
           <th>درجة الجودة</th>
           <th>الرصيد المتاح بالمخزن</th>
           <th>الكمية المطلوبة (قطعة 250×125)</th>
-          <th>سعر القطعة بالبيان (قابل للتعديل)</th>
+          <th>💰 سعر القطعة بالبيان (يوضع تلقائياً من جدول الأسعار وقابل للتعديل)</th>
           <th>إجمالي البند</th>
           <th>حذف</th>
         </tr>
@@ -4402,18 +4493,22 @@ function renderDraftOrderItemsTable() {
       <tbody>
         ${draftOrderItems.map((it, idx) => {
           const avail = getAvailableSheetsInCell(it.thicknessId, it.thicknessMm, it.direction, it.gradeId);
+          const tablePrice = getCellUnitPrice(it.thicknessId, it.gradeId, it.thicknessMm, it.direction);
           const itemTotal = +(Number(it.sheetsCount || 0) * Number(it.unitPrice || 0)).toFixed(2);
           return `
             <tr>
               <td><strong>${idx + 1}</strong></td>
               <td>
                 ${hasCatalogThk ? `
-                  <select class="form-control" onchange="onDraftItemThicknessSelect(${idx}, this.value)">
-                    ${state.catalog.thicknesses.map(t => `
-                      <option value="${t.id}" ${t.id === it.thicknessId ? 'selected' : ''}>
-                        ${t.mm} مم — ${t.direction === 'sada' ? '📏 اتجاه سدا' : '✂️ اتجاه قص'}
-                      </option>
-                    `).join('')}
+                  <select class="form-control" onchange="onDraftItemThicknessSelect(${idx}, this.value)" style="font-weight:700;">
+                    ${sortedThk.map(t => {
+                      const pForGrade = getCellUnitPrice(t.id, it.gradeId, t.mm, t.direction);
+                      return `
+                        <option value="${t.id}" ${t.id === it.thicknessId ? 'selected' : ''}>
+                          ${t.mm} مم — ${t.direction === 'sada' ? '📏 اتجاه سدا' : '✂️ اتجاه قص'}${pForGrade > 0 ? ' (سعر الجدول: ' + pForGrade + ' ج)' : ''}
+                        </option>
+                      `;
+                    }).join('')}
                   </select>
                 ` : `
                   <div style="display:flex;gap:4px;">
@@ -4427,10 +4522,15 @@ function renderDraftOrderItemsTable() {
               </td>
               <td>
                 ${hasCatalogGrades ? `
-                  <select class="form-control" onchange="onDraftItemGradeSelect(${idx}, this.value)">
-                    ${state.catalog.grades.map(g => `
-                      <option value="${g.id}" ${g.id === it.gradeId ? 'selected' : ''}>${g.name} (${g.code})</option>
-                    `).join('')}
+                  <select class="form-control" onchange="onDraftItemGradeSelect(${idx}, this.value)" style="font-weight:700;">
+                    ${state.catalog.grades.map(g => {
+                      const pForCell = getCellUnitPrice(it.thicknessId, g.id, it.thicknessMm, it.direction);
+                      return `
+                        <option value="${g.id}" ${g.id === it.gradeId ? 'selected' : ''}>
+                          ${g.name} (${g.code})${pForCell > 0 ? ' — ' + pForCell + ' ج.م' : ''}
+                        </option>
+                      `;
+                    }).join('')}
                   </select>
                 ` : `
                   <input class="form-control" value="${it.gradeName}" oninput="updateDraftItemNumeric(${idx}, 'gradeName', this.value)" placeholder="اسم الجودة" />
@@ -4445,7 +4545,15 @@ function renderDraftOrderItemsTable() {
                 <input type="number" min="1" class="form-control" style="width:110px;font-weight:800;" value="${it.sheetsCount}" oninput="updateDraftItemNumeric(${idx}, 'sheetsCount', this.value)" required />
               </td>
               <td>
-                <input type="number" step="0.5" min="0" class="form-control" style="width:120px;font-weight:800;border-color:var(--accent);" value="${it.unitPrice}" oninput="updateDraftItemNumeric(${idx}, 'unitPrice', this.value)" required />
+                <div style="display:flex;flex-direction:column;gap:3px;">
+                  <input type="number" step="0.5" min="0" class="form-control" style="width:130px;font-weight:800;border-color:var(--accent);" value="${it.unitPrice}" oninput="updateDraftItemNumeric(${idx}, 'unitPrice', this.value)" required />
+                  <small style="font-size:0.74rem;color:var(--text-muted);">
+                    سعر الجدول: <strong style="color:var(--primary);">${fmtNum(tablePrice, 2)} ج.م</strong>
+                    ${Number(it.unitPrice) !== Number(tablePrice) && tablePrice > 0 ? `
+                      <button type="button" class="btn btn-sm btn-outline" style="padding:1px 6px;font-size:0.68rem;margin-right:4px;" onclick="resetDraftItemToTablePrice(${idx})">🔄 استعادة (${tablePrice} ج)</button>
+                    ` : ''}
+                  </small>
+                </div>
               </td>
               <td>
                 <strong id="draft-item-total-${idx}" style="color:var(--primary);">${fmtMoney(itemTotal)}</strong>
@@ -4710,7 +4818,12 @@ function openClientOrderStatementModal(orderId) {
                     <td id="stmt-vol-${idx}">${fmtNum(it.volumeM3, 4)} م³</td>
                     ${canSeeFinancialPrices() ? `
                     <td>
-                      <input id="stmt-price-${idx}" type="number" step="0.5" min="0" class="form-control" style="width:125px;font-weight:800;border-color:var(--primary);" value="${it.unitPrice}" oninput="recalcStatementModalLive('${ord.id}')" required />
+                      <div style="display:flex;flex-direction:column;gap:3px;">
+                        <input id="stmt-price-${idx}" type="number" step="0.5" min="0" class="form-control" style="width:130px;font-weight:800;border-color:var(--primary);" value="${it.unitPrice}" oninput="recalcStatementModalLive('${ord.id}')" required />
+                        <small id="stmt-tbl-price-hint-${idx}" style="font-size:0.74rem;color:var(--text-muted);">
+                          سعر الجدول: <strong>${fmtNum(getCellUnitPrice(curThkId, it.gradeId, it.thicknessMm, it.direction), 2)} ج.م</strong>
+                        </small>
+                      </div>
                     </td>
                     <td>
                       <strong id="stmt-rowtotal-${idx}" style="color:var(--primary);">${fmtMoney(it.totalItemAmount)}</strong>
@@ -4788,14 +4901,24 @@ function recalcStatementModalLive(orderId, changedRowIdx = null) {
     const thkSel = document.getElementById(`stmt-thk-${idx}`);
     const grdSel = document.getElementById(`stmt-grd-${idx}`);
     let thkMm = it.thicknessMm;
+    let thkDir = it.direction || 'qas';
+    const curThkId = thkSel ? thkSel.value : (it.thicknessId || `th-${it.thicknessMm}-${thkDir}`);
+    const curGrdId = grdSel ? grdSel.value : it.gradeId;
     if (thkSel) {
       const tObj = (state.catalog?.thicknesses || []).find(t => t.id === thkSel.value);
-      if (tObj) thkMm = Number(tObj.mm);
+      if (tObj) {
+        thkMm = Number(tObj.mm);
+        thkDir = tObj.direction || 'qas';
+      }
     }
-    if (changedRowIdx === idx && thkSel && grdSel) {
-      const autoPrice = getCellUnitPrice(thkSel.value, grdSel.value);
+    const autoPrice = getCellUnitPrice(curThkId, curGrdId, thkMm, thkDir);
+    if (changedRowIdx === idx) {
       const prInput = document.getElementById(`stmt-price-${idx}`);
-      if (prInput && autoPrice > 0) prInput.value = autoPrice;
+      if (prInput) prInput.value = autoPrice;
+    }
+    const hintEl = document.getElementById(`stmt-tbl-price-hint-${idx}`);
+    if (hintEl) {
+      hintEl.innerHTML = `سعر الجدول: <strong>${fmtNum(autoPrice, 2)} ج.م</strong>`;
     }
 
     const sh = Number(document.getElementById(`stmt-sheets-${idx}`)?.value ?? it.sheetsCount ?? 0);
