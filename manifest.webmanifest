@@ -1,0 +1,20 @@
+{
+  "name": "مصنع العاصمة للصناعات المتخصصة - إدارة المخازن والإنتاج",
+  "short_name": "مصنع العاصمة",
+  "description": "نظام إدارة المخازن والإنتاج والحسابات المتخصص في القشرة الخشبية (250×125 سم) - مصنع العاصمة للصناعات المتخصصة",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "dir": "rtl",
+  "lang": "ar",
+  "background_color": "#0f172a",
+  "theme_color": "#b45309",
+  "icons": [
+    {
+      "src": "./icons/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
