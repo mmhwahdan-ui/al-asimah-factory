@@ -219,12 +219,12 @@ function inferActionScope(actionText = '') {
     permKeys.push('warehouses');
     if (targetTab === 'dashboard') targetTab = 'warehouses';
   }
-  if (txt.includes('أمر تجهيز') || txt.includes('تجهيز طلبية') || txt.includes('بيان للعميل') || txt.includes('أمر تشغيل') || txt.includes('التشغيل')) {
-    permKeys.push('production');
+  if (txt.includes('أمر تجهيز') || txt.includes('تجهيز طلبية') || txt.includes('طلبية') || txt.includes('تجهيز') || txt.includes('للتجهيز') || txt.includes('بيان للعميل') || txt.includes('بيان الطلبية') || txt.includes('أمر تشغيل') || txt.includes('التشغيل')) {
+    permKeys.push('production', 'warehouses');
     targetTab = 'production';
   }
-  if (txt.includes('اعتماد') || txt.includes('إذن صرف') || txt.includes('صرف للسيارة') || txt.includes('تحميل البضاعة')) {
-    permKeys.push('approvals');
+  if (txt.includes('اعتماد') || txt.includes('إذن صرف') || txt.includes('صرف للسيارة') || txt.includes('صرف الطلبية') || txt.includes('تحميل البضاعة') || txt.includes('سيارة')) {
+    permKeys.push('approvals', 'warehouses', 'production');
     targetTab = 'approvals';
   }
   if (txt.includes('صلاحية') || txt.includes('الباسورد')) {
@@ -327,9 +327,73 @@ function renderLiveBannerDOM() {
   `;
 }
 
-function checkIncomingNotifications(prevLogs = [], newLogs = [], prevChats = [], newChats = []) {
+function checkIncomingNotifications(prevLogs = [], newLogs = [], prevChats = [], newChats = [], prevOrders = [], newOrders = []) {
   if (!currentUser) return;
   const seen = getSeenNotifIds();
+
+  // 1) Direct live check for newly arrived or newly approved Preparation Orders & Car Dispatch Orders
+  const prevOrderStageMap = new Map((prevOrders || []).map(o => [o.id, o.stage || o.status]));
+  const isWarehouseOrAdmin = currentUser.roleKey === 'admin_manager' || currentUser.roleKey === 'warehouse_keeper' || isFullAdmin(currentUser);
+  const isAccountantRole = ['accountant', 'accounts_manager', 'accounting_manager'].includes(currentUser.roleKey) || isFullAdmin(currentUser);
+
+  for (const ord of (newOrders || [])) {
+    if (!ord || !ord.id) continue;
+    const curStage = ord.stage || ord.status;
+    const oldStage = prevOrderStageMap.get(ord.id);
+    const stageAlertKey = `ord_stage_${ord.id}_${curStage}`;
+
+    if (curStage !== oldStage && !seen.has(stageAlertKey)) {
+      if (curStage === 'pending_warehouse_prep' && isWarehouseOrAdmin) {
+        playLongAlertSound(true);
+        showLiveBannerAlert({
+          id: stageAlertKey,
+          userName: ord.executiveApprovedBy || ord.requestedBy || 'الإدارة',
+          roleTitle: 'أمر تجهيز طلبية فوري',
+          action: `📦 أمر تجهيز طلبية جديد (${ord.orderNumber}) لصالح العميل (${ord.clientName}) — إجمالي الكمية: ${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة (${fmtNum(ord.totalVolumeM3 || 0, 4)} م³) جاهز للتجهيز الآن!`,
+          targetTab: 'production'
+        });
+        markNotifIdsSeen([stageAlertKey]);
+        return;
+      }
+      if (curStage === 'ready_for_car_dispatch' && isWarehouseOrAdmin) {
+        playLongAlertSound(true);
+        showLiveBannerAlert({
+          id: stageAlertKey,
+          userName: ord.accountantReleaseBy || 'الحسابات',
+          roleTitle: 'أمر صرف وتحميل سيارة فوري',
+          action: `🚚 أمر فوري بصرف الطلبية (${ord.orderNumber}) للعميل (${ord.clientName}) وعمل إذن صرف للسيارة المحملة (${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة)!`,
+          targetTab: 'approvals'
+        });
+        markNotifIdsSeen([stageAlertKey]);
+        return;
+      }
+      if (curStage === 'pending_executive' && isFullAdmin(currentUser)) {
+        playLongAlertSound(true);
+        showLiveBannerAlert({
+          id: stageAlertKey,
+          userName: ord.requestedBy || 'المحاسب',
+          roleTitle: 'طلب موافقة على بيان طلبية',
+          action: `📋 بيان وأمر تجهيز طلبية جديد (${ord.orderNumber}) للعميل (${ord.clientName}) بانتظار موافقة المدير التنفيذي أو مدير المشروعات ليظهر للمخزن والمدير الإداري`,
+          targetTab: 'production'
+        });
+        markNotifIdsSeen([stageAlertKey]);
+        return;
+      }
+      if (curStage === 'pending_accountant_release' && isAccountantRole) {
+        playLongAlertSound(true);
+        showLiveBannerAlert({
+          id: stageAlertKey,
+          userName: ord.warehousePrepApprovedBy || 'المخزن/الإدارة',
+          roleTitle: 'تم تجهيز الطلبية بالمخزن',
+          action: `✅ تمت موافقة (${ord.warehousePrepApprovedBy || 'المخزن'}) على تجهيز الطلبية (${ord.orderNumber}) للعميل (${ord.clientName}) — بانتظار عمل حسابات العميل واعتماد إذن الصرف`,
+          targetTab: 'approvals'
+        });
+        markNotifIdsSeen([stageAlertKey]);
+        return;
+      }
+    }
+  }
+
   const prevLogIds = new Set((prevLogs || []).map(l => l.id));
 
   // Find newly arrived logs that currentUser has permission to view
@@ -347,7 +411,7 @@ function checkIncomingNotifications(prevLogs = [], newLogs = [], prevChats = [],
   );
 
   if (freshAuthorizedChats.length > 0) {
-    const latestChat = freshAuthorizedChats[0];
+    const latestChat = freshAuthorizedChats[freshAuthorizedChats.length - 1];
     const isUrgent = latestChat.msgType === 'urgent' || latestChat.msgType === 'task';
     playLongAlertSound(isUrgent);
     showLiveBannerAlert({
@@ -448,6 +512,21 @@ function normalizeState(s) {
     }
   }
   if (s.users.length === 0) s.users = def.users;
+
+  // Keep newest records first (index 0) so new orders, movements, and notifications always appear at the top
+  const descTimeKeys = ['productionOrders', 'warehouseMovements', 'financialTransactions', 'palletMovements', 'auditLogs'];
+  for (const tk of descTimeKeys) {
+    s[tk].sort((a, b) => {
+      const tA = new Date(a?.updatedAt || a?.timestamp || a?.createdAt || a?.date || 0).getTime() || 0;
+      const tB = new Date(b?.updatedAt || b?.timestamp || b?.createdAt || b?.date || 0).getTime() || 0;
+      return tB - tA;
+    });
+  }
+  s.chatMessages.sort((a, b) => {
+    const tA = new Date(a?.createdAt || a?.updatedAt || 0).getTime() || 0;
+    const tB = new Date(b?.createdAt || b?.updatedAt || 0).getTime() || 0;
+    return tA - tB;
+  });
 
   s.treasuryBalances = {
     cashVault: 0,
@@ -662,18 +741,16 @@ async function loadData() {
     if (currentUser) {
       markNotifIdsSeen([
         ...(state.auditLogs || []).map(l => l.id),
-        ...(state.chatMessages || []).map(c => c.id)
+        ...(state.chatMessages || []).map(c => c.id),
+        ...(state.productionOrders || []).map(o => `ord_stage_${o.id}_${o.stage || o.status}`)
       ]);
     }
   }
   render();
 }
 
-// Live Polling so any sales exit, warehouse update, or chat/task triggers immediate long sound alert for authorized users
+// Live Polling (every 2.5s) so any order preparation, approval, warehouse update, or chat triggers immediate long sound alert for authorized users
 setInterval(async () => {
-  const modalOpen = document.getElementById('modal-root')?.innerHTML.trim() !== '';
-  const activeTag = document.activeElement?.tagName;
-  if (modalOpen || activeTag === 'INPUT' || activeTag === 'SELECT' || activeTag === 'TEXTAREA') return;
   try {
     const fresh = await fetchRemoteState();
     if (fresh && fresh.users) {
@@ -683,14 +760,20 @@ setInterval(async () => {
       if (oldJson !== newJson) {
         const prevLogs = state?.auditLogs || [];
         const prevChats = state?.chatMessages || [];
+        const prevOrders = state?.productionOrders || [];
         state = mergedFresh;
-        state.chatMessages = state.chatMessages || [];
         localStorage.setItem(STORAGE_KEY, newJson);
         if (currentUser) {
           currentUser = state.users.find(u => u.id === currentUser.id) || currentUser;
-          checkIncomingNotifications(prevLogs, state.auditLogs || [], prevChats, state.chatMessages || []);
+          checkIncomingNotifications(prevLogs, state.auditLogs || [], prevChats, state.chatMessages || [], prevOrders, state.productionOrders || []);
         }
-        render();
+        const modalOpen = document.getElementById('modal-root')?.innerHTML.trim() !== '';
+        const activeTag = document.activeElement?.tagName;
+        if (!modalOpen && activeTag !== 'INPUT' && activeTag !== 'TEXTAREA') {
+          render();
+        } else {
+          renderLiveBannerDOM();
+        }
       }
       isOnline = true;
       updateSyncIndicator();
@@ -699,7 +782,7 @@ setInterval(async () => {
     isOnline = false;
     updateSyncIndicator();
   }
-}, 3000);
+}, 2500);
 
 async function saveState(logMessage = '', hiddenFromRoles = []) {
   if (!state) return;
@@ -1574,12 +1657,28 @@ function renderDashboard() {
   const lowStockParts = (state.spareParts || []).filter(sp => Number(sp.quantity) <= Number(sp.minThreshold));
   const totalAlerts = lowStockRaw.length + lowStockParts.length;
 
-  const completedOrders = (state.productionOrders || []).filter(o => o.status === 'completed');
+  const completedOrders = (state.productionOrders || []).filter(o => o.status === 'completed' || o.stage === 'completed');
   const avgYield = completedOrders.length
     ? (completedOrders.reduce((s, o) => s + Number(o.yieldPercentage || 0), 0) / completedOrders.length).toFixed(1)
     : 0;
 
+  const isExec = isFullAdmin(currentUser);
+  const isWarehouseOrAdmin = currentUser.roleKey === 'admin_manager' || currentUser.roleKey === 'warehouse_keeper' || isExec;
+  const isAccountantRole = ['accountant', 'accounts_manager', 'accounting_manager'].includes(currentUser.roleKey) || isExec;
+
+  const prepOrdersForWarehouse = (state.productionOrders || []).filter(o => (o.stage || o.status) === 'pending_warehouse_prep');
+  const carDispatchOrdersForWarehouse = (state.productionOrders || []).filter(o => (o.stage || o.status) === 'ready_for_car_dispatch');
+  const execPendingOrders = (state.productionOrders || []).filter(o => (o.stage || o.status) === 'pending_executive');
+  const accountantPendingOrders = (state.productionOrders || []).filter(o => (o.stage || o.status) === 'pending_accountant_release');
+
+  const activeVisibleOrders = (state.productionOrders || []).filter(o => {
+    const st = o.stage || o.status;
+    if (st === 'completed') return false;
+    return canUserSeeOrderInPrep(currentUser, o);
+  });
+
   const pendingReqs = (state.approvalRequests || []).filter(r => r.stage === 'pending_financial' || r.stage === 'pending_warehouse');
+  const totalActionableOrders = activeVisibleOrders.length + pendingReqs.length;
 
   // Quick calculator computation
   const qcMetrics = calculateVeneerMetrics(
@@ -1592,6 +1691,72 @@ function renderDashboard() {
   const qcTotalValue = qcMetrics.totalVolumeM3 * Number(quickCalc.pricePerM3 || 0);
 
   return `
+    ${isWarehouseOrAdmin && prepOrdersForWarehouse.length > 0 ? `
+      <div class="card" style="background:rgba(217,119,6,0.12);border:2px solid #d97706;padding:16px 20px;margin-bottom:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <div style="font-weight:900;font-size:1.08rem;color:#b45309;">
+              📦 تنبيه فوري للمدير الإداري وأمين المخزن: يوجد (${prepOrdersForWarehouse.length}) أمر تجهيز طلبية معتمد وجاهز للتجهيز الآن!
+            </div>
+            <div style="font-size:0.9rem;margin-top:4px;">
+              ${prepOrdersForWarehouse.map(o => `<strong>${o.orderNumber}</strong> للعميل <strong>${o.clientName}</strong> (${fmtNum(o.totalSheetsCount || 0, 0)} قطعة)`).join(' — ')}
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="setTab('production')">
+            📋 فتح أوامر تجهيز الطلبيات والموافقة الآن
+          </button>
+        </div>
+      </div>
+    ` : ''}
+
+    ${isWarehouseOrAdmin && carDispatchOrdersForWarehouse.length > 0 ? `
+      <div class="card" style="background:rgba(220,38,38,0.1);border:2px solid var(--danger);padding:16px 20px;margin-bottom:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <div style="font-weight:900;font-size:1.08rem;color:var(--danger);">
+              🚚 أمر فوري بصرف الطلبية وتحميل السيارة: يوجد (${carDispatchOrdersForWarehouse.length}) طلبية معتمدة من الحسابات وجاهزة للتحميل!
+            </div>
+            <div style="font-size:0.9rem;margin-top:4px;">
+              ${carDispatchOrdersForWarehouse.map(o => `<strong>${o.orderNumber}</strong> للعميل <strong>${o.clientName}</strong> (${fmtNum(o.totalSheetsCount || 0, 0)} قطعة)`).join(' — ')}
+            </div>
+          </div>
+          <button class="btn btn-danger" onclick="setTab('approvals')">
+            🚚 فتح إذن صرف السيارة الآن
+          </button>
+        </div>
+      </div>
+    ` : ''}
+
+    ${isExec && execPendingOrders.length > 0 ? `
+      <div class="card" style="background:rgba(37,99,235,0.1);border:2px solid #2563eb;padding:16px 20px;margin-bottom:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <div style="font-weight:900;font-size:1.05rem;color:#1d4ed8;">
+              📋 بانتظار موافقة المدير التنفيذي / مدير المشروعات: يوجد (${execPendingOrders.length}) بيان طلبية جديد ليظهر للمدير الإداري وأمين المخزن!
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="setTab('production')">
+            ✅ مراجعة وموافقة الآن
+          </button>
+        </div>
+      </div>
+    ` : ''}
+
+    ${isAccountantRole && accountantPendingOrders.length > 0 ? `
+      <div class="card" style="background:rgba(124,58,237,0.1);border:2px solid #7c3aed;padding:16px 20px;margin-bottom:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <div style="font-weight:900;font-size:1.05rem;color:#7c3aed;">
+              💳 تنبيه للحسابات: يوجد (${accountantPendingOrders.length}) طلبية تم تجهيزها بالمخزن وبانتظار عمل حسابات العميل واعتماد إذن الصرف!
+            </div>
+          </div>
+          <button class="btn btn-primary" style="background:#7c3aed;" onclick="setTab('approvals')">
+            💳 فتح اعتماد أذون الصرف الآن
+          </button>
+        </div>
+      </div>
+    ` : ''}
+
     <!-- Top Stats -->
     <div class="stats-grid">
       <div class="stat-card">
@@ -1612,10 +1777,10 @@ function renderDashboard() {
         <div class="stat-sub">متوسط نسبة التصافي في التشغيل: <strong>${avgYield}%</strong></div>
       </div>
 
-      <div class="stat-card ${pendingReqs.length > 0 ? 'danger' : 'success'}">
-        <span class="stat-title">الاعتمادات والتنبيهات العاجلة</span>
-        <div class="stat-value">${pendingReqs.length} طلب اعتماد</div>
-        <div class="stat-sub">نواقص الخامات وقطع الغيار: <strong>${totalAlerts}</strong> أصناف</div>
+      <div class="stat-card ${totalActionableOrders > 0 ? 'danger' : 'success'}" style="cursor:pointer;" onclick="setTab('production')">
+        <span class="stat-title">أوامر تجهيز الطلبيات والاعتمادات الجارية</span>
+        <div class="stat-value">${totalActionableOrders} طلب جاري</div>
+        <div class="stat-sub">اضغط لفتح أوامر التجهيز | نواقص الخامات: <strong>${totalAlerts}</strong></div>
       </div>
     </div>
 
@@ -1699,34 +1864,36 @@ function renderDashboard() {
       </div>
     </div>
 
-    <!-- Two Columns: Pending Approvals & Warehouse Summary by Grade/Thickness -->
+    <!-- Two Columns: Active Client Preparation Orders & Warehouse Summary by Grade/Thickness -->
     <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(420px, 1fr));gap:20px;">
       <div class="card">
         <div class="card-header">
-          <div class="card-title">⏳ أذون الصرف وطلبات الاعتماد الجارية</div>
-          <button class="btn btn-sm btn-outline" onclick="setTab('approvals')">عرض الكل</button>
+          <div class="card-title">⏳ أوامر تجهيز الطلبيات وأذون الصرف الجارية</div>
+          <button class="btn btn-sm btn-primary" onclick="setTab('production')">عرض أوامر التجهيز (${activeVisibleOrders.length})</button>
         </div>
-        ${pendingReqs.length === 0 ? `<p style="color:var(--text-muted);font-size:0.9rem;">لا توجد طلبات معلقة حالياً.</p>` : `
+        ${activeVisibleOrders.length === 0 ? `<p style="color:var(--text-muted);font-size:0.9rem;">لا توجد أوامر تجهيز طلبيات معلقة حالياً.</p>` : `
           <div class="table-responsive">
             <table>
               <thead>
                 <tr>
-                  <th>رقم الإذن</th>
-                  <th>العميل / المشروع</th>
-                  <th>المواصفات والكمية</th>
+                  <th>رقم الطلبية</th>
+                  <th>العميل</th>
+                  <th>إجمالي الكمية</th>
                   <th>المرحلة الحالية</th>
+                  <th>إجراء</th>
                 </tr>
               </thead>
               <tbody>
-                ${pendingReqs.map(r => `
+                ${activeVisibleOrders.map(o => `
                   <tr>
-                    <td><strong>${r.requestNumber}</strong></td>
-                    <td>${r.clientOrProjectName}</td>
-                    <td>${r.woodTypeName} (${r.thicknessMm} مم) - ${fmtNum(r.volumeM3, 3)} م³</td>
+                    <td><strong>${o.orderNumber}</strong><br/><small>${o.date || ''}</small></td>
+                    <td><strong>${o.clientName}</strong></td>
+                    <td><strong>${fmtNum(o.totalSheetsCount || 0, 0)} قطعة</strong> (${fmtNum(o.totalVolumeM3 || 0, 3)} م³)</td>
+                    <td>${getOrderStageBadge(o)}</td>
                     <td>
-                      <span class="badge ${r.stage === 'pending_financial' ? 'badge-warning' : 'badge-info'}">
-                        ${r.stage === 'pending_financial' ? 'بانتظار اعتماد الحسابات' : 'معتمد مالياً - بانتظار صرف المخزن'}
-                      </span>
+                      <button class="btn btn-sm btn-primary" onclick="setTab('${(o.stage === 'pending_accountant_release' || o.stage === 'ready_for_car_dispatch') ? 'approvals' : 'production'}')">
+                        👁️ فتح
+                      </button>
                     </td>
                   </tr>
                 `).join('')}
@@ -4138,6 +4305,9 @@ function submitNewClientOrderPrep(e) {
   const totalAreaM2 = +draftOrderItems.reduce((s, i) => s + Number(i.areaM2 || 0), 0).toFixed(4);
   const totalVolumeM3 = +draftOrderItems.reduce((s, i) => s + Number(i.volumeM3 || 0), 0).toFixed(4);
 
+  const createdByExec = isFullAdmin(currentUser);
+  const initialStage = createdByExec ? 'pending_warehouse_prep' : 'pending_executive';
+
   const newOrder = {
     id: uid('ord'),
     orderNumber,
@@ -4157,12 +4327,10 @@ function submitNewClientOrderPrep(e) {
     discountValue: draftOrderDiscountValue,
     discountAmount,
     netTotalAmount,
-    // If created by CEO or Projects Manager directly, they can either keep it in pending_executive or approve immediately,
-    // but per workflow rule: starts in pending_executive (or if creator is CEO/Projects Manager, let's still show the approval button or let them approve in 1 click)
-    stage: 'pending_executive',
+    stage: initialStage,
     status: 'in_progress',
-    executiveApprovedBy: '',
-    executiveApprovedAt: '',
+    executiveApprovedBy: createdByExec ? currentUser.name : '',
+    executiveApprovedAt: createdByExec ? now : '',
     warehousePrepApprovedBy: '',
     warehousePrepApprovedAt: '',
     accountantReleaseBy: '',
@@ -4175,13 +4343,24 @@ function submitNewClientOrderPrep(e) {
   };
 
   state.productionOrders.unshift(newOrder);
+  if (currentUser) {
+    markNotifIdsSeen([`ord_stage_${newOrder.id}_${initialStage}`]);
+  }
   closeModal();
   activeTab = 'production';
-  // Hide this notification from admin_manager & warehouse_keeper until CEO or Projects Manager approves it!
-  saveState(
-    `📋 إنشاء أمر تجهيز طلبية وبيان للعميل (${clientObj.name} - ${clientObj.code || ''}) رقم ${orderNumber} بصافي ${fmtMoney(netTotalAmount)} — بانتظار موافقة المدير التنفيذي أو مدير المشروعات`,
-    ['admin_manager', 'warehouse_keeper', 'operations_manager']
-  );
+
+  if (createdByExec) {
+    // Created directly by CEO or Projects Manager -> immediately visible & alerted to Admin Manager and Warehouse Keeper!
+    saveState(
+      `📦 أمر تجهيز طلبية جديد (${orderNumber}) للعميل (${clientObj.name} - ${clientObj.code || ''}) معتمد من ${currentUser.name} — جاهز الآن للمدير الإداري وأمين المخزن لتجهيز الطلبية (${totalSheetsCount} قطعة)`
+    );
+  } else {
+    // Created by Accountant -> hidden from admin_manager & warehouse_keeper until CEO or Projects Manager approves it
+    saveState(
+      `📋 إنشاء أمر تجهيز طلبية وبيان للعميل (${clientObj.name} - ${clientObj.code || ''}) رقم ${orderNumber} بصافي ${fmtMoney(netTotalAmount)} — بانتظار موافقة المدير التنفيذي أو مدير المشروعات`,
+      ['admin_manager', 'warehouse_keeper', 'operations_manager']
+    );
+  }
 }
 
 // ============================================================================
@@ -4554,6 +4733,7 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
     ord.stage = 'pending_warehouse_prep';
     ord.executiveApprovedBy = currentUser.name;
     ord.executiveApprovedAt = ord.updatedAt;
+    if (currentUser) markNotifIdsSeen([`ord_stage_${ord.id}_pending_warehouse_prep`]);
     closeModal();
     saveState(`✅ موافقة ${currentUser.name} على بيان الطلبية ${ord.orderNumber} للعميل (${ord.clientName}) بصافي ${fmtMoney(net)} — أصبحت ظاهرة الآن للمدير الإداري وأمين المخزن لتجهيزها`);
     return;
@@ -4580,6 +4760,7 @@ function approveOrderExecutive(orderId) {
   ord.executiveApprovedBy = currentUser.name;
   ord.executiveApprovedAt = now;
   ord.updatedAt = now;
+  if (currentUser) markNotifIdsSeen([`ord_stage_${ord.id}_pending_warehouse_prep`]);
 
   saveState(`✅ موافقة ${currentUser.name} على بيان الطلبية (${ord.orderNumber}) للعميل ${ord.clientName} — ظهرت الآن للمدير الإداري وأمين المخزن للتجهيز والموافقة`);
 }
@@ -4593,6 +4774,7 @@ function approveOrderWarehousePrep(orderId) {
   ord.warehousePrepApprovedBy = currentUser.name;
   ord.warehousePrepApprovedAt = now;
   ord.updatedAt = now;
+  if (currentUser) markNotifIdsSeen([`ord_stage_${ord.id}_pending_accountant_release`]);
 
   saveState(`📦 موافقة (${currentUser.name}) على تجهيز الطلبية (${ord.orderNumber}) للعميل ${ord.clientName} — تم تحويلها إلى المحاسب في (اعتماد أذون الصرف)`);
 }
