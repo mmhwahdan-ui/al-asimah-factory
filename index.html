@@ -15,10 +15,10 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./icons/logo.svg" />
   <link rel="apple-touch-icon" href="./icons/logo.svg" />
-  <link rel="stylesheet" href="./styles.css?v=17" />
+  <link rel="stylesheet" href="./styles.css?v=18" />
   <script>
     (function() {
-      var TARGET_VER = 'v17';
+      var TARGET_VER = 'v18';
       if (localStorage.getItem('al_asimah_app_ver') !== TARGET_VER) {
         localStorage.setItem('al_asimah_app_ver', TARGET_VER);
         if ('caches' in window) {
@@ -45,16 +45,16 @@
   <div id="modal-root"></div>
   <div id="print-area"></div>
 
-  <script src="./app.js?v=17"></script>
+  <script src="./app.js?v=18"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.addEventListener('message', (e) => {
-        if (e.data && e.data.type === 'FORCE_RELOAD_V17') {
+        if (e.data && e.data.type === 'FORCE_RELOAD_V18') {
           window.location.reload();
         }
       });
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js?v=17').then(reg => {
+        navigator.serviceWorker.register('./sw.js?v=18').then(reg => {
           reg.update();
         }).catch(() => {});
       });

@@ -828,9 +828,34 @@ tr:hover td {
   }
 }
 
-/* Print Area */
+/* Print Area & On-Screen Print Preview Mode */
 #print-area {
   display: none;
+}
+
+body.is-printing-mode {
+  background: #ffffff !important;
+  color: #000000 !important;
+  overflow-y: auto !important;
+}
+
+body.is-printing-mode #app,
+body.is-printing-mode #modal-root,
+body.is-printing-mode .live-alert-banner,
+body.is-printing-mode .floating-chat-fab {
+  display: none !important;
+}
+
+body.is-printing-mode #print-area {
+  display: block !important;
+  visibility: visible !important;
+  position: relative !important;
+  z-index: 99999 !important;
+  width: 100% !important;
+  min-height: 100vh !important;
+  background: #ffffff !important;
+  color: #000000 !important;
+  padding: 16px !important;
 }
 
 @media print {
@@ -838,16 +863,21 @@ tr:hover td {
     margin: 8mm;
   }
   html, body {
-    background: #fff !important;
-    color: #000 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
     margin: 0 !important;
     padding: 0 !important;
     height: auto !important;
+    min-height: 0 !important;
     overflow: visible !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
-  body > *:not(#print-area) {
+  #app,
+  #modal-root,
+  .live-alert-banner,
+  .floating-chat-fab,
+  .no-print-bar {
     display: none !important;
   }
   #print-area, #print-area * {
@@ -857,9 +887,10 @@ tr:hover td {
     display: block !important;
     position: static !important;
     width: 100% !important;
-    background: #fff !important;
-    color: #000 !important;
-    padding: 4px !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    padding: 0 !important;
+    margin: 0 !important;
   }
   #print-area table {
     width: 100% !important;

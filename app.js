@@ -892,9 +892,9 @@ setInterval(async () => {
         }
         const modalOpen = document.getElementById('modal-root')?.innerHTML.trim() !== '';
         const activeTag = document.activeElement?.tagName;
-        if (!modalOpen && activeTag !== 'INPUT' && activeTag !== 'TEXTAREA') {
+        if (!window._isPrintingActive && !modalOpen && activeTag !== 'INPUT' && activeTag !== 'TEXTAREA' && activeTag !== 'SELECT') {
           render();
-        } else {
+        } else if (!window._isPrintingActive) {
           renderLiveBannerDOM();
         }
       }
@@ -1139,6 +1139,7 @@ function setTab(tabName) {
 
 // Main Render Entry
 function render() {
+  if (window._isPrintingActive) return;
   const appEl = document.getElementById('app');
   if (!state) {
     appEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-weight:700;font-size:1.2rem;">جاري تحميل نظام مصنع العاصمة للصناعات المتخصصة...</div>`;
@@ -1149,6 +1150,19 @@ function render() {
   if (!currentUser) {
     appEl.innerHTML = renderLoginScreen();
     return;
+  }
+
+  // Preserve active input focus & cursor position across re-renders
+  const activeEl = document.activeElement;
+  const focusedId = (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') && activeEl.id) ? activeEl.id : null;
+  const focusedVal = focusedId ? activeEl.value : null;
+  let focusedSelStart = null;
+  let focusedSelEnd = null;
+  if (focusedId) {
+    try {
+      focusedSelStart = activeEl.selectionStart;
+      focusedSelEnd = activeEl.selectionEnd;
+    } catch (_) {}
   }
 
   const isExecRole = isFullAdmin(currentUser);
@@ -1313,6 +1327,20 @@ function render() {
     ` : ''}
   `;
   renderLiveBannerDOM();
+
+  if (focusedId) {
+    const restoredEl = document.getElementById(focusedId);
+    if (restoredEl) {
+      if (focusedVal !== null && restoredEl.value !== focusedVal) {
+        restoredEl.value = focusedVal;
+      }
+      restoredEl.focus();
+      try {
+        const len = restoredEl.value.length;
+        restoredEl.setSelectionRange(focusedSelStart ?? len, focusedSelEnd ?? len);
+      } catch (_) {}
+    }
+  }
 }
 
 function renderLoginScreen() {
@@ -3048,6 +3076,93 @@ function renderWarehouseMovements() {
 // HELPER: CLIENT METRICS (ORDERS, DEBTS/RECEIVABLES, AND WOODEN PALLETS LEDGER)
 // ============================================================================
 let clientSearchQuery = '';
+let ordersSearchQuery = '';
+
+function matchesClientSearchQuery(code, name, phone, city, extraText, rawQuery) {
+  if (!rawQuery || !rawQuery.trim()) return true;
+  const q = rawQuery.trim().toLowerCase();
+  const qNorm = q.replace(/[\s\-_]/g, '');
+  const fields = [code || '', name || '', phone || '', city || '', extraText || ''];
+  return fields.some(f => {
+    const low = String(f).toLowerCase();
+    const norm = low.replace(/[\s\-_]/g, '');
+    return low.includes(q) || (qNorm.length > 0 && norm.includes(qNorm));
+  });
+}
+
+function handleClientSearchInput(val) {
+  clientSearchQuery = val;
+  const tbody = document.getElementById('clients-directory-tbody');
+  if (!tbody) return;
+  const rows = tbody.querySelectorAll('tr[data-client-search]');
+  const emptyRow = document.getElementById('clients-empty-search-row');
+  let visibleCount = 0;
+  rows.forEach(tr => {
+    const code = tr.getAttribute('data-code') || '';
+    const name = tr.getAttribute('data-name') || '';
+    const phone = tr.getAttribute('data-phone') || '';
+    const city = tr.getAttribute('data-city') || '';
+    const matched = matchesClientSearchQuery(code, name, phone, city, '', val);
+    tr.style.display = matched ? '' : 'none';
+    if (matched) visibleCount++;
+  });
+  if (emptyRow) {
+    emptyRow.style.display = visibleCount === 0 ? '' : 'none';
+  }
+  const clearBtn = document.getElementById('client-search-clear-btn');
+  if (clearBtn) {
+    clearBtn.style.display = val.trim() ? 'inline-flex' : 'none';
+  }
+}
+
+function handleOrdersSearchInput(val) {
+  ordersSearchQuery = val;
+  const tbody = document.getElementById('orders-table-tbody');
+  if (!tbody) return;
+  const rows = tbody.querySelectorAll('tr[data-order-search]');
+  rows.forEach(tr => {
+    const code = tr.getAttribute('data-code') || '';
+    const name = tr.getAttribute('data-name') || '';
+    const ordNum = tr.getAttribute('data-ordnum') || '';
+    const matched = matchesClientSearchQuery(code, name, '', '', ordNum, val);
+    tr.style.display = matched ? '' : 'none';
+  });
+  const clearBtn = document.getElementById('orders-search-clear-btn');
+  if (clearBtn) {
+    clearBtn.style.display = val.trim() ? 'inline-flex' : 'none';
+  }
+}
+
+function handleOrderModalClientSearch(val) {
+  const sel = document.getElementById('ord-client');
+  const statusEl = document.getElementById('ord-client-search-status');
+  if (!sel) return;
+  const clients = (state.partners || []).filter(pt => pt.type !== 'supplier');
+  const q = (val || '').trim();
+  if (!q) {
+    Array.from(sel.options).forEach(opt => { opt.hidden = false; });
+    if (statusEl) statusEl.innerHTML = '';
+    return;
+  }
+  // Find best match (exact code match first, then partial match)
+  const qNorm = q.toLowerCase().replace(/[\s\-_]/g, '');
+  let exactMatch = null;
+  const matchedClients = clients.filter(c => {
+    const cCodeNorm = String(c.code || '').toLowerCase().replace(/[\s\-_]/g, '');
+    if (cCodeNorm === qNorm || cCodeNorm === `cl${qNorm}`) exactMatch = c;
+    return matchesClientSearchQuery(c.code, c.name, c.phone, c.city, '', q);
+  });
+
+  const chosen = exactMatch || matchedClients[0] || null;
+  if (chosen) {
+    sel.value = chosen.id;
+    if (statusEl) {
+      statusEl.innerHTML = `<span class="badge badge-success">✅ تم اختيار العميل: [${chosen.code || 'CL'}] ${chosen.name} (${matchedClients.length} مطابق)</span>`;
+    }
+  } else if (statusEl) {
+    statusEl.innerHTML = `<span class="badge badge-danger">⚠️ لا يوجد عميل مطابق للكود/الاسم "${q}"</span>`;
+  }
+}
 
 function computeClientMetrics(pt) {
   if (!pt) return { orders: [], txs: [], palletMoves: [], totalInvoiced: 0, totalPaid: 0, netDebt: 0, palletsDelivered: 0, palletsReceived: 0, netPalletsAtClient: 0 };
@@ -3204,6 +3319,11 @@ function renderProduction() {
           <small>يمكن للمحاسب أو الإدارة الضغط على "إنشاء أمر تجهيز طلبية للعميل" لإضافة طلبية بتخانات وجودات متعددة وإصدار بيان للعميل.</small>
         </div>
       ` : `
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;background:var(--bg-elevated);padding:8px 12px;border-radius:10px;">
+          <span style="font-size:0.78rem;font-weight:700;">🔍 بحث بكود العميل أو اسم العميل أو رقم الطلبية:</span>
+          <input id="orders-search-input" class="form-control" style="max-width:300px;" placeholder="اكتب كود العميل كامل (مثل CL-101) أو الاسم..." value="${ordersSearchQuery}" oninput="handleOrdersSearchInput(this.value)" />
+          <button id="orders-search-clear-btn" type="button" class="btn btn-sm btn-outline" style="display:${ordersSearchQuery.trim() ? 'inline-flex' : 'none'};" onclick="document.getElementById('orders-search-input').value=''; handleOrdersSearchInput('');">إلغاء البحث</button>
+        </div>
         <div class="table-responsive">
           <table>
             <thead>
@@ -3216,7 +3336,7 @@ function renderProduction() {
                 <th>البيان والإجراءات</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="orders-table-tbody">
               ${visibleOrders.map(ord => {
                 const st = ord.stage || ord.status || 'pending_executive';
                 const items = Array.isArray(ord.items) && ord.items.length > 0 ? ord.items : [{
@@ -3231,9 +3351,10 @@ function renderProduction() {
                 const subtotal = Number(ord.subtotalAmount ?? ord.netTotalAmount ?? 0);
                 const discountAmt = Number(ord.discountAmount || 0);
                 const netTotal = Number(ord.netTotalAmount ?? subtotal);
+                const isMatched = matchesClientSearchQuery(ord.clientCode, ord.clientName, '', '', ord.orderNumber, ordersSearchQuery);
 
                 return `
-                  <tr style="${st === 'ready_for_car_dispatch' ? 'background:rgba(220,38,38,0.06);' : ''}">
+                  <tr data-order-search="1" data-code="${ord.clientCode || ''}" data-name="${ord.clientName || ''}" data-ordnum="${ord.orderNumber || ''}" style="${!isMatched ? 'display:none;' : ''}${st === 'ready_for_car_dispatch' ? 'background:rgba(220,38,38,0.06);' : ''}">
                     <td>
                       <strong>${ord.orderNumber}</strong><br/>
                       <small style="color:var(--text-muted);font-size:0.7rem;">📅 ${ord.date || fmtDate(ord.createdAt)}</small><br/>
@@ -3572,13 +3693,13 @@ function renderAccounting() {
       </div>
 
       <!-- Search Filter by Client Code or Name -->
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;background:var(--bg-elevated);padding:12px 16px;border-radius:12px;">
-        <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:260px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;background:var(--bg-elevated);padding:10px 14px;border-radius:10px;">
+        <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:260px;">
           <span>🔍 بحث بكود العميل أو الاسم أو التليفون:</span>
-          <input class="form-control" style="max-width:360px;" placeholder="مثال: CL-101 أو اسم مصنع العميل..." value="${clientSearchQuery}" oninput="clientSearchQuery=this.value; render();" />
-          ${clientSearchQuery ? `<button class="btn btn-sm btn-outline" onclick="clientSearchQuery=''; render();">إلغاء البحث</button>` : ''}
+          <input id="client-search-input" class="form-control" style="max-width:340px;" placeholder="اكتب الكود كامل (مثل CL-101) أو اسم العميل..." value="${clientSearchQuery}" oninput="handleClientSearchInput(this.value)" />
+          <button id="client-search-clear-btn" type="button" class="btn btn-sm btn-outline" style="display:${clientSearchQuery.trim() ? 'inline-flex' : 'none'};" onclick="document.getElementById('client-search-input').value=''; handleClientSearchInput('');">إلغاء البحث</button>
         </div>
-        <div style="font-size:0.84rem;font-weight:700;color:var(--text-muted);">
+        <div style="font-size:0.8rem;font-weight:700;color:var(--text-muted);">
           إجمالي العملاء المسجلين: <strong>${allClients.length} عميل</strong>
         </div>
       </div>
@@ -3597,19 +3718,19 @@ function renderAccounting() {
               <th>إجراءات العميل</th>
             </tr>
           </thead>
-          <tbody>
-            ${filteredClients.length === 0 ? `
-              <tr>
-                <td colspan="8" style="text-align:center;padding:20px;color:var(--text-muted);">
-                  لا يوجد عملاء مسجلون حالياً بهذا البحث. اضغط على <strong>"➕ إضافة عميل جديد بالكود"</strong> لإضافة عميل.
-                </td>
-              </tr>
-            ` : filteredClients.map(({ partner: pt, metrics: m }) => {
+          <tbody id="clients-directory-tbody">
+            <tr id="clients-empty-search-row" style="display:${filteredClients.length === 0 ? '' : 'none'};">
+              <td colspan="8" style="text-align:center;padding:20px;color:var(--text-muted);">
+                لا يوجد عملاء مطابقون لهذا البحث. اضغط على <strong>"➕ إضافة عميل جديد بالكود"</strong> لإضافة عميل.
+              </td>
+            </tr>
+            ${enrichedClients.map(({ partner: pt, metrics: m }) => {
               const isDebtor = m.netDebt > 0;
               const isCreditor = m.netDebt < 0;
+              const isVisible = matchesClientSearchQuery(pt.code, pt.name, pt.phone, pt.city, '', clientSearchQuery);
 
               return `
-                <tr>
+                <tr data-client-search="1" data-code="${pt.code || ''}" data-name="${pt.name || ''}" data-phone="${pt.phone || ''}" data-city="${pt.city || ''}" style="${isVisible ? '' : 'display:none;'}">
                   <td>
                     <span class="badge badge-info">${pt.code || 'CL-001'}</span>
                   </td>
@@ -4413,11 +4534,15 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
               <input id="ord-num" class="form-control" value="${nextNo}" required />
             </div>
             <div class="form-group" style="grid-column: span 2;">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:6px;">
                 <label style="margin:0;">العميل المطلوب تجهيز الطلبية لصالحه (بالكود والاسم)</label>
-                <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="openNewPartnerModal(true)">
+                <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.73rem;" onclick="openNewPartnerModal(true)">
                   ➕ إضافة عميل جديد بالكود
                 </button>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:5px;align-items:center;">
+                <input id="ord-client-code-search" type="text" class="form-control" style="max-width:240px;" placeholder="🔍 ابحث بكود العميل كامل (مثل CL-101)..." oninput="handleOrderModalClientSearch(this.value)" />
+                <div id="ord-client-search-status"></div>
               </div>
               <select id="ord-client" class="form-control" required style="font-weight:800;border-color:var(--primary);">
                 ${clients.length === 0 ? `<option value="cl-new-inline">عميل جديد (سيتم تسجيله تلقائياً بكود CL-101)</option>` : ''}
@@ -7523,14 +7648,216 @@ function submitPasswordsManagerModal(e) {
 }
 
 // ============================================================================
+// UNIVERSAL PRINT ENGINE (يمنع ظهور صفحة فارغة نهائياً في جميع المتصفحات والموبايلات)
+// ============================================================================
+let _lastPrintDocumentHtml = '';
+let _lastPrintDocumentTitle = 'طباعة مستند رسمي - مصنع العاصمة';
+let _lastPrintLandscape = false;
+
+function closeUniversalPrintView() {
+  window._isPrintingActive = false;
+  if (document.body && document.body.classList) {
+    document.body.classList.remove('is-printing-mode');
+  }
+  const printEl = document.getElementById('print-area');
+  if (printEl) {
+    printEl.innerHTML = '';
+    printEl.style.display = 'none';
+  }
+  render();
+}
+
+function openStandalonePrintPopup() {
+  if (!_lastPrintDocumentHtml) return;
+  const w = window.open('', '_blank', 'width=1050,height=800');
+  if (!w) {
+    window.print();
+    return;
+  }
+  w.document.open();
+  w.document.write(`<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <title>${_lastPrintDocumentTitle}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+  <style>
+    @page { size: ${_lastPrintLandscape ? 'A4 landscape' : 'A4 portrait'}; margin: 8mm; }
+    * { box-sizing: border-box; font-family: 'Cairo', Tahoma, Arial, sans-serif; }
+    html, body { background: #ffffff !important; color: #000000 !important; margin: 0; padding: 12px; direction: rtl; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    table { width: 100%; border-collapse: collapse; }
+    @media print {
+      body { padding: 0; }
+      .no-print-bar { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="no-print-bar" style="display:flex;justify-content:space-between;align-items:center;background:#0f172a;color:#fff;padding:10px 16px;border-radius:10px;margin-bottom:16px;">
+    <strong style="font-size:14px;">🖨️ ${_lastPrintDocumentTitle}</strong>
+    <div style="display:flex;gap:8px;">
+      <button onclick="window.print()" style="background:#10b981;color:#fff;border:none;padding:7px 16px;border-radius:8px;font-weight:800;cursor:pointer;">🖨️ طباعة / حفظ PDF الآن</button>
+      <button onclick="window.close()" style="background:#ef4444;color:#fff;border:none;padding:7px 14px;border-radius:8px;font-weight:800;cursor:pointer;">✕ إغلاق النافذة</button>
+    </div>
+  </div>
+  ${_lastPrintDocumentHtml}
+  <script>
+    window.onload = function() {
+      setTimeout(function() { window.print(); }, 250);
+    };
+  </script>
+</body>
+</html>`);
+  w.document.close();
+}
+
+function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند رسمي - مصنع العاصمة', landscape = false) {
+  _lastPrintDocumentHtml = docHtml;
+  _lastPrintDocumentTitle = docTitle;
+  _lastPrintLandscape = Boolean(landscape);
+  window._isPrintingActive = true;
+
+  const printEl = document.getElementById('print-area');
+  if (!printEl) return;
+
+  if (document.body && document.body.classList) {
+    document.body.classList.add('is-printing-mode');
+  }
+  printEl.style.display = 'block';
+
+  printEl.innerHTML = `
+    <style>
+      @page { size: ${landscape ? 'A4 landscape' : 'A4 portrait'}; margin: 7mm; }
+      body.is-printing-mode {
+        background: #ffffff !important;
+        color: #000000 !important;
+      }
+      body.is-printing-mode #app,
+      body.is-printing-mode #modal-root,
+      body.is-printing-mode .live-alert-banner,
+      body.is-printing-mode .floating-chat-fab {
+        display: none !important;
+      }
+      body.is-printing-mode #print-area {
+        display: block !important;
+        visibility: visible !important;
+        width: 100% !important;
+        min-height: 100vh !important;
+        background: #ffffff !important;
+        color: #000000 !important;
+        padding: 14px !important;
+      }
+      @media print {
+        html, body {
+          background: #ffffff !important;
+          color: #000000 !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          height: auto !important;
+          overflow: visible !important;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+        #app, #modal-root, .live-alert-banner, .floating-chat-fab, .no-print-bar {
+          display: none !important;
+        }
+        #print-area, #print-area * {
+          visibility: visible !important;
+        }
+        #print-area {
+          display: block !important;
+          position: static !important;
+          width: 100% !important;
+          background: #ffffff !important;
+          color: #000000 !important;
+          padding: 0 !important;
+          margin: 0 !important;
+        }
+      }
+      .pdf-report-wrap {
+        border: 2px solid #0f172a;
+        border-radius: 8px;
+        padding: 14px 16px;
+        font-family: 'Cairo', sans-serif;
+        direction: rtl;
+        color: #0f172a;
+        background: #fff;
+      }
+      .pdf-report-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 2px solid #0f172a;
+        padding-bottom: 8px;
+        margin-bottom: 10px;
+      }
+      .pdf-report-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11px;
+        margin-bottom: 10px;
+      }
+      .pdf-report-table th, .pdf-report-table td {
+        border: 1px solid #334155;
+        padding: 4px 6px;
+        text-align: center;
+        vertical-align: middle;
+      }
+      .pdf-report-table th {
+        background: #e2e8f0;
+        font-weight: 800;
+        color: #0f172a;
+      }
+      .pdf-report-footer {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 16px;
+        padding-top: 8px;
+        border-top: 1px dashed #64748b;
+        font-size: 11px;
+        font-weight: 700;
+      }
+    </style>
+    <div class="no-print-bar" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:#0f172a;color:#fff;padding:12px 18px;border-radius:10px;margin-bottom:16px;font-family:'Cairo',sans-serif;direction:rtl;">
+      <div>
+        <strong style="font-size:15px;color:#fbbf24;">🖨️ معاينة الطباعة الرسمية: ${docTitle}</strong>
+        <div style="font-size:12px;color:#cbd5e1;">المستند جاهز أمامك للطباعة الفورية أو الحفظ بصيغة PDF</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button type="button" onclick="window.print()" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
+          🖨️ طباعة / حفظ PDF الآن
+        </button>
+        <button type="button" onclick="openStandalonePrintPopup()" style="background:#2563eb;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
+          🗗 فتح في نافذة طباعة مستقلة
+        </button>
+        <button type="button" onclick="closeUniversalPrintView()" style="background:#ef4444;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
+          🔙 العودة للنظام وإغلاق شاشة الطباعة
+        </button>
+      </div>
+    </div>
+    <div id="print-document-content" style="background:#fff;color:#000;">
+      ${docHtml}
+    </div>
+  `;
+
+  if (typeof window.scrollTo === 'function') {
+    window.scrollTo(0, 0);
+  }
+
+  // Trigger print after ensuring the visible DOM is painted (and call immediately in synchronous test environments)
+  setTimeout(() => {
+    window.print();
+  }, 180);
+}
+
+// ============================================================================
 // OFFICIAL PRINT TEMPLATES (بطاقة البالتة بالباركود + أذون الصرف + الفواتير)
 // ============================================================================
 function printPalletTag(palletId) {
   const p = state.pallets.find(x => x.id === palletId);
   if (!p) return;
-  const printEl = document.getElementById('print-area');
-  printEl.innerHTML = `
-    <div style="border:4px solid #000;border-radius:12px;padding:24px;max-width:650px;margin:0 auto;font-family:'Cairo',sans-serif;direction:rtl;">
+  const html = `
+    <div style="border:4px solid #000;border-radius:12px;padding:24px;max-width:650px;margin:0 auto;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #000;padding-bottom:12px;margin-bottom:16px;">
         <div>
           <h1 style="font-size:24px;margin:0;">${state.factoryInfo.name}</h1>
@@ -7550,7 +7877,7 @@ function printPalletTag(palletId) {
         </tr>
         <tr>
           <td style="border:1px solid #000;padding:10px;font-weight:700;background:#f1f5f9;">التخانة (مم):</td>
-          <td style="border:1px solid #000;padding:10px;font-weight:800;font-size:20px;">${p.thicknessMm} مم</td>
+          <td style="border:1px solid #000;padding:10px;font-weight:800;font-size:20px;">${p.thicknessMm} مم (${p.direction === 'sada' ? 'سدا' : 'قص'})</td>
           <td style="border:1px solid #000;padding:10px;font-weight:700;background:#f1f5f9;">درجة الجودة والفرز:</td>
           <td style="border:1px solid #000;padding:10px;font-weight:800;font-size:18px;">${p.gradeName}</td>
         </tr>
@@ -7564,7 +7891,7 @@ function printPalletTag(palletId) {
           <td style="border:1px solid #000;padding:10px;font-weight:700;background:#f1f5f9;">إجمالي الحجم (م³):</td>
           <td style="border:1px solid #000;padding:10px;font-weight:800;font-size:22px;">${p.volumeM3} م³</td>
           <td style="border:1px solid #000;padding:10px;font-weight:700;background:#f1f5f9;">رقم التشغيلة / التاريخ:</td>
-          <td style="border:1px solid #000;padding:10px;">${p.batchNumber || '-'} | ${fmtDate(p.createdAt)}</td>
+          <td style="border:1px solid #000;padding:10px;">${sanitizeTextForWarehouseKeeper(p.batchNumber || '-')} | ${fmtDate(p.createdAt)}</td>
         </tr>
       </table>
 
@@ -7581,15 +7908,14 @@ function printPalletTag(palletId) {
       </div>
     </div>
   `;
-  window.print();
+  openUniversalPrintDocument(html, `بطاقة بالتة ${p.palletCode}`, false);
 }
 
 function printApprovalDispatchOrder(reqId) {
   const r = state.approvalRequests.find(x => x.id === reqId);
   if (!r) return;
-  const printEl = document.getElementById('print-area');
-  printEl.innerHTML = `
-    <div style="border:2px solid #000;padding:28px;font-family:'Cairo',sans-serif;direction:rtl;">
+  const html = `
+    <div style="border:2px solid #000;padding:28px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
       <div style="display:flex;justify-content:space-between;border-bottom:2px solid #000;padding-bottom:14px;margin-bottom:20px;">
         <div>
           <h1 style="margin:0;font-size:22px;">${state.factoryInfo.name}</h1>
@@ -7638,15 +7964,14 @@ function printApprovalDispatchOrder(reqId) {
       </div>
     </div>
   `;
-  window.print();
+  openUniversalPrintDocument(html, `إذن صرف ${r.requestNumber}`, false);
 }
 
 function printWarehouseVoucher(movId) {
   const m = state.warehouseMovements.find(x => x.id === movId);
   if (!m) return;
-  const printEl = document.getElementById('print-area');
-  printEl.innerHTML = `
-    <div style="border:2px solid #000;padding:28px;font-family:'Cairo',sans-serif;direction:rtl;">
+  const html = `
+    <div style="border:2px solid #000;padding:28px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
       <h2>${state.factoryInfo.name}</h2>
       <h3>${m.directionLabel} — رقم: ${m.voucherNumber}</h3>
       <hr style="margin:14px 0;"/>
@@ -7661,7 +7986,7 @@ function printWarehouseVoucher(movId) {
       </div>
     </div>
   `;
-  window.print();
+  openUniversalPrintDocument(html, `إذن حركة مخزن ${m.voucherNumber}`, false);
 }
 
 function printProductionOrder(poId) {
@@ -7673,74 +7998,73 @@ function printClientOrderStatement(orderId) {
   if (!ord) return;
   const items = Array.isArray(ord.items) ? ord.items : [];
   const showPrices = canSeeFinancialPrices();
-  const printEl = document.getElementById('print-area');
-  printEl.innerHTML = `
-    <div style="border:3px solid #000;padding:28px;font-family:'Cairo',sans-serif;direction:rtl;">
-      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #000;padding-bottom:14px;margin-bottom:18px;">
+  const html = `
+    <div style="border:3px solid #000;padding:24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #000;padding-bottom:12px;margin-bottom:16px;">
         <div>
-          <h1 style="margin:0;font-size:24px;">${state.factoryInfo.name}</h1>
-          <p style="margin:4px 0 0;font-size:15px;">بيان طلبية وأمر تجهيز قشرة خشبية للعميل (250×125 سم)</p>
+          <h1 style="margin:0;font-size:22px;">${state.factoryInfo.name}</h1>
+          <p style="margin:4px 0 0;font-size:14px;">بيان طلبية وأمر تجهيز قشرة خشبية للعميل (250×125 سم)</p>
         </div>
-        <div style="text-align:left;font-size:14px;">
+        <div style="text-align:left;font-size:13px;">
           <div><strong>رقم الطلبية:</strong> ${ord.orderNumber}</div>
           <div><strong>التاريخ:</strong> ${ord.date || fmtDate(ord.createdAt)}</div>
           <div><strong>كود العميل:</strong> ${ord.clientCode || 'CL'}</div>
         </div>
       </div>
 
-      <p style="font-size:16px;margin-bottom:14px;">
+      <p style="font-size:15px;margin-bottom:12px;">
         <strong>السادة / العميل:</strong> ${ord.clientName} ${ord.clientPhone ? ' — هاتف: ' + ord.clientPhone : ''}
       </p>
 
-      <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:15px;">
+      <table style="width:100%;border-collapse:collapse;margin-bottom:18px;font-size:14px;">
         <thead>
           <tr style="background:#e2e8f0;">
-            <th style="border:1px solid #000;padding:8px;">#</th>
-            <th style="border:1px solid #000;padding:8px;">التخانة (مم)</th>
-            <th style="border:1px solid #000;padding:8px;">الاتجاه (قص / سدا)</th>
-            <th style="border:1px solid #000;padding:8px;">درجة الجودة</th>
-            <th style="border:1px solid #000;padding:8px;">الكمية (قطعة 250×125)</th>
-            <th style="border:1px solid #000;padding:8px;">الحجم (م³)</th>
+            <th style="border:1px solid #000;padding:7px;">#</th>
+            <th style="border:1px solid #000;padding:7px;">التخانة (مم)</th>
+            <th style="border:1px solid #000;padding:7px;">الاتجاه (قص / سدا)</th>
+            <th style="border:1px solid #000;padding:7px;">درجة الجودة</th>
+            <th style="border:1px solid #000;padding:7px;">الكمية (قطعة 250×125)</th>
+            <th style="border:1px solid #000;padding:7px;">الحجم (م³)</th>
             ${showPrices ? `
-              <th style="border:1px solid #000;padding:8px;">سعر القطعة</th>
-              <th style="border:1px solid #000;padding:8px;">إجمالي البند</th>
+              <th style="border:1px solid #000;padding:7px;">سعر القطعة</th>
+              <th style="border:1px solid #000;padding:7px;">إجمالي البند</th>
             ` : ''}
           </tr>
         </thead>
         <tbody>
           ${items.map((it, idx) => `
             <tr>
-              <td style="border:1px solid #000;padding:8px;text-align:center;">${idx + 1}</td>
-              <td style="border:1px solid #000;padding:8px;font-weight:700;">${it.thicknessMm} مم</td>
-              <td style="border:1px solid #000;padding:8px;">${it.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص'}</td>
-              <td style="border:1px solid #000;padding:8px;font-weight:700;">${it.gradeName}</td>
-              <td style="border:1px solid #000;padding:8px;font-weight:700;">${fmtNum(it.sheetsCount, 0)} قطعة</td>
-              <td style="border:1px solid #000;padding:8px;">${fmtNum(it.volumeM3, 4)} م³</td>
+              <td style="border:1px solid #000;padding:7px;text-align:center;">${idx + 1}</td>
+              <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.thicknessMm} مم</td>
+              <td style="border:1px solid #000;padding:7px;">${it.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص'}</td>
+              <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.gradeName}</td>
+              <td style="border:1px solid #000;padding:7px;font-weight:700;">${fmtNum(it.sheetsCount, 0)} قطعة</td>
+              <td style="border:1px solid #000;padding:7px;">${fmtNum(it.volumeM3, 4)} م³</td>
               ${showPrices ? `
-                <td style="border:1px solid #000;padding:8px;">${fmtMoney(it.unitPrice)}</td>
-                <td style="border:1px solid #000;padding:8px;font-weight:800;">${fmtMoney(it.totalItemAmount)}</td>
+                <td style="border:1px solid #000;padding:7px;">${fmtMoney(it.unitPrice)}</td>
+                <td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtMoney(it.totalItemAmount)}</td>
               ` : ''}
             </tr>
           `).join('')}
         </tbody>
       </table>
 
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;">
         <div>
           <p style="margin:4px 0;"><strong>إجمالي عدد القطع:</strong> ${fmtNum(ord.totalSheetsCount, 0)} قطعة | <strong>إجمالي الحجم:</strong> ${fmtNum(ord.totalVolumeM3, 4)} م³</p>
           ${ord.notes ? `<p style="margin:4px 0;"><strong>ملاحظات:</strong> ${ord.notes}</p>` : ''}
         </div>
         ${showPrices ? `
-        <div style="border:2px solid #000;padding:12px 18px;border-radius:8px;min-width:260px;">
-          <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+        <div style="border:2px solid #000;padding:10px 16px;border-radius:8px;min-width:250px;">
+          <div style="display:flex;justify-content:space-between;margin-bottom:5px;">
             <span>الإجمالي قبل الخصم:</span>
             <strong>${fmtMoney(ord.subtotalAmount || ord.netTotalAmount || 0)}</strong>
           </div>
-          <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+          <div style="display:flex;justify-content:space-between;margin-bottom:5px;">
             <span>قيمة الخصم:</span>
             <strong>-${fmtMoney(ord.discountAmount || 0)}</strong>
           </div>
-          <div style="display:flex;justify-content:space-between;font-size:18px;border-top:1px solid #000;padding-top:6px;">
+          <div style="display:flex;justify-content:space-between;font-size:16px;border-top:1px solid #000;padding-top:5px;">
             <strong>الصافي النهائي للبيان:</strong>
             <strong>${fmtMoney(ord.netTotalAmount || 0)}</strong>
           </div>
@@ -7748,7 +8072,7 @@ function printClientOrderStatement(orderId) {
         ` : ''}
       </div>
 
-      <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:14px;margin-top:35px;text-align:center;font-weight:700;font-size:14px;">
+      <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:14px;margin-top:30px;text-align:center;font-weight:700;font-size:13px;">
         <div>إعداد المحاسب<br/><br/>${ord.requestedBy || '................'}</div>
         <div>اعتماد المدير التنفيذي/المشروعات<br/><br/>${ord.executiveApprovedBy || '................'}</div>
         <div>موافقة المدير الإداري/أمين المخزن<br/><br/>${ord.warehousePrepApprovedBy || '................'}</div>
@@ -7756,7 +8080,7 @@ function printClientOrderStatement(orderId) {
       </div>
     </div>
   `;
-  window.print();
+  openUniversalPrintDocument(html, `بيان طلبية ${ord.orderNumber} - ${ord.clientName}`, false);
 }
 
 function printVehicleDispatchVoucher(orderId) {
@@ -7764,66 +8088,64 @@ function printVehicleDispatchVoucher(orderId) {
   if (!ord) return;
   const car = ord.carDispatchVoucher || {};
   const items = Array.isArray(ord.items) ? ord.items : [];
-  const printEl = document.getElementById('print-area');
-
-  printEl.innerHTML = `
-    <div style="border:3px solid #000;padding:28px;font-family:'Cairo',sans-serif;direction:rtl;">
-      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #000;padding-bottom:14px;margin-bottom:18px;">
+  const html = `
+    <div style="border:3px solid #000;padding:24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #000;padding-bottom:12px;margin-bottom:16px;">
         <div>
-          <h1 style="margin:0;font-size:24px;">${state.factoryInfo.name}</h1>
-          <h2 style="margin:6px 0 0;font-size:18px;">🚚 إذن صرف وتحميل سيارة بالبضاعة (معتمد للخروج من البوابة)</h2>
+          <h1 style="margin:0;font-size:22px;">${state.factoryInfo.name}</h1>
+          <h2 style="margin:6px 0 0;font-size:17px;">🚚 إذن صرف وتحميل سيارة بالبضاعة (معتمد للخروج من البوابة)</h2>
         </div>
-        <div style="text-align:left;font-size:14px;border:2px solid #000;padding:8px 14px;border-radius:8px;">
+        <div style="text-align:left;font-size:13px;border:2px solid #000;padding:7px 12px;border-radius:8px;">
           <div><strong>رقم إذن السيارة:</strong> ${car.voucherNo || 'CAR-' + ord.orderNumber}</div>
           <div><strong>رقم الطلبية:</strong> ${ord.orderNumber}</div>
           <div><strong>تاريخ التحميل:</strong> ${car.dispatchDate || ord.date}</div>
         </div>
       </div>
 
-      <table style="width:100%;border-collapse:collapse;margin-bottom:18px;font-size:15px;">
+      <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:14px;">
         <tr>
-          <td style="border:1px solid #000;padding:9px;background:#f1f5f9;font-weight:700;">اسم العميل وكوده:</td>
-          <td style="border:1px solid #000;padding:9px;font-weight:800;">[${ord.clientCode || 'CL'}] ${ord.clientName}</td>
-          <td style="border:1px solid #000;padding:9px;background:#f1f5f9;font-weight:700;">رقم السيارة المحملة:</td>
-          <td style="border:1px solid #000;padding:9px;font-weight:900;font-size:18px;">${car.carPlateNumber || '-'}</td>
+          <td style="border:1px solid #000;padding:8px;background:#f1f5f9;font-weight:700;">اسم العميل وكوده:</td>
+          <td style="border:1px solid #000;padding:8px;font-weight:800;">[${ord.clientCode || 'CL'}] ${ord.clientName}</td>
+          <td style="border:1px solid #000;padding:8px;background:#f1f5f9;font-weight:700;">رقم السيارة المحملة:</td>
+          <td style="border:1px solid #000;padding:8px;font-weight:900;font-size:17px;">${car.carPlateNumber || '-'}</td>
         </tr>
         <tr>
-          <td style="border:1px solid #000;padding:9px;background:#f1f5f9;font-weight:700;">اسم سائق السيارة:</td>
-          <td style="border:1px solid #000;padding:9px;font-weight:800;">${car.driverName || '-'} (${car.driverPhone || ''})</td>
-          <td style="border:1px solid #000;padding:9px;background:#f1f5f9;font-weight:700;">حساب البالتات مع السيارة:</td>
-          <td style="border:1px solid #000;padding:9px;font-weight:800;">
+          <td style="border:1px solid #000;padding:8px;background:#f1f5f9;font-weight:700;">اسم سائق السيارة:</td>
+          <td style="border:1px solid #000;padding:8px;font-weight:800;">${car.driverName || '-'} (${car.driverPhone || ''})</td>
+          <td style="border:1px solid #000;padding:8px;background:#f1f5f9;font-weight:700;">حساب البالتات مع السيارة:</td>
+          <td style="border:1px solid #000;padding:8px;font-weight:800;">
             بالتات مسلمة للعميل: (${car.palletsDeliveredCount ?? 0}) | مستلمة منه: (${car.palletsReceivedCount ?? 0})
           </td>
         </tr>
       </table>
 
-      <h3 style="margin:0 0 8px;font-size:16px;">بيان أصناف القشرة الخشبية المحملة على السيارة:</h3>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:22px;font-size:15px;">
+      <h3 style="margin:0 0 8px;font-size:15px;">بيان أصناف القشرة الخشبية المحملة على السيارة:</h3>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:14px;">
         <thead>
           <tr style="background:#e2e8f0;">
-            <th style="border:1px solid #000;padding:8px;">#</th>
-            <th style="border:1px solid #000;padding:8px;">التخانة والاتجاه (قص / سدا)</th>
-            <th style="border:1px solid #000;padding:8px;">درجة الجودة</th>
-            <th style="border:1px solid #000;padding:8px;">الكمية المحملة (قطعة 250×125)</th>
-            <th style="border:1px solid #000;padding:8px;">المساحة (م²)</th>
-            <th style="border:1px solid #000;padding:8px;">الحجم (م³)</th>
+            <th style="border:1px solid #000;padding:7px;">#</th>
+            <th style="border:1px solid #000;padding:7px;">التخانة والاتجاه (قص / سدا)</th>
+            <th style="border:1px solid #000;padding:7px;">درجة الجودة</th>
+            <th style="border:1px solid #000;padding:7px;">الكمية المحملة (قطعة 250×125)</th>
+            <th style="border:1px solid #000;padding:7px;">المساحة (م²)</th>
+            <th style="border:1px solid #000;padding:7px;">الحجم (م³)</th>
           </tr>
         </thead>
         <tbody>
           ${items.map((it, idx) => `
             <tr>
-              <td style="border:1px solid #000;padding:8px;text-align:center;">${idx + 1}</td>
-              <td style="border:1px solid #000;padding:8px;font-weight:700;">${it.thicknessMm} مم (${it.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص'})</td>
-              <td style="border:1px solid #000;padding:8px;font-weight:700;">${it.gradeName}</td>
-              <td style="border:1px solid #000;padding:8px;font-weight:800;">${fmtNum(it.sheetsCount, 0)} قطعة</td>
-              <td style="border:1px solid #000;padding:8px;">${fmtNum(it.areaM2, 2)} م²</td>
-              <td style="border:1px solid #000;padding:8px;font-weight:800;">${fmtNum(it.volumeM3, 4)} م³</td>
+              <td style="border:1px solid #000;padding:7px;text-align:center;">${idx + 1}</td>
+              <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.thicknessMm} مم (${it.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص'})</td>
+              <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.gradeName}</td>
+              <td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtNum(it.sheetsCount, 0)} قطعة</td>
+              <td style="border:1px solid #000;padding:7px;">${fmtNum(it.areaM2, 2)} م²</td>
+              <td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtNum(it.volumeM3, 4)} م³</td>
             </tr>
           `).join('')}
         </tbody>
       </table>
 
-      <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:14px;margin-top:40px;text-align:center;font-weight:700;font-size:14px;">
+      <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:14px;margin-top:35px;text-align:center;font-weight:700;font-size:13px;">
         <div>اعتماد المحاسب للصرف<br/><br/>${ord.accountantReleaseBy || '................'}</div>
         <div>أمين المخزن / المدير الإداري<br/><br/>${car.dispatchedBy || currentUser.name}</div>
         <div>توقيع سائق السيارة بالاستلام<br/><br/>${car.driverName || '................'}</div>
@@ -7831,34 +8153,32 @@ function printVehicleDispatchVoucher(orderId) {
       </div>
     </div>
   `;
-  window.print();
+  openUniversalPrintDocument(html, `إذن صرف سيارة ${car.carPlateNumber || ord.orderNumber}`, false);
 }
 
 function printClientFullStatement(clientId) {
   const pt = (state.partners || []).find(p => p.id === clientId);
   if (!pt) return;
   const m = computeClientMetrics(pt);
-  const printEl = document.getElementById('print-area');
-
-  printEl.innerHTML = `
-    <div style="border:3px solid #000;padding:26px;font-family:'Cairo',sans-serif;direction:rtl;">
+  const html = `
+    <div style="border:3px solid #000;padding:24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #000;padding-bottom:12px;margin-bottom:16px;">
         <div>
-          <h1 style="margin:0;font-size:22px;">${state.factoryInfo.name}</h1>
-          <p style="margin:4px 0 0;font-size:15px;">بيان كشف حساب عميل شامل (الطلبيات الفائتة + المديونيات والمستحقات + حساب البالتات)</p>
+          <h1 style="margin:0;font-size:21px;">${state.factoryInfo.name}</h1>
+          <p style="margin:4px 0 0;font-size:14px;">بيان كشف حساب عميل شامل (الطلبيات الفائتة + المديونيات والمستحقات + حساب البالتات)</p>
         </div>
-        <div style="text-align:left;font-size:14px;">
+        <div style="text-align:left;font-size:13px;">
           <div><strong>كود العميل:</strong> ${pt.code || 'CL'}</div>
           <div><strong>اسم العميل:</strong> ${pt.name}</div>
           <div><strong>تاريخ البيان:</strong> ${todayStr()}</div>
         </div>
       </div>
 
-      <table style="width:100%;border-collapse:collapse;margin-bottom:18px;font-size:14px;">
+      <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px;">
         <tr style="background:#f1f5f9;">
           <td style="border:1px solid #000;padding:8px;"><strong>إجمالي المسحوبات (مدين):</strong> ${fmtMoney(m.totalDebit)}</td>
           <td style="border:1px solid #000;padding:8px;"><strong>إجمالي المدفوعات (دائن):</strong> ${fmtMoney(m.totalCredit)}</td>
-          <td style="border:1px solid #000;padding:8px;font-size:16px;">
+          <td style="border:1px solid #000;padding:8px;font-size:15px;">
             <strong>صافي الرصيد المالي:</strong>
             ${m.netDebt > 0 ? 'مدين (عليه للمصنع): ' + fmtMoney(m.netDebt) : m.netDebt < 0 ? 'دائن (له مستحقات): ' + fmtMoney(Math.abs(m.netDebt)) : 'خالص (0 ج.م)'}
           </td>
@@ -7866,12 +8186,12 @@ function printClientFullStatement(clientId) {
         <tr>
           <td style="border:1px solid #000;padding:8px;"><strong>بالتات مسلمة للعميل:</strong> ${m.palletsDelivered} بالتة</td>
           <td style="border:1px solid #000;padding:8px;"><strong>بالتات مستلمة من العميل:</strong> ${m.palletsReceived} بالتة</td>
-          <td style="border:1px solid #000;padding:8px;font-size:16px;"><strong>صافي البالتات طرف العميل:</strong> ${m.netPalletsAtClient} بالتة</td>
+          <td style="border:1px solid #000;padding:8px;font-size:15px;"><strong>صافي البالتات طرف العميل:</strong> ${m.netPalletsAtClient} بالتة</td>
         </tr>
       </table>
 
-      <h3 style="margin:12px 0 6px;font-size:15px;">1. بيان الطلبيات (${m.orders.length} طلبية):</h3>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px;">
+      <h3 style="margin:12px 0 6px;font-size:14px;">1. بيان الطلبيات (${m.orders.length} طلبية):</h3>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:12.5px;">
         <thead>
           <tr style="background:#e2e8f0;">
             <th style="border:1px solid #000;padding:6px;">رقم الطلبية</th>
@@ -7894,22 +8214,21 @@ function printClientFullStatement(clientId) {
         </tbody>
       </table>
 
-      <div style="display:flex;justify-content:space-between;margin-top:35px;font-weight:700;font-size:14px;">
+      <div style="display:flex;justify-content:space-between;margin-top:30px;font-weight:700;font-size:13px;">
         <span>إعداد الحسابات: ${currentUser.name}</span>
         <span>اعتماد مدير الحسابات / المدير التنفيذي: ....................</span>
         <span>توقيع ومصادقة العميل: ....................</span>
       </div>
     </div>
   `;
-  window.print();
+  openUniversalPrintDocument(html, `كشف حساب عميل [${pt.code || 'CL'}] ${pt.name}`, false);
 }
 
 function printFinancialInvoice(txId) {
   const tx = state.financialTransactions.find(x => x.id === txId);
   if (!tx) return;
-  const printEl = document.getElementById('print-area');
-  printEl.innerHTML = `
-    <div style="border:2px solid #000;padding:28px;font-family:'Cairo',sans-serif;direction:rtl;">
+  const html = `
+    <div style="border:2px solid #000;padding:24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
       <h2>${state.factoryInfo.name}</h2>
       <h3>${tx.typeLabel} — رقم: ${tx.voucherNo}</h3>
       <hr style="margin:14px 0;"/>
@@ -7918,72 +8237,22 @@ function printFinancialInvoice(txId) {
       <p><strong>البيان:</strong> ${tx.description}</p>
       <p><strong>إجمالي المبلغ:</strong> ${fmtMoney(tx.totalAmount)}</p>
       <p><strong>المدفوع:</strong> ${fmtMoney(tx.paidAmount)} | <strong>المتبقي:</strong> ${fmtMoney(tx.remainingAmount)}</p>
-      <div style="display:flex;justify-content:space-between;margin-top:45px;font-weight:700;">
+      <div style="display:flex;justify-content:space-between;margin-top:40px;font-weight:700;">
         <span>المحاسب: ${tx.createdBy}</span>
         <span>مدير الحسابات: ${tx.approvedBy}</span>
       </div>
     </div>
   `;
-  window.print();
+  openUniversalPrintDocument(html, `سند مالي ${tx.voucherNo}`, false);
 }
 
 // ============================================================================
 // COMPREHENSIVE PDF / PRINT GENERATOR FOR ALL TABLES & REPORTS (بما في ذلك جدول الكميات وجدول الأسعار)
 // ============================================================================
 function triggerOfficialReportPdf(title, subtitle, bodyHtml, landscape = false) {
-  const printEl = document.getElementById('print-area');
-  if (!printEl) return;
   const factoryName = state.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة';
   const userLabel = currentUser ? `${currentUser.name} (${currentUser.roleTitle})` : 'إدارة المصنع';
-  printEl.innerHTML = `
-    <style>
-      @media print {
-        @page { size: ${landscape ? 'A4 landscape' : 'A4 portrait'}; margin: 7mm; }
-      }
-      .pdf-report-wrap {
-        border: 2px solid #0f172a;
-        border-radius: 8px;
-        padding: 14px 16px;
-        font-family: 'Cairo', sans-serif;
-        direction: rtl;
-        color: #0f172a;
-        background: #fff;
-      }
-      .pdf-report-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        border-bottom: 2px solid #0f172a;
-        padding-bottom: 8px;
-        margin-bottom: 10px;
-      }
-      .pdf-report-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 11px;
-        margin-bottom: 10px;
-      }
-      .pdf-report-table th, .pdf-report-table td {
-        border: 1px solid #334155;
-        padding: 4px 6px;
-        text-align: center;
-        vertical-align: middle;
-      }
-      .pdf-report-table th {
-        background: #e2e8f0;
-        font-weight: 800;
-        color: #0f172a;
-      }
-      .pdf-report-footer {
-        display: flex;
-        justify-content: space-between;
-        margin-top: 16px;
-        padding-top: 8px;
-        border-top: 1px dashed #64748b;
-        font-size: 11px;
-        font-weight: 700;
-      }
-    </style>
+  const docHtml = `
     <div class="pdf-report-wrap">
       <div class="pdf-report-header">
         <div>
@@ -8005,7 +8274,7 @@ function triggerOfficialReportPdf(title, subtitle, bodyHtml, landscape = false) 
       </div>
     </div>
   `;
-  window.print();
+  openUniversalPrintDocument(docHtml, title, landscape);
 }
 
 function buildVeneerQuantitiesMatrixPrintHtml() {
