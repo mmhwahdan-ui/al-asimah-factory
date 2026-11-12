@@ -5663,7 +5663,7 @@ function openClientOrderStatementModal(orderId) {
   const modalRoot = document.getElementById('modal-root');
   const items = Array.isArray(ord.items) ? ord.items : [];
   const isExec = isFullAdmin(currentUser);
-  const isWarehouseOrAdmin = isExec || ['admin_manager', 'warehouse_keeper'].includes(currentUser?.role);
+  const isWarehouseOrAdmin = isExec || isWarehouseKeeperOnly(currentUser) || ['admin_manager', 'warehouse_keeper'].includes(currentUser?.roleKey);
   const canEditQuantities = isExec || canSeeFinancialPrices() || (isWarehouseOrAdmin && ord.stage === 'pending_warehouse_prep');
   const thicknesses = getSortedThicknesses();
   const grades = state.catalog?.grades || [];
@@ -6114,7 +6114,7 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
     return;
   }
 
-  if (alsoApproveWarehousePrep && (isFullAdmin(currentUser) || ['admin_manager', 'warehouse_keeper'].includes(currentUser?.role))) {
+  if (alsoApproveWarehousePrep && (isFullAdmin(currentUser) || isWarehouseKeeperOnly(currentUser) || ['admin_manager', 'warehouse_keeper'].includes(currentUser?.roleKey))) {
     closeModal();
     approveOrderWarehousePrep(ord.id);
     return;
