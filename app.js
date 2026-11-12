@@ -82,6 +82,13 @@ function getCellPriceKey(thkId, gradeId) {
   return `${thkId}__${gradeId}`;
 }
 
+function getSortedThicknesses() {
+  return [...(state?.catalog?.thicknesses || [])].sort((a, b) => {
+    if (Number(a.mm) !== Number(b.mm)) return Number(a.mm) - Number(b.mm);
+    return (a.direction || 'qas').localeCompare(b.direction || 'qas');
+  });
+}
+
 function getCellUnitPrice(thkId, gradeId) {
   if (!state || !state.catalog) return 0;
   state.catalog.cellPrices = state.catalog.cellPrices || {};
@@ -418,9 +425,80 @@ function smartMergeListClient(a = [], b = [], deletedSet = new Set()) {
   return Array.from(map.values());
 }
 
+function normalizeState(s) {
+  const def = getDefaultInitialState();
+  if (!s || typeof s !== 'object') return def;
+  s.factoryInfo = { ...def.factoryInfo, ...(s.factoryInfo || {}) };
+  s.catalog = s.catalog && typeof s.catalog === 'object' ? s.catalog : {};
+  s.catalog.woodTypes = Array.isArray(s.catalog.woodTypes) ? s.catalog.woodTypes : [];
+  s.catalog.thicknesses = Array.isArray(s.catalog.thicknesses) ? s.catalog.thicknesses : [];
+  s.catalog.grades = Array.isArray(s.catalog.grades) ? s.catalog.grades : [];
+  s.catalog.dimensions = Array.isArray(s.catalog.dimensions) && s.catalog.dimensions.length > 0 ? s.catalog.dimensions : def.catalog.dimensions;
+  s.catalog.cellPrices = s.catalog.cellPrices && typeof s.catalog.cellPrices === 'object' ? s.catalog.cellPrices : {};
+
+  const arrayKeys = [
+    'users', 'pallets', 'rawMaterials', 'scrapItems', 'spareParts',
+    'productionOrders', 'approvalRequests', 'warehouseMovements',
+    'partners', 'palletMovements', 'financialTransactions',
+    'auditLogs', 'chatMessages', 'deletedIds'
+  ];
+  for (const k of arrayKeys) {
+    if (!Array.isArray(s[k])) {
+      s[k] = k === 'users' ? def.users : [];
+    }
+  }
+  if (s.users.length === 0) s.users = def.users;
+
+  s.treasuryBalances = {
+    cashVault: 0,
+    bankAccount: 0,
+    checksUnderCollection: 0,
+    ...(s.treasuryBalances || {})
+  };
+
+  for (const u of s.users) {
+    u.permissions = u.permissions || {};
+    u.permissions.dashboard = true;
+    u.permissions.warehouses = true;
+    u.permissions.production = true;
+    u.permissions.approvals = true;
+    u.permissions.reports = true;
+    if (u.roleKey === 'ceo' || u.roleKey === 'projects_manager') {
+      u.permissions = {
+        dashboard: true,
+        warehouses: true,
+        warehouseIssueReceive: true,
+        production: true,
+        approvals: true,
+        approveFinancial: true,
+        approveExecutive: true,
+        approveWarehouse: true,
+        salesAccounting: true,
+        clientsSuppliers: true,
+        reports: true,
+        settingsUsers: true
+      };
+    } else if (u.roleKey === 'warehouse_keeper') {
+      u.permissions.warehouseIssueReceive = true;
+      u.permissions.approveWarehouse = true;
+      u.permissions.salesAccounting = false;
+      u.permissions.clientsSuppliers = false;
+      u.permissions.approveFinancial = false;
+    } else if (['accountant', 'accounts_manager', 'accounting_manager'].includes(u.roleKey)) {
+      u.permissions.salesAccounting = true;
+      u.permissions.clientsSuppliers = true;
+      u.permissions.approveFinancial = true;
+    } else if (u.roleKey === 'admin_manager') {
+      u.permissions.approveWarehouse = true;
+      u.permissions.clientsSuppliers = true;
+    }
+  }
+  return s;
+}
+
 function smartMergeClientState(current, incoming) {
-  if (!current || !current.users) return incoming;
-  if (!incoming || !incoming.users) return current;
+  if (!current || !current.users) return normalizeState(incoming);
+  if (!incoming || !incoming.users) return normalizeState(current);
   const deletedIds = Array.from(new Set([...(current.deletedIds || []), ...(incoming.deletedIds || [])]));
   const delSet = new Set(deletedIds);
   const listKeys = [
@@ -445,7 +523,7 @@ function smartMergeClientState(current, incoming) {
   for (const key of listKeys) {
     merged[key] = smartMergeListClient(current[key], incoming[key], delSet);
   }
-  return merged;
+  return normalizeState(merged);
 }
 
 window.addEventListener('beforeinstallprompt', (e) => {
@@ -519,8 +597,8 @@ async function fetchRemoteState() {
   if (localData && fbData) {
     return smartMergeClientState(localData, fbData);
   }
-  if (fbData) return fbData;
-  if (localData) return localData;
+  if (fbData) return normalizeState(fbData);
+  if (localData) return normalizeState(localData);
   throw new Error('Offline');
 }
 
@@ -529,14 +607,14 @@ async function loadData() {
   const cached = localStorage.getItem(STORAGE_KEY);
   if (cached) {
     try {
-      state = JSON.parse(cached);
+      state = normalizeState(JSON.parse(cached));
     } catch (_) {}
   }
 
   try {
     const remote = await fetchRemoteState();
     if (remote && remote.users) {
-      state = state && state.users ? smartMergeClientState(state, remote) : remote;
+      state = state && state.users ? smartMergeClientState(state, remote) : normalizeState(remote);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       isOnline = true;
     }
@@ -544,12 +622,8 @@ async function loadData() {
     isOnline = false;
   }
 
-  if (!state || !state.users) {
-    state = getDefaultInitialState();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }
-  state.chatMessages = state.chatMessages || [];
-  state.palletMovements = state.palletMovements || [];
+  state = normalizeState(state);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 
   if (state && state.users) {
     // Ensure CEO and Projects Manager always have full permissions, and Warehouse Keeper never sees financial accounting
@@ -864,6 +938,7 @@ function render() {
     appEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-weight:700;font-size:1.2rem;">جاري تحميل نظام مصنع العاصمة للصناعات المتخصصة...</div>`;
     return;
   }
+  state = normalizeState(state);
 
   if (!currentUser) {
     appEl.innerHTML = renderLoginScreen();
@@ -7244,7 +7319,7 @@ function openEditRawMaterialModal(rmId) {
             <div class="form-group"><label>كود الصنف</label><input id="erm-code" class="form-control" value="${rm.code || ''}" required /></div>
             <div class="form-group"><label>اسم الخامة</label><input id="erm-name" class="form-control" value="${rm.name || ''}" required /></div>
             <div class="form-group"><label>الرصيد الفعلي بالمخزن</label><input id="erm-qty" type="number" step="0.01" min="0" class="form-control" value="${rm.quantity || 0}" required style="font-weight:800;" /></div>
-            <div class="form-group"><label>تكلفة الوحدة (ج.م)</label><input id="erm-cost" type="number" step="0.5" min="0" class="form-control" value="${rm.unitCost || 0}" required /></div>
+            <div class="form-group"><label>تكلفة الوحدة (ج.م)</label><input id="erm-cost" type="number" step="0.5" min="0" class="form-control" value="${rm.costPerUnit ?? rm.unitCost ?? 0}" required /></div>
             <div class="form-group"><label>المورد</label><input id="erm-sup" class="form-control" value="${rm.supplierName || ''}" /></div>
             <div class="form-group"><label>الموقع المخزني</label><input id="erm-loc" class="form-control" value="${rm.location || ''}" /></div>
           </div>
@@ -7265,8 +7340,9 @@ function submitEditRawMaterialModal(e, rmId) {
   rm.code = (document.getElementById('erm-code')?.value || rm.code).trim();
   rm.name = (document.getElementById('erm-name')?.value || rm.name).trim();
   rm.quantity = Math.max(0, Number(document.getElementById('erm-qty')?.value || 0));
-  rm.unitCost = Math.max(0, Number(document.getElementById('erm-cost')?.value || 0));
-  rm.totalValue = +(rm.quantity * rm.unitCost).toFixed(2);
+  rm.costPerUnit = Math.max(0, Number(document.getElementById('erm-cost')?.value || 0));
+  rm.unitCost = rm.costPerUnit;
+  rm.totalValue = +(rm.quantity * rm.costPerUnit).toFixed(2);
   rm.supplierName = (document.getElementById('erm-sup')?.value || rm.supplierName).trim();
   rm.location = (document.getElementById('erm-loc')?.value || rm.location).trim();
   rm.updatedAt = new Date().toISOString();
@@ -7301,7 +7377,7 @@ function openEditScrapModal(scId) {
             <div class="form-group"><label>كود الهالك</label><input id="esc-code" class="form-control" value="${sc.code || ''}" required /></div>
             <div class="form-group"><label>بيان الهالك</label><input id="esc-name" class="form-control" value="${sc.name || ''}" required /></div>
             <div class="form-group"><label>الكمية المتاحة</label><input id="esc-qty" type="number" step="0.01" min="0" class="form-control" value="${sc.quantity || 0}" required /></div>
-            <div class="form-group"><label>القيمة التقديرية للوحدة</label><input id="esc-val" type="number" step="0.5" min="0" class="form-control" value="${sc.estimatedUnitValue || 0}" required /></div>
+            <div class="form-group"><label>القيمة التقديرية للوحدة</label><input id="esc-val" type="number" step="0.5" min="0" class="form-control" value="${sc.estimatedPricePerUnit ?? sc.estimatedUnitValue ?? 0}" required /></div>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
             <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
@@ -7320,8 +7396,9 @@ function submitEditScrapModal(e, scId) {
   sc.code = (document.getElementById('esc-code')?.value || sc.code).trim();
   sc.name = (document.getElementById('esc-name')?.value || sc.name).trim();
   sc.quantity = Math.max(0, Number(document.getElementById('esc-qty')?.value || 0));
-  sc.estimatedUnitValue = Math.max(0, Number(document.getElementById('esc-val')?.value || 0));
-  sc.totalEstimatedValue = +(sc.quantity * sc.estimatedUnitValue).toFixed(2);
+  sc.estimatedPricePerUnit = Math.max(0, Number(document.getElementById('esc-val')?.value || 0));
+  sc.estimatedUnitValue = sc.estimatedPricePerUnit;
+  sc.totalEstimatedValue = +(sc.quantity * sc.estimatedPricePerUnit).toFixed(2);
   sc.updatedAt = new Date().toISOString();
   closeModal();
   saveState(`✏️ تعديل بيان الهالك (${sc.name}) بواسطة ${currentUser.name}`);
@@ -7354,7 +7431,7 @@ function openEditSparePartModal(spId) {
             <div class="form-group"><label>كود القطعة</label><input id="esp-code" class="form-control" value="${sp.code || ''}" required /></div>
             <div class="form-group"><label>اسم القطعة</label><input id="esp-name" class="form-control" value="${sp.name || ''}" required /></div>
             <div class="form-group"><label>الرصيد المتاح</label><input id="esp-qty" type="number" min="0" class="form-control" value="${sp.quantity || 0}" required /></div>
-            <div class="form-group"><label>تكلفة الوحدة (ج.م)</label><input id="esp-cost" type="number" step="0.5" min="0" class="form-control" value="${sp.unitCost || 0}" required /></div>
+            <div class="form-group"><label>تكلفة الوحدة (ج.م)</label><input id="esp-cost" type="number" step="0.5" min="0" class="form-control" value="${sp.costPerUnit ?? sp.unitCost ?? 0}" required /></div>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
             <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
@@ -7373,8 +7450,9 @@ function submitEditSparePartModal(e, spId) {
   sp.code = (document.getElementById('esp-code')?.value || sp.code).trim();
   sp.name = (document.getElementById('esp-name')?.value || sp.name).trim();
   sp.quantity = Math.max(0, Number(document.getElementById('esp-qty')?.value || 0));
-  sp.unitCost = Math.max(0, Number(document.getElementById('esp-cost')?.value || 0));
-  sp.totalValue = +(sp.quantity * sp.unitCost).toFixed(2);
+  sp.costPerUnit = Math.max(0, Number(document.getElementById('esp-cost')?.value || 0));
+  sp.unitCost = sp.costPerUnit;
+  sp.totalValue = +(sp.quantity * sp.costPerUnit).toFixed(2);
   sp.updatedAt = new Date().toISOString();
   closeModal();
   saveState(`✏️ تعديل رصيد وبيانات قطعة الغيار (${sp.name}) بواسطة ${currentUser.name}`);

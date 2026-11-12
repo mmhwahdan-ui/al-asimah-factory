@@ -12,18 +12,20 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./icons/logo.svg" />
   <link rel="apple-touch-icon" href="./icons/logo.svg" />
-  <link rel="stylesheet" href="./styles.css?v=11" />
+  <link rel="stylesheet" href="./styles.css?v=12" />
 </head>
 <body>
   <div id="app"></div>
   <div id="modal-root"></div>
   <div id="print-area"></div>
 
-  <script src="./app.js?v=11"></script>
+  <script src="./app.js?v=12"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch(() => {});
+        navigator.serviceWorker.register('./sw.js?v=12').then(reg => {
+          reg.update();
+        }).catch(() => {});
       });
     }
   </script>

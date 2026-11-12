@@ -1,4 +1,4 @@
-const CACHE_NAME = 'al-asimah-factory-v11';
+const CACHE_NAME = 'al-asimah-factory-v12';
 const ASSETS = [
   './',
   './index.html',
