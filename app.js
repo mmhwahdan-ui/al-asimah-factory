@@ -20,6 +20,27 @@ let veneerFilterGrade = 'all';
 let veneerFilterThickness = 'all';
 let veneerFilterStatus = 'in_stock';
 let veneerViewMode = 'matrix'; // 'matrix' | 'pallets'
+let matrixCompactMode = true; // default to smaller/compact size for veneer quantities & prices tables
+
+// Monotonic timestamp generator so clock skew between devices never causes a stock deduction to be overwritten by an older remote state
+function getMonotonicIso(prevIso = '') {
+  let maxMs = Date.now();
+  if (prevIso) {
+    const pMs = new Date(prevIso).getTime() || 0;
+    if (pMs >= maxMs) maxMs = pMs + 1000;
+  }
+  if (state) {
+    for (const p of (state.pallets || [])) {
+      const t = new Date(p?.updatedAt || 0).getTime() || 0;
+      if (t >= maxMs) maxMs = t + 1000;
+    }
+    for (const o of (state.productionOrders || [])) {
+      const t = new Date(o?.updatedAt || 0).getTime() || 0;
+      if (t >= maxMs) maxMs = t + 1000;
+    }
+  }
+  return new Date(maxMs).toISOString();
+}
 
 // Quick calculator state
 let quickCalc = {
@@ -2126,10 +2147,24 @@ function renderWarehouses() {
 }
 
 function matchPalletToThicknessRow(p, t) {
-  if (p.thicknessId && t.id) return p.thicknessId === t.id;
+  if (!p || !t) return false;
+  if (p.thicknessId && t.id && p.thicknessId === t.id) return true;
   const pDir = p.direction || 'qas';
   const tDir = t.direction || 'qas';
   return Number(p.thicknessMm) === Number(t.mm) && pDir === tDir;
+}
+
+function matchPalletToGrade(p, gradeId, gradeName = '') {
+  if (!p) return false;
+  if (gradeId && p.gradeId === gradeId) return true;
+  const gObj = (state?.catalog?.grades || []).find(g => g.id === gradeId || (gradeName && (g.code === gradeName || g.name === gradeName)));
+  if (gObj) {
+    if (p.gradeId === gObj.id) return true;
+    if (p.gradeCode && p.gradeCode === gObj.code) return true;
+    if (p.gradeName && (p.gradeName === gObj.code || p.gradeName === gObj.name)) return true;
+  }
+  if (gradeName && (p.gradeCode === gradeName || p.gradeName === gradeName)) return true;
+  return false;
 }
 
 function renderFinishedVeneerWarehouse() {
@@ -2140,6 +2175,7 @@ function renderFinishedVeneerWarehouse() {
   const grades = state.catalog.grades || [];
   const inStockPallets = (state.pallets || []).filter(p => {
     if (p.status !== 'in_stock') return false;
+    if (Number(p.sheetsCount || 0) <= 0) return false;
     if (veneerFilterWood !== 'all' && p.woodTypeId !== veneerFilterWood) return false;
     return true;
   });
@@ -2147,18 +2183,21 @@ function renderFinishedVeneerWarehouse() {
   // Helper to get stock & sales metrics for a cell (thicknessRow t x gradeId)
   function getCellData(t, gradeId) {
     const cellPallets = inStockPallets.filter(
-      p => matchPalletToThicknessRow(p, t) && p.gradeId === gradeId
+      p => matchPalletToThicknessRow(p, t) && matchPalletToGrade(p, gradeId)
     );
     const sheets = cellPallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
     const areaM2 = cellPallets.reduce((s, p) => s + Number(p.areaM2 || 0), 0);
     const volumeM3 = cellPallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
-    const unitPiecePrice = getCellUnitPrice(t.id, gradeId);
+    const unitPiecePrice = getCellUnitPrice(t.id, gradeId, t.mm, t.direction);
     const stockValueByPiece = +(sheets * unitPiecePrice).toFixed(2);
 
-    // Calculate sold pieces & revenue from movements for this cell
-    const soldMovements = (state.warehouseMovements || []).filter(
-      m => m.direction === 'out' && m.cellKey === getCellPriceKey(t.id, gradeId) && m.movementCategory === 'sales_exit'
-    );
+    // Calculate sold pieces & revenue from movements for this cell (supporting both . and _dot_ keys)
+    const targetSafeKey = getCellPriceKey(t.id, gradeId);
+    const soldMovements = (state.warehouseMovements || []).filter(m => {
+      if (m.direction !== 'out' || m.movementCategory !== 'sales_exit') return false;
+      const mSafeKey = String(m.cellKey || '').trim().replace(/[.#$/\[\]]/g, '_dot_');
+      return mSafeKey === targetSafeKey;
+    });
     const soldSheets = soldMovements.reduce((s, m) => s + Number(m.sheetsCount || 0), 0);
     const soldRevenue = soldMovements.reduce((s, m) => s + Number(m.totalSaleAmount || 0), 0);
 
@@ -2183,7 +2222,7 @@ function renderFinishedVeneerWarehouse() {
 
   function getTotalSheetsForGradeAllWoods(gradeId) {
     return (state.pallets || [])
-      .filter(p => p.status === 'in_stock' && p.gradeId === gradeId)
+      .filter(p => p.status === 'in_stock' && matchPalletToGrade(p, gradeId))
       .reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
   }
 
@@ -2203,79 +2242,99 @@ function renderFinishedVeneerWarehouse() {
     }
   }
 
+  const tableClass = matrixCompactMode ? 'matrix-table' : 'matrix-table matrix-normal';
+
   return `
     <!-- Quick Warehouse Operations Bar (إضافة كميات إنتاج | إضافة مرتجع مبيعات | خروج حسب المبيعات | خروج لإعادة التشغيل) -->
-    <div class="card" style="background:linear-gradient(135deg, rgba(15,118,110,0.08), rgba(124,58,237,0.08));border:2px solid var(--primary);padding:14px 18px;margin-bottom:16px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+    <div class="card" style="background:linear-gradient(135deg, rgba(15,118,110,0.08), rgba(124,58,237,0.08));border:2px solid var(--primary);padding:12px 16px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
         <div>
-          <div style="font-weight:900;font-size:1.02rem;color:var(--primary);">
+          <div style="font-weight:900;font-size:0.96rem;color:var(--primary);">
             ⚙️ حركات كميات المخزن المعتمدة (إنتاج / مرتجع مبيعات / خروج مبيعات / إعادة تشغيل):
           </div>
-          <small style="color:var(--text-muted);">
+          <small style="color:var(--text-muted);font-size:0.78rem;">
             ⚠️ <strong>ملاحظة هامة:</strong> مرتجع المبيعات لا يدخل رصيد المخزن مرة أخرى إلا بعد موافقة <strong>(المدير التنفيذي أو مدير المشروعات أو المحاسب فقط)</strong>.
           </small>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-primary" onclick="openWarehouseOpShortcut('in')">📥 إضافة كميات إنتاج</button>
-          <button class="btn" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openWarehouseOpShortcut('sales_return')">🔄 إضافة مرتجع مبيعات</button>
-          <button class="btn btn-success" onclick="openWarehouseOpShortcut('out')">📤 خروج الكميات حسب المبيعات</button>
-          <button class="btn btn-accent" onclick="openWarehouseOpShortcut('rework')">♻️ خروج الكميات لإعادة التشغيل</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="btn btn-sm btn-primary" onclick="openWarehouseOpShortcut('in')">📥 إضافة كميات إنتاج</button>
+          <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openWarehouseOpShortcut('sales_return')">🔄 إضافة مرتجع مبيعات</button>
+          <button class="btn btn-sm btn-success" onclick="openWarehouseOpShortcut('out')">📤 خروج الكميات حسب المبيعات</button>
+          <button class="btn btn-sm btn-accent" onclick="openWarehouseOpShortcut('rework')">♻️ خروج الكميات لإعادة التشغيل</button>
         </div>
       </div>
     </div>
 
     ${renderSalesReturnsSection()}
 
-    <div class="card">
-      <div class="card-header">
+    <div class="card" style="padding:14px 16px;">
+      <div class="card-header" style="margin-bottom:10px;">
         <div>
-          <div class="card-title">🪵 جدول مصفوفة مخزن القشرة الخشبية (التخانة [قص / سدا] × الجودة) — مقاس 250×125 سم</div>
-          <small style="color:var(--text-muted);">
-            العمود الأول يميناً: <strong>التخانة واتجاهها (قص / سدا)</strong> | الصف الأول أعلى: <strong>درجة الجودة</strong> | اضغط على أي خلية لتسجيل (📥 إضافة كميات إنتاج / 🔄 مرتجع مبيعات / 📤 خروج حسب المبيعات / ♻️ خروج لإعادة التشغيل)
+          <div class="card-title" style="font-size:1rem;">🪵 جدول مصفوفة مخزن القشرة الخشبية (التخانة [قص / سدا] × الجودة) — مقاس 250×125 سم</div>
+          <small style="color:var(--text-muted);font-size:0.76rem;">
+            اضغط على أي خلية لتسجيل (📥 إضافة كميات إنتاج / 🔄 مرتجع مبيعات / 📤 خروج حسب المبيعات / ♻️ خروج لإعادة التشغيل)
           </small>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="btn btn-sm btn-outline" onclick="matrixCompactMode=!matrixCompactMode; render();" title="تبديل حجم الجداول">
+            ${matrixCompactMode ? '🔍 الحجم: مصغر ✓ (اضغط للتكبير)' : '🔍 الحجم: عادي (اضغط للتصغير)'}
+          </button>
+          <button class="btn btn-sm btn-primary" onclick="printVeneerQuantitiesMatrixPdf()">
+            🖨️ طباعة جدول الكميات PDF
+          </button>
+          ${canSeeFinancialPrices() ? `
+            <button class="btn btn-sm btn-accent" onclick="printVeneerPricesMatrixPdf()">
+              🖨️ طباعة جدول الأسعار PDF
+            </button>
+            <button class="btn btn-sm btn-success" onclick="printBothMatricesPdf()">
+              🖨️ طباعة الكميات + الأسعار PDF
+            </button>
+          ` : ''}
           <button class="btn btn-sm ${veneerViewMode === 'matrix' ? 'btn-primary' : 'btn-outline'}" onclick="veneerViewMode='matrix'; render();">
-            ${canSeeFinancialPrices() ? '📊 عرض جدول المخازن + جدول الأسعار السفلي' : '📊 عرض جدول أرصدة كميات المخازن'}
+            📊 عرض الجداول
           </button>
           <button class="btn btn-sm ${veneerViewMode === 'pallets' ? 'btn-primary' : 'btn-outline'}" onclick="veneerViewMode='pallets'; render();">
-            🏷️ سجل البالتات المفصل والباركود (${inStockPallets.length})
+            🏷️ البالتات (${inStockPallets.length})
           </button>
         </div>
       </div>
 
       <!-- Top Bar: Wood Filter + Quick Add Thickness (Cut/Warp) / Grade -->
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;background:var(--bg-elevated);padding:12px 16px;border-radius:12px;">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-          <label style="font-weight:700;font-size:0.88rem;">تصفية الجدول حسب نوع الخشب:</label>
-          <select class="form-control" style="min-width:220px;padding:7px 12px;" onchange="veneerFilterWood=this.value; render();">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;background:var(--bg-elevated);padding:8px 12px;border-radius:10px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <label style="font-weight:700;font-size:0.8rem;">تصفية حسب نوع الخشب:</label>
+          <select class="form-control" style="min-width:190px;padding:4px 10px;font-size:0.82rem;" onchange="veneerFilterWood=this.value; render();">
             <option value="all" ${veneerFilterWood === 'all' ? 'selected' : ''}>🌳 إجمالي جميع الأخشاب بالمخزن</option>
             ${state.catalog.woodTypes.map(w => `<option value="${w.id}" ${veneerFilterWood === w.id ? 'selected' : ''}>${w.name}</option>`).join('')}
           </select>
         </div>
 
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-sm btn-primary" onclick="openAddThicknessModal()">➕ إضافة تخانة جديدة (قص / سدا)</button>
-          <button class="btn btn-sm btn-accent" onclick="addGradePrompt()">➕ إضافة جودة جديدة للصف العلوي</button>
-          <button class="btn btn-sm btn-outline" onclick="openAddPalletModal()">📦 إضافة بالتة بالباركود</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="btn btn-sm btn-primary" onclick="openAddThicknessModal()">➕ تخانة (قص/سدا)</button>
+          <button class="btn btn-sm btn-accent" onclick="addGradePrompt()">➕ جودة جديدة</button>
+          <button class="btn btn-sm btn-outline" onclick="openAddPalletModal()">📦 بالتة بالباركود</button>
         </div>
       </div>
 
       ${veneerViewMode === 'matrix' ? `
         <!-- TABLE 1: 2D WAREHOUSE STOCK MATRIX (THICKNESS [QAS/SADA] x GRADE) -->
-        <div style="margin-bottom:8px;font-weight:800;font-size:0.98rem;color:var(--primary);display:flex;align-items:center;justify-content:space-between;">
-          <span>1️⃣ جدول أرصدة كميات المخازن بالقطعة (الفرخ) والمتر المكعب (م³)</span>
-          <small style="color:var(--text-muted);">اضغط على أي خلية لتسجيل إضافة كميات إنتاج أو مرتجع مبيعات أو خروج مبيعات أو إعادة تشغيل</small>
+        <div style="margin-bottom:6px;font-weight:800;font-size:0.9rem;color:var(--primary);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+          <span>1️⃣ جدول أرصدة كميات القشرة بالقطعة (الفرخ) والمتر المكعب (م³)</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <button class="btn btn-sm btn-outline" style="padding:3px 9px;font-size:0.74rem;border-color:var(--primary);color:var(--primary);" onclick="printVeneerQuantitiesMatrixPdf()">
+              🖨️ طباعة / تصدير جدول الكميات PDF
+            </button>
+          </div>
         </div>
-        <div class="matrix-wrapper" style="margin-bottom:28px;">
-          <table class="matrix-table">
+        <div class="matrix-wrapper" style="margin-bottom:18px;">
+          <table class="${tableClass}">
             <thead>
               <tr>
                 <th class="matrix-corner-th">
-                  <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">
-                    <span>⬇️ التخانة (قص / سدا) \\ الجودة ⬅️</span>
-                    <button class="btn btn-sm" style="background:#fbbf24;color:#0f172a;padding:3px 9px;font-size:0.74rem;" onclick="openAddThicknessModal()">
-                      + إضافة تخانة (قص/سدا)
+                  <div style="display:flex;flex-direction:column;gap:3px;align-items:flex-start;">
+                    <span>⬇️ التخانة \\ الجودة ⬅️</span>
+                    <button class="btn btn-sm" style="background:#fbbf24;color:#0f172a;padding:2px 6px;font-size:0.66rem;" onclick="openAddThicknessModal()">
+                      + تخانة (قص/سدا)
                     </button>
                   </div>
                 </th>
@@ -2284,23 +2343,23 @@ function renderFinishedVeneerWarehouse() {
                   const totalGradeSheetsAll = getTotalSheetsForGradeAllWoods(g.id);
                   const canDeleteGrade = totalGradeSheetsAll === 0;
                   return `
-                    <th class="matrix-grade-th" style="border-top:4px solid ${g.color || '#3b82f6'};">
-                      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
-                        <span class="badge" style="background:${g.color || '#3b82f6'};color:#fff;">جودة ${g.code}</span>
-                        <button class="del-icon-btn"
+                    <th class="matrix-grade-th" style="border-top:3px solid ${g.color || '#3b82f6'};">
+                      <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
+                        <span class="badge" style="background:${g.color || '#3b82f6'};color:#fff;font-size:0.7rem;padding:2px 7px;">${g.code}</span>
+                        <button class="del-icon-btn" style="padding:1px 4px;font-size:0.7rem;"
                           title="${canDeleteGrade ? 'إلغاء هذه الجودة (الرصيد صفر)' : 'لا يمكن إلغاء جودة لها رصيد بالمخزن (' + totalGradeSheetsAll + ' قطعة)'}"
                           onclick="deleteGradeFromMatrix('${g.id}')">
                           🗑️
                         </button>
                       </div>
-                      <div style="margin-top:5px;font-size:0.9rem;font-weight:800;">${g.name}</div>
+                      <div style="margin-top:2px;font-size:0.76rem;font-weight:800;">${g.name}</div>
                     </th>
                   `;
                 }).join('')}
 
-                <th class="matrix-grade-th" style="min-width:130px;background:rgba(180,83,9,0.08);">
-                  <button class="btn btn-sm btn-primary" onclick="addGradePrompt()" style="width:100%;margin-bottom:6px;">+ إضافة جودة</button>
-                  <div style="font-size:0.84rem;font-weight:800;color:var(--primary);">إجمالي الصف</div>
+                <th class="matrix-grade-th" style="min-width:100px;background:rgba(180,83,9,0.08);">
+                  <button class="btn btn-sm btn-primary" onclick="addGradePrompt()" style="width:100%;margin-bottom:3px;padding:2px 6px;font-size:0.66rem;">+ جودة</button>
+                  <div style="font-size:0.75rem;font-weight:800;color:var(--primary);">إجمالي الصف</div>
                 </th>
               </tr>
             </thead>
@@ -2308,16 +2367,9 @@ function renderFinishedVeneerWarehouse() {
             <tbody>
               ${thicknesses.length === 0 ? `
                 <tr>
-                  <td colspan="${grades.length + 2}" style="padding:28px;text-align:center;color:var(--text-muted);">
-                    <div style="font-size:1rem;font-weight:800;margin-bottom:8px;color:var(--text-main);">
+                  <td colspan="${grades.length + 2}" style="padding:18px;text-align:center;color:var(--text-muted);">
+                    <div style="font-size:0.9rem;font-weight:800;margin-bottom:6px;color:var(--text-main);">
                       الجدول فارغ حالياً وجاهز لإدخال التخانات (قص / سدا) والدرجات الخاصة بكم
-                    </div>
-                    <div style="margin-bottom:12px;font-size:0.86rem;">
-                      اضغط على <strong>(+ إضافة تخانة قص/سدا)</strong> لإضافة أول صف تخانة في العمود الأيمن، واضغط على <strong>(+ إضافة جودة)</strong> لإضافة أعمدة الجودة في الصف العلوي.
-                    </div>
-                    <div style="display:flex;justify-content:center;gap:10px;">
-                      <button class="btn btn-sm btn-primary" onclick="openAddThicknessModal()">➕ إضافة تخانة (قص / سدا)</button>
-                      <button class="btn btn-sm btn-accent" onclick="addGradePrompt()">➕ إضافة جودة جديدة</button>
                     </div>
                   </td>
                 </tr>
@@ -2326,7 +2378,7 @@ function renderFinishedVeneerWarehouse() {
                 const canDeleteThk = totalThkSheetsAll === 0;
                 const isSada = t.direction === 'sada';
                 const dirBadgeBg = isSada ? '#0284c7' : '#d97706';
-                const dirBadgeText = isSada ? '📏 اتجاه سدا' : '✂️ اتجاه قص';
+                const dirBadgeText = isSada ? '📏 سدا' : '✂️ قص';
                 let rowSheets = 0;
                 let rowM3 = 0;
                 let rowPallets = 0;
@@ -2342,24 +2394,21 @@ function renderFinishedVeneerWarehouse() {
                     <td class="matrix-cell ${hasStock ? 'has-stock' : 'empty-stock'}"
                         onclick="openMatrixCellModal('${t.id}', '${g.id}')">
                       ${hasStock ? `
-                        <div class="cell-main-qty" style="color:var(--primary);">${fmtNum(cell.sheets, 0)} قطعة (فرخ)</div>
-                        <div style="font-weight:700;font-size:0.84rem;color:var(--text-main);">
-                          ${fmtNum(cell.volumeM3, 3)} م³ <span style="color:var(--text-muted);font-size:0.75rem;">(${cell.palletsCount} بالتة)</span>
-                        </div>
+                        <div class="cell-main-qty" style="color:var(--primary);">${fmtNum(cell.sheets, 0)} قطعة</div>
                         <div class="cell-sub-metrics">
-                          <span>${fmtNum(cell.areaM2, 1)} م²</span>
-                          ${canSeeFinancialPrices() && cell.unitPiecePrice > 0 ? `<span style="color:var(--success);font-weight:700;">سعر القطعة: ${fmtNum(cell.unitPiecePrice, 2)} ج</span>` : ''}
+                          <strong style="color:var(--text-main);">${fmtNum(cell.volumeM3, 3)} م³</strong>
+                          <span>(${fmtNum(cell.areaM2, 0)} م²)</span>
+                          ${canSeeFinancialPrices() && cell.unitPiecePrice > 0 ? `<span style="color:var(--success);font-weight:700;">${fmtNum(cell.unitPiecePrice, 1)} ج</span>` : ''}
                         </div>
                       ` : `
-                        <div style="color:var(--text-muted);font-size:0.84rem;font-weight:600;">0 رصيد</div>
-                        <div style="font-size:0.7rem;color:var(--text-muted);">اضغط للإضافة</div>
+                        <div style="color:var(--text-muted);font-size:0.74rem;font-weight:600;">0</div>
                       `}
                       <div class="cell-action-hint" onclick="event.stopPropagation();">
-                        <button class="cell-mini-btn" title="إضافة كميات إنتاج" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'in')">📥 + إنتاج</button>
-                        <button class="cell-mini-btn" style="background:rgba(124,58,237,0.14);color:#6d28d9;border-color:#8b5cf6;" title="إضافة مرتجع مبيعات (يدخل المخزن بعد موافقة التنفيذي أو المشروعات أو المحاسب)" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'sales_return')">🔄 مرتجع</button>
+                        <button class="cell-mini-btn" title="إضافة كميات إنتاج" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'in')">+إنتاج</button>
+                        <button class="cell-mini-btn" style="background:rgba(124,58,237,0.14);color:#6d28d9;border-color:#8b5cf6;" title="إضافة مرتجع مبيعات" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'sales_return')">مرتجع</button>
                         ${hasStock ? `
-                          <button class="cell-mini-btn" style="background:rgba(16,185,129,0.15);color:#059669;border-color:#10b981;" title="خروج الكميات حسب المبيعات" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'out')">📤 خروج مبيعات</button>
-                          <button class="cell-mini-btn" title="خروج الكميات لإعادة التشغيل" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'rework')">♻️ إعادة تشغيل</button>
+                          <button class="cell-mini-btn" style="background:rgba(16,185,129,0.15);color:#059669;border-color:#10b981;" title="خروج الكميات حسب المبيعات" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'out')">بيع</button>
+                          <button class="cell-mini-btn" title="خروج الكميات لإعادة التشغيل" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'rework')">تشغيل</button>
                         ` : ''}
                       </div>
                     </td>
@@ -2370,15 +2419,12 @@ function renderFinishedVeneerWarehouse() {
                   <tr>
                     <!-- First Column on Right: Thickness + Direction (Qas / Sada) -->
                     <td class="matrix-thickness-td">
-                      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
-                        <div>
-                          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                            <span class="badge badge-info" style="font-size:0.88rem;">${t.mm} مم</span>
-                            <span class="badge" style="background:${dirBadgeBg};color:#fff;font-size:0.76rem;">${dirBadgeText}</span>
-                          </div>
-                          <div style="font-size:0.76rem;color:var(--text-muted);margin-top:3px;">${t.label || ''}</div>
+                      <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
+                        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+                          <span class="badge badge-info" style="font-size:0.76rem;padding:2px 7px;">${t.mm} مم</span>
+                          <span class="badge" style="background:${dirBadgeBg};color:#fff;font-size:0.68rem;padding:2px 6px;">${dirBadgeText}</span>
                         </div>
-                        <button class="del-icon-btn"
+                        <button class="del-icon-btn" style="padding:1px 4px;font-size:0.7rem;"
                           title="${canDeleteThk ? 'إلغاء هذه التخانة (الرصيد صفر)' : 'لا يمكن إلغاء تخانة لها رصيد بالمخزن (' + totalThkSheetsAll + ' قطعة)'}"
                           onclick="deleteThicknessFromMatrix('${t.id}')">
                           🗑️
@@ -2390,9 +2436,8 @@ function renderFinishedVeneerWarehouse() {
 
                     <!-- Row Total -->
                     <td class="matrix-total-cell">
-                      <div style="color:var(--primary);font-size:0.95rem;">${fmtNum(rowSheets, 0)} قطعة</div>
-                      <div style="font-size:0.8rem;">${fmtNum(rowM3, 3)} م³</div>
-                      <small style="color:var(--text-muted);font-size:0.72rem;">${rowPallets} بالتة</small>
+                      <div style="color:var(--primary);font-size:0.82rem;font-weight:800;">${fmtNum(rowSheets, 0)} ق</div>
+                      <div style="font-size:0.7rem;color:var(--text-muted);">${fmtNum(rowM3, 3)} م³</div>
                     </td>
                   </tr>
                 `;
@@ -2402,26 +2447,23 @@ function renderFinishedVeneerWarehouse() {
             <tfoot>
               <tr>
                 <td class="matrix-thickness-td" style="background:rgba(15,23,42,0.08);">
-                  <div style="display:flex;align-items:center;justify-content:space-between;">
-                    <strong>إجمالي كل جودة ⬅️</strong>
-                    <button class="btn btn-sm btn-outline" onclick="openAddThicknessModal()">+ تخانة</button>
-                  </div>
+                  <strong style="font-size:0.76rem;">إجمالي الجودة ⬅️</strong>
                 </td>
                 ${grades.map(g => {
-                  const colPallets = inStockPallets.filter(p => p.gradeId === g.id);
+                  const colPallets = inStockPallets.filter(p => matchPalletToGrade(p, g.id));
                   const colSheets = colPallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
                   const colM3 = colPallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
                   return `
                     <td class="matrix-total-cell">
-                      <div style="color:var(--accent);font-size:1rem;">${fmtNum(colSheets, 0)} قطعة</div>
-                      <div style="font-size:0.82rem;">${fmtNum(colM3, 3)} م³ (${colPallets.length} بالتة)</div>
+                      <div style="color:var(--accent);font-size:0.84rem;font-weight:800;">${fmtNum(colSheets, 0)} ق</div>
+                      <div style="font-size:0.7rem;">${fmtNum(colM3, 3)} م³</div>
                     </td>
                   `;
                 }).join('')}
                 <td class="matrix-total-cell" style="background:var(--primary-light) !important;">
-                  <div style="color:var(--primary);font-size:1.08rem;font-weight:900;">${fmtNum(grandSheets, 0)} قطعة</div>
-                  <div style="font-size:0.84rem;">${fmtNum(grandM3, 3)} م³</div>
-                  <small style="color:var(--text-muted);">${fmtNum(grandM2, 1)} م²</small>
+                  <div style="color:var(--primary);font-size:0.9rem;font-weight:900;">${fmtNum(grandSheets, 0)} ق</div>
+                  <div style="font-size:0.74rem;">${fmtNum(grandM3, 3)} م³</div>
+                  <small style="color:var(--text-muted);font-size:0.66rem;">${fmtNum(grandM2, 0)} م²</small>
                 </td>
               </tr>
             </tfoot>
@@ -2430,27 +2472,29 @@ function renderFinishedVeneerWarehouse() {
 
         <!-- TABLE 2: AUTOMATIC MIRROR TABLE FOR SINGLE PIECE PRICE & LIVE STOCK/SALES VALUATION -->
         ${canSeeFinancialPrices() ? `
-        <div style="margin-bottom:8px;font-weight:800;font-size:0.98rem;color:var(--accent);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-          <span>2️⃣ الجدول الثاني الأوتوماتيكي: تسعير القطعة الواحدة (الفرخ) وقيمة الأرصدة والمبيعات اللحظية</span>
-          <small style="color:var(--text-muted);">اكتب <strong>سعر القطعة الواحدة</strong> داخل أي خلية، وعند تسجيل خروج للمبيعات يسمع في الأرصدة فوراً عند باقي المستخدمين</small>
+        <div style="margin-bottom:6px;font-weight:800;font-size:0.9rem;color:var(--accent);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+          <span>2️⃣ جدول الأسعار: تسعير القطعة الواحدة (الفرخ) وقيمة الأرصدة والمبيعات اللحظية</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <button class="btn btn-sm btn-outline" style="padding:3px 9px;font-size:0.74rem;border-color:var(--accent);color:var(--accent);" onclick="printVeneerPricesMatrixPdf()">
+              🖨️ طباعة / تصدير جدول الأسعار PDF
+            </button>
+          </div>
         </div>
         <div class="matrix-wrapper">
-          <table class="matrix-table">
+          <table class="${tableClass}">
             <thead>
               <tr>
                 <th class="matrix-corner-th" style="background:linear-gradient(135deg, #0f766e 0%, #115e59 100%) !important;">
-                  <span>💰 التخانة (قص / سدا) \\ سعر القطعة بالجودة ⬅️</span>
+                  <span>💰 التخانة \\ سعر القطعة ⬅️</span>
                 </th>
                 ${grades.map(g => `
-                  <th class="matrix-grade-th" style="border-top:4px solid ${g.color || '#10b981'};">
-                    <span class="badge" style="background:${g.color || '#10b981'};color:#fff;">جودة ${g.code}</span>
-                    <div style="margin-top:4px;font-size:0.88rem;font-weight:800;">${g.name}</div>
-                    <small style="color:var(--text-muted);">سعر القطعة + قيمة الرصيد والمبيعات</small>
+                  <th class="matrix-grade-th" style="border-top:3px solid ${g.color || '#10b981'};">
+                    <span class="badge" style="background:${g.color || '#10b981'};color:#fff;font-size:0.7rem;padding:2px 7px;">${g.code}</span>
+                    <div style="margin-top:2px;font-size:0.75rem;font-weight:800;">${g.name}</div>
                   </th>
                 `).join('')}
-                <th class="matrix-grade-th" style="min-width:150px;background:rgba(15,118,110,0.08);">
-                  <div style="font-size:0.86rem;font-weight:800;color:var(--accent);">إجمالي قيمة الصف</div>
-                  <small style="color:var(--text-muted);">قيمة المخزون + المبيعات</small>
+                <th class="matrix-grade-th" style="min-width:110px;background:rgba(15,118,110,0.08);">
+                  <div style="font-size:0.76rem;font-weight:800;color:var(--accent);">إجمالي الصف</div>
                 </th>
               </tr>
             </thead>
@@ -2458,14 +2502,14 @@ function renderFinishedVeneerWarehouse() {
             <tbody>
               ${thicknesses.length === 0 ? `
                 <tr>
-                  <td colspan="${grades.length + 2}" style="padding:20px;text-align:center;color:var(--text-muted);">
+                  <td colspan="${grades.length + 2}" style="padding:14px;text-align:center;color:var(--text-muted);">
                     يتكون هذا الجدول أوتوماتيكياً بمجرد إضافة التخانات (قص / سدا) ودرجات الجودة في الجدول العلوي.
                   </td>
                 </tr>
               ` : thicknesses.map(t => {
                 const isSada = t.direction === 'sada';
                 const dirBadgeBg = isSada ? '#0284c7' : '#d97706';
-                const dirBadgeText = isSada ? '📏 اتجاه سدا' : '✂️ اتجاه قص';
+                const dirBadgeText = isSada ? '📏 سدا' : '✂️ قص';
                 let rowStockValue = 0;
                 let rowSalesValue = 0;
 
@@ -2476,31 +2520,26 @@ function renderFinishedVeneerWarehouse() {
 
                   return `
                     <td class="matrix-cell" style="background:var(--bg-card);cursor:default;">
-                      <div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:6px;">
-                        <label style="font-size:0.74rem;font-weight:700;color:var(--text-muted);">سعر القطعة:</label>
+                      <div style="display:flex;align-items:center;justify-content:center;gap:4px;margin-bottom:3px;">
                         <input type="number" step="0.5" min="0"
                           class="form-control"
-                          style="width:95px;padding:4px 8px;text-align:center;font-weight:800;font-size:0.9rem;border-color:var(--accent);"
+                          style="width:68px;padding:2px 4px;text-align:center;font-weight:800;font-size:0.78rem;border-color:var(--accent);height:25px;"
                           value="${cell.unitPiecePrice || ''}"
-                          placeholder="0.00"
+                          placeholder="0"
+                          title="سعر القطعة الواحدة بالجنيه"
                           onchange="updateCellUnitPrice('${t.id}', '${g.id}', this.value)" />
-                        <span style="font-size:0.74rem;font-weight:700;">ج.م</span>
+                        <span style="font-size:0.68rem;font-weight:700;color:var(--text-muted);">ج</span>
                       </div>
 
-                      <div style="font-size:0.8rem;padding:4px 6px;border-radius:6px;background:var(--bg-elevated);margin-bottom:4px;">
-                        <span style="color:var(--text-muted);">قيمة الرصيد (${cell.sheets} قطعة):</span><br/>
-                        <strong style="color:var(--primary);font-size:0.9rem;">${fmtMoney(cell.stockValueByPiece)}</strong>
+                      <div style="font-size:0.68rem;padding:2px 4px;border-radius:4px;background:var(--bg-elevated);line-height:1.25;">
+                        <span style="color:var(--text-muted);">رصيد (${cell.sheets}):</span>
+                        <strong style="color:var(--primary);">${fmtMoney(cell.stockValueByPiece)}</strong>
                       </div>
 
-                      <div style="font-size:0.76rem;color:var(--success);font-weight:700;">
-                        مبيعات الخلية (${cell.soldSheets} قطعة): ${fmtMoney(cell.soldRevenue)}
-                      </div>
-
-                      ${cell.sheets > 0 ? `
-                        <button class="cell-mini-btn" style="margin-top:5px;width:100%;background:var(--accent);color:#fff;border:none;padding:4px 8px;"
-                          onclick="openMatrixCellModal('${t.id}', '${g.id}', 'out')">
-                          📤 تسجيل خروج مبيعات فوري
-                        </button>
+                      ${cell.soldSheets > 0 ? `
+                        <div style="font-size:0.65rem;color:var(--success);font-weight:700;margin-top:2px;">
+                          مبيعات (${cell.soldSheets}): ${fmtMoney(cell.soldRevenue)}
+                        </div>
                       ` : ''}
                     </td>
                   `;
@@ -2509,17 +2548,15 @@ function renderFinishedVeneerWarehouse() {
                 return `
                   <tr>
                     <td class="matrix-thickness-td">
-                      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                        <span class="badge badge-info">${t.mm} مم</span>
-                        <span class="badge" style="background:${dirBadgeBg};color:#fff;font-size:0.75rem;">${dirBadgeText}</span>
+                      <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+                        <span class="badge badge-info" style="font-size:0.76rem;padding:2px 7px;">${t.mm} مم</span>
+                        <span class="badge" style="background:${dirBadgeBg};color:#fff;font-size:0.68rem;padding:2px 6px;">${dirBadgeText}</span>
                       </div>
-                      <div style="font-size:0.75rem;color:var(--text-muted);margin-top:3px;">${t.label || ''}</div>
                     </td>
                     ${priceCellsHtml}
                     <td class="matrix-total-cell">
-                      <div style="font-size:0.76rem;color:var(--text-muted);">قيمة الرصيد:</div>
-                      <div style="color:var(--primary);font-size:0.92rem;font-weight:800;">${fmtMoney(rowStockValue)}</div>
-                      <div style="font-size:0.74rem;color:var(--success);margin-top:4px;">المبيعات: ${fmtMoney(rowSalesValue)}</div>
+                      <div style="color:var(--primary);font-size:0.78rem;font-weight:800;">${fmtMoney(rowStockValue)}</div>
+                      ${rowSalesValue > 0 ? `<div style="font-size:0.66rem;color:var(--success);">بيع: ${fmtMoney(rowSalesValue)}</div>` : ''}
                     </td>
                   </tr>
                 `;
@@ -2529,7 +2566,7 @@ function renderFinishedVeneerWarehouse() {
             <tfoot>
               <tr>
                 <td class="matrix-thickness-td" style="background:rgba(15,118,110,0.08);">
-                  <strong>إجمالي القيمة والمبيعات ⬅️</strong>
+                  <strong style="font-size:0.75rem;">إجمالي القيمة ⬅️</strong>
                 </td>
                 ${grades.map(g => {
                   let colStockVal = 0;
@@ -2541,17 +2578,15 @@ function renderFinishedVeneerWarehouse() {
                   }
                   return `
                     <td class="matrix-total-cell">
-                      <div style="font-size:0.76rem;color:var(--text-muted);">قيمة المخزون:</div>
-                      <div style="color:var(--primary);font-size:0.95rem;font-weight:800;">${fmtMoney(colStockVal)}</div>
-                      <div style="font-size:0.76rem;color:var(--success);margin-top:3px;">المبيعات: ${fmtMoney(colSalesVal)}</div>
+                      <div style="color:var(--primary);font-size:0.8rem;font-weight:800;">${fmtMoney(colStockVal)}</div>
+                      ${colSalesVal > 0 ? `<div style="font-size:0.66rem;color:var(--success);">بيع: ${fmtMoney(colSalesVal)}</div>` : ''}
                     </td>
                   `;
                 }).join('')}
                 <td class="matrix-total-cell" style="background:var(--accent-light) !important;">
-                  <div style="font-size:0.75rem;color:var(--text-muted);">إجمالي قيمة المخزن:</div>
-                  <div style="color:var(--primary);font-size:1.05rem;font-weight:900;">${fmtMoney(grandStockValueByPiece)}</div>
-                  <div style="font-size:0.8rem;color:var(--success);font-weight:800;margin-top:4px;">
-                    إجمالي المبيعات (${grandSoldSheets} قطعة): ${fmtMoney(grandSoldRevenue)}
+                  <div style="color:var(--primary);font-size:0.88rem;font-weight:900;">${fmtMoney(grandStockValueByPiece)}</div>
+                  <div style="font-size:0.68rem;color:var(--success);font-weight:800;">
+                    مبيعات (${grandSoldSheets} ق): ${fmtMoney(grandSoldRevenue)}
                   </div>
                 </td>
               </tr>
@@ -2561,6 +2596,9 @@ function renderFinishedVeneerWarehouse() {
         ` : ''}
       ` : `
         <!-- Detailed Pallets List View -->
+        <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+          <button class="btn btn-sm btn-primary" onclick="printPalletsInventoryPdf()">🖨️ طباعة سجل البالتات PDF</button>
+        </div>
         <div class="table-responsive">
           <table>
             <thead>
@@ -2630,6 +2668,9 @@ function renderSalesReturnsSection() {
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm btn-outline" onclick="printSalesReturnsReportPdf()">
+            🖨️ طباعة سجل المرتجعات PDF
+          </button>
           <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openWarehouseOpShortcut('sales_return')">
             ➕ تسجيل مرتجع مبيعات جديد
           </button>
@@ -2740,9 +2781,12 @@ function renderRawMaterialsWarehouse() {
           <div class="card-title">🌲 مخزن الخامات (كتل وجذوع الخشب قبل التقشير ومستلزمات الإنتاج)</div>
           <small style="color:var(--text-muted);">متابعة أرصدة الأخشاب الخام بالمتر المكعب ومستلزمات التغليف والتجميع</small>
         </div>
-        ${hasPerm('warehouseIssueReceive') ? `
-          <button class="btn btn-primary" onclick="openAddRawMaterialModal()">➕ إضافة / توريد خامات للمخزن</button>
-        ` : ''}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm btn-outline" onclick="printRawMaterialsReportPdf()">🖨️ طباعة تقرير الخامات PDF</button>
+          ${hasPerm('warehouseIssueReceive') ? `
+            <button class="btn btn-sm btn-primary" onclick="openAddRawMaterialModal()">➕ إضافة / توريد خامات للمخزن</button>
+          ` : ''}
+        </div>
       </div>
 
       <div class="table-responsive">
@@ -2806,9 +2850,12 @@ function renderScrapWarehouse() {
           <div class="card-title">♻️ مخزن الهالك والدرجة الثانية والقصاقيص</div>
           <small style="color:var(--text-muted);">إدارة القصاقيص وقلب الجذوع (الكوز/الدرافيل) وكسر القشرة المستخدم كوقود لغلاية المجفف</small>
         </div>
-        ${hasPerm('warehouseIssueReceive') ? `
-          <button class="btn btn-primary" onclick="openAddScrapModal()">➕ تسجيل إضافة هالك / قصاقيص</button>
-        ` : ''}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm btn-outline" onclick="printScrapReportPdf()">🖨️ طباعة تقرير الهالك PDF</button>
+          ${hasPerm('warehouseIssueReceive') ? `
+            <button class="btn btn-sm btn-primary" onclick="openAddScrapModal()">➕ تسجيل إضافة هالك / قصاقيص</button>
+          ` : ''}
+        </div>
       </div>
 
       <div class="table-responsive">
@@ -2863,9 +2910,12 @@ function renderSparePartsWarehouse() {
           <div class="card-title">🔧 مخزن قطع الغيار والمهمات الخاصة بالماكينات</div>
           <small style="color:var(--text-muted);">سكاكين المقشرة والمقصلة، سيور المجفف الحرارية، الزيوت الهيدروليكية ومهمات الصيانة</small>
         </div>
-        ${hasPerm('warehouseIssueReceive') ? `
-          <button class="btn btn-primary" onclick="openAddSparePartModal()">➕ إضافة صنف قطع غيار / مهمات</button>
-        ` : ''}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm btn-outline" onclick="printSparePartsReportPdf()">🖨️ طباعة قطع الغيار PDF</button>
+          ${hasPerm('warehouseIssueReceive') ? `
+            <button class="btn btn-sm btn-primary" onclick="openAddSparePartModal()">➕ إضافة صنف قطع غيار / مهمات</button>
+          ` : ''}
+        </div>
       </div>
 
       <div class="table-responsive">
@@ -2942,6 +2992,7 @@ function renderWarehouseMovements() {
           ${(movementDateFilterFrom || movementDateFilterTo) ? `
             <button class="btn btn-sm btn-outline" onclick="movementDateFilterFrom=''; movementDateFilterTo=''; render();">إلغاء الفلتر</button>
           ` : ''}
+          <button class="btn btn-sm btn-primary" onclick="printWarehouseMovementsReportPdf()">🖨️ طباعة سجل الحركات PDF</button>
         </div>
       </div>
       <div class="table-responsive">
@@ -3141,6 +3192,7 @@ function renderProduction() {
           ${isAccountantOrExec ? `
             <button class="btn btn-primary" onclick="openNewClientOrderPrepModal()">➕ إنشاء أمر تجهيز طلبية للعميل (بيان جديد)</button>
           ` : ''}
+          <button class="btn btn-outline" onclick="printAllProductionOrdersReportPdf()">🖨️ طباعة سجل أوامر التجهيز PDF</button>
           <button class="btn btn-outline" onclick="setTab('approvals')">✅ الانتقال لاعتماد أذون الصرف والسيارات</button>
         </div>
       </div>
@@ -3337,6 +3389,7 @@ function renderApprovals() {
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-outline" onclick="printAllApprovalsDispatchReportPdf()">🖨️ طباعة سجل أذون الصرف والسيارات PDF</button>
           <button class="btn btn-primary" onclick="setTab('production')">📋 عرض جميع أوامر تجهيز الطلبيات</button>
         </div>
       </div>
@@ -3514,6 +3567,7 @@ function renderAccounting() {
           <button class="btn btn-primary" onclick="openNewPartnerModal()">➕ إضافة عميل جديد بالكود</button>
           <button class="btn btn-accent" onclick="openNewClientOrderPrepModal()">📋 إنشاء أمر تجهيز طلبية لعميل</button>
           <button class="btn btn-outline" onclick="openNewFinancialTxModal()">💵 تسجيل سند مالي عام بالخزينة</button>
+          <button class="btn btn-outline" onclick="printAllClientsAccountingReportPdf()">🖨️ طباعة كشف حسابات جميع العملاء PDF</button>
         </div>
       </div>
 
@@ -3626,6 +3680,7 @@ function renderAccounting() {
       <div class="card">
         <div class="card-header">
           <div class="card-title">💰 آخر الفواتير والتحصيلات المالية للعملاء</div>
+          <button class="btn btn-sm btn-outline" onclick="printAllFinancialTransactionsReportPdf()">🖨️ طباعة سجل الفواتير PDF</button>
         </div>
         <div class="table-responsive">
           <table>
@@ -3672,6 +3727,7 @@ function renderAccounting() {
       <div class="card">
         <div class="card-header">
           <div class="card-title">🪵 سجل حركة البالتات المسلمة للعملاء والمستلمة منهم</div>
+          <button class="btn btn-sm btn-outline" onclick="printAllPalletMovementsReportPdf()">🖨️ طباعة سجل البالتات PDF</button>
         </div>
         <div class="table-responsive">
           <table>
@@ -3727,10 +3783,41 @@ function renderReports() {
   });
 
   return `
+    <!-- Central PDF Print Hub for All Factory Reports -->
+    <div class="card" style="border:2px solid var(--primary);background:linear-gradient(135deg, rgba(15,118,110,0.06), rgba(217,119,6,0.06));">
+      <div class="card-header">
+        <div>
+          <div class="card-title">🖨️ مركز طباعة وتصدير جميع التقارير والجداول بصيغة PDF</div>
+          <small style="color:var(--text-muted);">اضغط على أي تقرير لفتحه في وضع الطباعة الرسمي أو حفظه كملف PDF مباشرة</small>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        <button class="btn btn-primary" onclick="printVeneerQuantitiesMatrixPdf()">🖨️ جدول كميات القشرة PDF</button>
+        ${canSeeFinancialPrices() ? `
+          <button class="btn btn-accent" onclick="printVeneerPricesMatrixPdf()">🖨️ جدول الأسعار PDF</button>
+          <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="printBothMatricesPdf()">🖨️ جدول الكميات + الأسعار معاً PDF</button>
+        ` : ''}
+        <button class="btn btn-outline" onclick="printPalletsInventoryPdf()">🖨️ سجل البالتات بالمخزن PDF</button>
+        <button class="btn btn-outline" onclick="printSalesReturnsReportPdf()">🖨️ سجل مرتجعات المبيعات PDF</button>
+        <button class="btn btn-outline" onclick="printRawMaterialsReportPdf()">🖨️ جرد مخزن الخامات PDF</button>
+        <button class="btn btn-outline" onclick="printScrapReportPdf()">🖨️ جرد مخزن الهالك PDF</button>
+        <button class="btn btn-outline" onclick="printSparePartsReportPdf()">🖨️ جرد قطع الغيار PDF</button>
+        <button class="btn btn-outline" onclick="printWarehouseMovementsReportPdf()">🖨️ سجل حركات المخازن PDF</button>
+        <button class="btn btn-outline" onclick="printAllProductionOrdersReportPdf()">🖨️ سجل أوامر التجهيز PDF</button>
+        <button class="btn btn-outline" onclick="printAllApprovalsDispatchReportPdf()">🖨️ سجل أذون الصرف والسيارات PDF</button>
+        ${canSeeFinancialPrices() ? `
+          <button class="btn btn-outline" onclick="printAllClientsAccountingReportPdf()">🖨️ كشف حسابات جميع العملاء PDF</button>
+          <button class="btn btn-outline" onclick="printAllFinancialTransactionsReportPdf()">🖨️ سجل الفواتير والتحصيلات PDF</button>
+          <button class="btn btn-outline" onclick="printAllPalletMovementsReportPdf()">🖨️ سجل حركة البالتات مع العملاء PDF</button>
+        ` : ''}
+        <button class="btn btn-outline" onclick="printGeneralInventoryAndAuditReportPdf()">🖨️ تقرير الجرد العام والرقابة PDF</button>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-header">
         <div class="card-title">📈 ${canSeeFinancialPrices() ? 'تقرير جرد وتقييم القشرة الخشبية حسب نوع الخشب' : 'تقرير جرد أرصدة كميات القشرة الخشبية بالمخازن (كميات فقط)'}</div>
-        <button class="btn btn-outline" onclick="window.print()">🖨️ طباعة التقرير</button>
+        <button class="btn btn-outline" onclick="printGeneralInventoryAndAuditReportPdf()">🖨️ طباعة التقرير PDF</button>
       </div>
       <div class="table-responsive">
         <table>
@@ -3761,6 +3848,7 @@ function renderReports() {
     <div class="card">
       <div class="card-header">
         <div class="card-title">🛡️ سجل الرقابة والحركات الإدارية (Audit Log)</div>
+        <button class="btn btn-sm btn-outline" onclick="printAuditLogReportPdf()">🖨️ طباعة سجل الرقابة PDF</button>
       </div>
       <div class="table-responsive">
         <table>
@@ -4969,9 +5057,9 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
     if (newOrdNum) ord.orderNumber = newOrdNum;
   }
 
-  // 1) If order was ALREADY COMPLETED (stock deducted from warehouse), RESTORE old items to warehouse first!
+  // 1) If order stock was ALREADY DEDUCTED from warehouse, RESTORE old items to warehouse first!
   let stockRestoredAndUpdated = false;
-  if (ord.stage === 'completed') {
+  if (ord.stockDeducted || ord.stage === 'completed' || ord.status === 'completed') {
     for (const oldIt of (ord.items || [])) {
       const oldSh = Number(oldIt.sheetsCount || 0);
       if (oldSh > 0) {
@@ -5146,18 +5234,67 @@ function approveOrderExecutive(orderId) {
   saveState(`✅ موافقة ${currentUser.name} على بيان الطلبية (${ord.orderNumber}) للعميل ${ord.clientName} — ظهرت الآن للمدير الإداري وأمين المخزن للتجهيز والموافقة`);
 }
 
-// STAGE 2 -> STAGE 3: Admin Manager or Warehouse Keeper approves preparation -> transfers back to Accountant in Dispatch Approvals
+// Helper: Immediately deduct order items from the Veneer Quantities Matrix upon warehouse exit/approval (idempotent via ord.stockDeducted)
+function ensureOrderStockDeducted(ord, performedBy = '', opDate = '') {
+  if (!ord || ord.stockDeducted) return false;
+  const now = getMonotonicIso(ord.updatedAt);
+  const dispatchDate = opDate || ord.date || todayStr();
+  const actor = performedBy || currentUser?.name || 'المخزن';
+  const carVoucherNo = ord.carDispatchVoucher?.voucherNo || `CAR-${ord.orderNumber}`;
+  const carPlate = ord.carDispatchVoucher?.carPlateNumber || 'خروج من المخزن';
+  const driverName = ord.carDispatchVoucher?.driverName || '-';
+
+  for (const it of (ord.items || [])) {
+    const sh = Number(it.sheetsCount || 0);
+    if (sh <= 0) continue;
+    const thkId = it.thicknessId || `th-${it.thicknessMm}-${it.direction || 'qas'}`;
+    deductSheetsFromCellPallets(thkId, it.gradeId, it.woodTypeId || 'wt-general', sh, Number(it.unitPrice || 0));
+
+    state.warehouseMovements = state.warehouseMovements || [];
+    state.warehouseMovements.unshift({
+      id: uid('mov'),
+      voucherNumber: carVoucherNo,
+      date: dispatchDate,
+      warehouseType: 'finished_veneers',
+      warehouseLabel: 'مخزن القشرة التامة (خروج طلبية من المخزن)',
+      direction: 'out',
+      directionLabel: 'خروج طلبية من المخزن',
+      movementCategory: 'sales_exit',
+      cellKey: getCellPriceKey(thkId, it.gradeId),
+      sheetsCount: sh,
+      unitSheetPrice: Number(it.unitPrice || 0),
+      totalSaleAmount: Number(it.totalItemAmount || 0),
+      itemSummary: `خروج وصرف طلبية (${ord.orderNumber}) للعميل ${ord.clientName} — تخانة ${it.thicknessMm} مم (${it.direction === 'sada' ? 'سدا' : 'قص'}) × ${it.gradeName}${driverName !== '-' ? ' — سيارة رقم (' + carPlate + ') سائق (' + driverName + ')' : ''}`,
+      referenceCode: carPlate,
+      quantitySummary: `${sh} قطعة | ${it.volumeM3} م³`,
+      performedBy: actor,
+      approvedBy: ord.executiveApprovedBy || actor,
+      updatedAt: now
+    });
+  }
+
+  ord.stockDeducted = true;
+  ord.stockDeductedAt = now;
+  ord.updatedAt = now;
+  return true;
+}
+
+// STAGE 2 -> STAGE 3: Admin Manager or Warehouse Keeper approves preparation/exit from warehouse -> Immediately deducts from Quantities Table & transfers to Accountant
 function approveOrderWarehousePrep(orderId) {
   const ord = (state.productionOrders || []).find(o => o.id === orderId);
   if (!ord) return;
-  const now = new Date().toISOString();
+  const now = getMonotonicIso(ord.updatedAt);
   ord.stage = 'pending_accountant_release';
   ord.warehousePrepApprovedBy = currentUser.name;
   ord.warehousePrepApprovedAt = now;
   ord.updatedAt = now;
+
+  // Immediately exit quantities from the Veneer Quantities Matrix upon warehouse exit approval
+  ensureOrderStockDeducted(ord, currentUser.name, ord.date || todayStr());
+
   if (currentUser) markNotifIdsSeen([`ord_stage_${ord.id}_pending_accountant_release`]);
 
-  saveState(`📦 موافقة (${currentUser.name}) على تجهيز الطلبية (${ord.orderNumber}) للعميل ${ord.clientName} — تم تحويلها إلى المحاسب في (اعتماد أذون الصرف)`);
+  saveState(`📦 موافقة (${currentUser.name}) على تجهيز وخروج الطلبية (${ord.orderNumber}) للعميل ${ord.clientName} — تم خصم الكميات من جدول كميات القشرة فوراً وتحويلها إلى المحاسب في (اعتماد أذون الصرف)`);
 }
 
 // STAGE 3 -> STAGE 4: Accountant completes Client Accounting & Approves Dispatch Voucher -> Alerts Warehouse Keeper & Admin Manager to dispatch Car
@@ -5283,6 +5420,9 @@ function submitAccountantRelease(e, orderId) {
   };
   ord.updatedAt = now;
 
+  // Ensure stock is deducted from the Veneer Quantities Matrix if not already deducted at warehouse prep stage
+  ensureOrderStockDeducted(ord, currentUser.name, relDate);
+
   // Record the official sales invoice in client's financial transactions
   const itemsSummary = (ord.items || []).map(i => `${i.sheetsCount} قطعة (${i.thicknessMm}مم ${i.direction === 'sada' ? 'سدا' : 'قص'} - ${i.gradeName})`).join(' + ');
   state.financialTransactions.unshift({
@@ -5402,33 +5542,53 @@ function submitVehicleDispatchVoucher(e, orderId) {
   const palletsDeliveredCount = Math.max(0, Number(document.getElementById('car-pallets-out')?.value || 0));
   const palletsReceivedCount = Math.max(0, Number(document.getElementById('car-pallets-in')?.value || 0));
   const carNotes = (document.getElementById('car-notes')?.value || '').trim();
-  const now = new Date().toISOString();
+  const now = getMonotonicIso(ord.updatedAt);
   const carVoucherNo = `CAR-${ord.orderNumber}`;
 
-  // Deduct each item from the Warehouse Stock Matrix Cells
-  for (const it of (ord.items || [])) {
-    const thkId = it.thicknessId || `th-${it.thicknessMm}-${it.direction || 'qas'}`;
-    deductSheetsFromCellPallets(thkId, it.gradeId, it.woodTypeId, Number(it.sheetsCount || 0), Number(it.unitPrice || 0));
+  // If stock was not yet deducted in earlier stage, deduct it now; otherwise update existing CAR movement details with vehicle & driver info
+  if (!ord.stockDeducted) {
+    for (const it of (ord.items || [])) {
+      const thkId = it.thicknessId || `th-${it.thicknessMm}-${it.direction || 'qas'}`;
+      deductSheetsFromCellPallets(thkId, it.gradeId, it.woodTypeId, Number(it.sheetsCount || 0), Number(it.unitPrice || 0));
 
-    state.warehouseMovements.unshift({
-      id: uid('mov'),
-      voucherNumber: carVoucherNo,
-      date: dispatchDate,
-      warehouseType: 'finished_veneers',
-      warehouseLabel: 'إذن صرف وتحميل سيارة مبيعات',
-      direction: 'out',
-      directionLabel: 'صرف طلبية للسيارة',
-      movementCategory: 'sales_exit',
-      cellKey: getCellPriceKey(thkId, it.gradeId),
-      sheetsCount: Number(it.sheetsCount || 0),
-      unitSheetPrice: Number(it.unitPrice || 0),
-      totalSaleAmount: Number(it.totalItemAmount || 0),
-      itemSummary: `صرف طلبية (${ord.orderNumber}) للعميل ${ord.clientName} — تخانة ${it.thicknessMm} مم (${it.direction === 'sada' ? 'سدا' : 'قص'}) × ${it.gradeName} — سيارة رقم (${carPlateNumber}) سائق (${driverName})`,
-      referenceCode: carPlateNumber,
-      quantitySummary: `${it.sheetsCount} قطعة | ${it.volumeM3} م³`,
-      performedBy: currentUser.name,
-      approvedBy: ord.accountantReleaseBy || currentUser.name,
-      updatedAt: now
+      state.warehouseMovements.unshift({
+        id: uid('mov'),
+        voucherNumber: carVoucherNo,
+        date: dispatchDate,
+        warehouseType: 'finished_veneers',
+        warehouseLabel: 'إذن صرف وتحميل سيارة مبيعات',
+        direction: 'out',
+        directionLabel: 'صرف طلبية للسيارة',
+        movementCategory: 'sales_exit',
+        cellKey: getCellPriceKey(thkId, it.gradeId),
+        sheetsCount: Number(it.sheetsCount || 0),
+        unitSheetPrice: Number(it.unitPrice || 0),
+        totalSaleAmount: Number(it.totalItemAmount || 0),
+        itemSummary: `صرف طلبية (${ord.orderNumber}) للعميل ${ord.clientName} — تخانة ${it.thicknessMm} مم (${it.direction === 'sada' ? 'سدا' : 'قص'}) × ${it.gradeName} — سيارة رقم (${carPlateNumber}) سائق (${driverName})`,
+        referenceCode: carPlateNumber,
+        quantitySummary: `${it.sheetsCount} قطعة | ${it.volumeM3} م³`,
+        performedBy: currentUser.name,
+        approvedBy: ord.accountantReleaseBy || currentUser.name,
+        updatedAt: now
+      });
+    }
+    ord.stockDeducted = true;
+    ord.stockDeductedAt = now;
+  } else {
+    // Stock was already deducted upon warehouse exit approval; enrich the existing movement records with car plate & driver details
+    (state.warehouseMovements || []).forEach(m => {
+      if (m.voucherNumber === carVoucherNo) {
+        m.date = dispatchDate;
+        m.warehouseLabel = 'إذن صرف وتحميل سيارة مبيعات';
+        m.directionLabel = 'صرف طلبية للسيارة';
+        m.referenceCode = carPlateNumber;
+        if (!m.itemSummary.includes(carPlateNumber)) {
+          m.itemSummary += ` — سيارة رقم (${carPlateNumber}) سائق (${driverName})`;
+        }
+        m.performedBy = currentUser.name;
+        m.approvedBy = ord.accountantReleaseBy || currentUser.name;
+        m.updatedAt = getMonotonicIso(m.updatedAt);
+      }
     });
   }
 
@@ -6779,7 +6939,7 @@ function deductSheetsFromCellPallets(thkId, gradeId, woodId, sheetsToDeduct, uni
   const candidates = (state.pallets || []).filter(p =>
     p.status === 'in_stock' &&
     matchPalletToThicknessRow(p, thkObj) &&
-    p.gradeId === gradeId
+    matchPalletToGrade(p, gradeId)
   );
 
   candidates.sort((a, b) => (a.woodTypeId === woodId ? -1 : 1));
@@ -6788,6 +6948,7 @@ function deductSheetsFromCellPallets(thkId, gradeId, woodId, sheetsToDeduct, uni
     if (remaining <= 0) break;
     const pSheets = Number(p.sheetsCount || 0);
     const effectiveUnitPrice = unitPrice > 0 ? unitPrice : Number(p.unitSheetPrice || getCellUnitPrice(thkId, gradeId) || 0);
+    const monoNow = getMonotonicIso(p.updatedAt);
     if (pSheets <= remaining) {
       remaining -= pSheets;
       p.sheetsCount = 0;
@@ -6795,7 +6956,7 @@ function deductSheetsFromCellPallets(thkId, gradeId, woodId, sheetsToDeduct, uni
       p.volumeM3 = 0;
       p.totalValue = 0;
       p.status = 'dispatched';
-      p.updatedAt = new Date().toISOString();
+      p.updatedAt = monoNow;
     } else {
       const newSheets = pSheets - remaining;
       remaining = 0;
@@ -6807,7 +6968,7 @@ function deductSheetsFromCellPallets(thkId, gradeId, woodId, sheetsToDeduct, uni
       p.totalValue = effectiveUnitPrice > 0
         ? +(newSheets * effectiveUnitPrice).toFixed(2)
         : +(newM.totalVolumeM3 * Number(p.unitPricePerM3 || 20000)).toFixed(2);
-      p.updatedAt = new Date().toISOString();
+      p.updatedAt = monoNow;
     }
   }
 }
@@ -6821,7 +6982,7 @@ function addSheetsToCellPallets(thkId, gradeId, woodId, sheetsToAdd, notes = '',
     directionLabel: activeCellContext?.directionLabel || 'اتجاه قص'
   };
   const woodObj = state.catalog.woodTypes.find(w => w.id === woodId) || state.catalog.woodTypes[0] || { id: 'wt-general', name: 'قشرة خشبية (250×125)' };
-  const gradeObj = state.catalog.grades.find(g => g.id === gradeId) || state.catalog.grades[0] || { id: gradeId, code: 'A', name: 'عام', defaultPricePerM3: 20000 };
+  const gradeObj = state.catalog.grades.find(g => g.id === gradeId || g.code === gradeId || g.name === gradeId) || state.catalog.grades[0] || { id: gradeId, code: 'A', name: 'عام', defaultPricePerM3: 20000 };
   const m = calculateVeneerMetrics(250, 125, thkObj.mm, sheetsToAdd);
   const now = new Date().toISOString();
   const code = `PLT-2026-00${(state.pallets?.length || 0) + 1}`;
@@ -7766,6 +7927,767 @@ function printFinancialInvoice(txId) {
   window.print();
 }
 
+// ============================================================================
+// COMPREHENSIVE PDF / PRINT GENERATOR FOR ALL TABLES & REPORTS (بما في ذلك جدول الكميات وجدول الأسعار)
+// ============================================================================
+function triggerOfficialReportPdf(title, subtitle, bodyHtml, landscape = false) {
+  const printEl = document.getElementById('print-area');
+  if (!printEl) return;
+  const factoryName = state.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة';
+  const userLabel = currentUser ? `${currentUser.name} (${currentUser.roleTitle})` : 'إدارة المصنع';
+  printEl.innerHTML = `
+    <style>
+      @media print {
+        @page { size: ${landscape ? 'A4 landscape' : 'A4 portrait'}; margin: 7mm; }
+      }
+      .pdf-report-wrap {
+        border: 2px solid #0f172a;
+        border-radius: 8px;
+        padding: 14px 16px;
+        font-family: 'Cairo', sans-serif;
+        direction: rtl;
+        color: #0f172a;
+        background: #fff;
+      }
+      .pdf-report-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 2px solid #0f172a;
+        padding-bottom: 8px;
+        margin-bottom: 10px;
+      }
+      .pdf-report-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11px;
+        margin-bottom: 10px;
+      }
+      .pdf-report-table th, .pdf-report-table td {
+        border: 1px solid #334155;
+        padding: 4px 6px;
+        text-align: center;
+        vertical-align: middle;
+      }
+      .pdf-report-table th {
+        background: #e2e8f0;
+        font-weight: 800;
+        color: #0f172a;
+      }
+      .pdf-report-footer {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 16px;
+        padding-top: 8px;
+        border-top: 1px dashed #64748b;
+        font-size: 11px;
+        font-weight: 700;
+      }
+    </style>
+    <div class="pdf-report-wrap">
+      <div class="pdf-report-header">
+        <div>
+          <h1 style="margin:0;font-size:17px;font-weight:900;">🏭 ${factoryName}</h1>
+          <div style="font-size:13px;font-weight:800;color:#0f766e;margin-top:2px;">${title}</div>
+          ${subtitle ? `<div style="font-size:11px;color:#475569;margin-top:1px;">${subtitle}</div>` : ''}
+        </div>
+        <div style="text-align:left;font-size:11px;border:1px solid #0f172a;padding:5px 10px;border-radius:6px;background:#f8fafc;">
+          <div><strong>تاريخ الطباعة:</strong> ${todayStr()}</div>
+          <div><strong>التوقيت:</strong> ${new Date().toLocaleTimeString('ar-EG')}</div>
+          <div><strong>المستخدم:</strong> ${userLabel}</div>
+        </div>
+      </div>
+      ${bodyHtml}
+      <div class="pdf-report-footer">
+        <span>إعداد ومراجعة: ${userLabel}</span>
+        <span>اعتماد الحسابات / المخازن: ....................</span>
+        <span>اعتماد الإدارة التنفيذية: ....................</span>
+      </div>
+    </div>
+  `;
+  window.print();
+}
+
+function buildVeneerQuantitiesMatrixPrintHtml() {
+  const thicknesses = state.catalog?.thicknesses || [];
+  const grades = state.catalog?.grades || [];
+  const inStockPallets = (state.pallets || []).filter(p =>
+    p.status === 'in_stock' && (veneerFilterWood === 'all' || p.woodTypeId === veneerFilterWood)
+  );
+
+  let grandSheets = 0;
+  let grandM3 = 0;
+  const colTotals = {};
+  grades.forEach(g => { colTotals[g.id] = { sheets: 0, m3: 0 }; });
+
+  const rowsHtml = thicknesses.map(t => {
+    const isSada = t.direction === 'sada';
+    let rowSheets = 0;
+    let rowM3 = 0;
+
+    const cellsHtml = grades.map(g => {
+      const matching = inStockPallets.filter(p => matchPalletToThicknessRow(p, t) && matchPalletToGrade(p, g.id));
+      const sheets = matching.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+      const m = calculateVeneerMetrics(250, 125, t.mm, sheets);
+      const m3 = m.totalVolumeM3;
+      rowSheets += sheets;
+      rowM3 += m3;
+      colTotals[g.id].sheets += sheets;
+      colTotals[g.id].m3 += m3;
+      return `
+        <td style="background:${sheets > 0 ? '#f0fdf4' : '#ffffff'};">
+          <div style="font-weight:900;font-size:12px;color:${sheets > 0 ? '#0f172a' : '#94a3b8'};">${fmtNum(sheets, 0)} ق</div>
+          <div style="font-size:9.5px;color:#475569;">${fmtNum(m3, 3)} م³</div>
+        </td>
+      `;
+    }).join('');
+
+    grandSheets += rowSheets;
+    grandM3 += rowM3;
+
+    return `
+      <tr>
+        <td style="background:${isSada ? '#e0f2fe' : '#fef3c7'};font-weight:900;text-align:right;white-space:nowrap;">
+          ${t.mm} مم (${isSada ? 'سدا' : 'قص'})
+        </td>
+        ${cellsHtml}
+        <td style="background:#f1f5f9;font-weight:900;">
+          <div>${fmtNum(rowSheets, 0)} ق</div>
+          <div style="font-size:9.5px;color:#0f766e;">${fmtNum(rowM3, 3)} م³</div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <table class="pdf-report-table">
+      <thead>
+        <tr>
+          <th style="text-align:right;">التخانة والاتجاه \\ الجودة</th>
+          ${grades.map(g => `<th>${g.code}<br/><span style="font-size:9px;font-weight:600;">${g.name}</span></th>`).join('')}
+          <th>إجمالي الصف</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml}
+      </tbody>
+      <tfoot>
+        <tr style="background:#e2e8f0;font-weight:900;">
+          <td style="text-align:right;">إجمالي العمود</td>
+          ${grades.map(g => `
+            <td>
+              <div>${fmtNum(colTotals[g.id].sheets, 0)} ق</div>
+              <div style="font-size:9.5px;color:#0f766e;">${fmtNum(colTotals[g.id].m3, 3)} م³</div>
+            </td>
+          `).join('')}
+          <td style="background:#dcfce7;font-size:12px;">
+            <div>${fmtNum(grandSheets, 0)} قطعة</div>
+            <div style="font-size:10px;color:#15803d;">${fmtNum(grandM3, 3)} م³</div>
+          </td>
+        </tr>
+      </tfoot>
+    </table>
+  `;
+}
+
+function buildVeneerPricesMatrixPrintHtml() {
+  if (!canSeeFinancialPrices()) return '';
+  const thicknesses = state.catalog?.thicknesses || [];
+  const grades = state.catalog?.grades || [];
+  const inStockPallets = (state.pallets || []).filter(p =>
+    p.status === 'in_stock' && (veneerFilterWood === 'all' || p.woodTypeId === veneerFilterWood)
+  );
+  const allMovs = state.warehouseMovements || [];
+
+  let grandStockValue = 0;
+  let grandSalesValue = 0;
+  const colTotals = {};
+  grades.forEach(g => { colTotals[g.id] = { stockValue: 0, salesValue: 0 }; });
+
+  const rowsHtml = thicknesses.map(t => {
+    const isSada = t.direction === 'sada';
+    let rowStockVal = 0;
+    let rowSalesVal = 0;
+
+    const cellsHtml = grades.map(g => {
+      const matching = inStockPallets.filter(p => matchPalletToThicknessRow(p, t) && matchPalletToGrade(p, g.id));
+      const sheets = matching.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+      const unitPrice = getCellUnitPrice(t.id, g.id, t.mm, t.direction);
+      const stockValue = +(sheets * unitPrice).toFixed(2);
+      const cellKey = getCellPriceKey(t.id, g.id);
+      const soldMovs = allMovs.filter(m =>
+        m.warehouseType === 'finished_veneers' &&
+        m.direction === 'out' &&
+        m.movementCategory === 'sales_exit' &&
+        String(m.cellKey || '').replace(/[.#$/\[\]]/g, '_dot_') === cellKey
+      );
+      const soldValue = soldMovs.reduce((s, m) => s + Number(m.totalSaleAmount || 0), 0);
+
+      rowStockVal += stockValue;
+      rowSalesVal += soldValue;
+      colTotals[g.id].stockValue += stockValue;
+      colTotals[g.id].salesValue += soldValue;
+
+      return `
+        <td style="background:${sheets > 0 ? '#fffbeb' : '#ffffff'};">
+          <div style="font-weight:900;font-size:11.5px;color:#b45309;">${fmtNum(unitPrice, 2)} ج/ق</div>
+          <div style="font-size:9.5px;color:#0f172a;">رصيد (${fmtNum(sheets, 0)} ق): <strong>${fmtNum(stockValue, 0)} ج</strong></div>
+          ${soldValue > 0 ? `<div style="font-size:9px;color:#15803d;">مباع: ${fmtNum(soldValue, 0)} ج</div>` : ''}
+        </td>
+      `;
+    }).join('');
+
+    grandStockValue += rowStockVal;
+    grandSalesValue += rowSalesVal;
+
+    return `
+      <tr>
+        <td style="background:${isSada ? '#e0f2fe' : '#fef3c7'};font-weight:900;text-align:right;white-space:nowrap;">
+          ${t.mm} مم (${isSada ? 'سدا' : 'قص'})
+        </td>
+        ${cellsHtml}
+        <td style="background:#f1f5f9;font-weight:900;">
+          <div>رصيد: ${fmtMoney(rowStockVal)}</div>
+          ${rowSalesVal > 0 ? `<div style="font-size:9.5px;color:#15803d;">مباع: ${fmtMoney(rowSalesVal)}</div>` : ''}
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <table class="pdf-report-table">
+      <thead>
+        <tr>
+          <th style="text-align:right;">التخانة والاتجاه \\ الجودة</th>
+          ${grades.map(g => `<th>${g.code}<br/><span style="font-size:9px;font-weight:600;">${g.name}</span></th>`).join('')}
+          <th>إجمالي قيمة الصف</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml}
+      </tbody>
+      <tfoot>
+        <tr style="background:#fef3c7;font-weight:900;">
+          <td style="text-align:right;">إجمالي القيمة بالعمود</td>
+          ${grades.map(g => `
+            <td>
+              <div>${fmtMoney(colTotals[g.id].stockValue)}</div>
+              ${colTotals[g.id].salesValue > 0 ? `<div style="font-size:9px;color:#15803d;">مباع: ${fmtMoney(colTotals[g.id].salesValue)}</div>` : ''}
+            </td>
+          `).join('')}
+          <td style="background:#fde68a;font-size:11.5px;">
+            <div>رصيد: ${fmtMoney(grandStockValue)}</div>
+            <div style="font-size:9.5px;color:#15803d;">مباع: ${fmtMoney(grandSalesValue)}</div>
+          </td>
+        </tr>
+      </tfoot>
+    </table>
+  `;
+}
+
+function printVeneerQuantitiesMatrixPdf() {
+  const woodLabel = veneerFilterWood === 'all'
+    ? 'جميع أنواع القشرة الخشبية (250×125 سم)'
+    : ((state.catalog?.woodTypes || []).find(w => w.id === veneerFilterWood)?.name || 'قشرة خشبية');
+  triggerOfficialReportPdf(
+    '📊 جدول أرصدة كميات القشرة الخشبية بالمخزن (تخانات قص / سدا × درجات الجودة)',
+    `نطاق الفلتر: ${woodLabel} — مقاس الفرخ القياسي: 250×125 سم (3.125 م²)`,
+    buildVeneerQuantitiesMatrixPrintHtml(),
+    true
+  );
+}
+
+function printVeneerPricesMatrixPdf() {
+  if (!canSeeFinancialPrices()) return;
+  const woodLabel = veneerFilterWood === 'all'
+    ? 'جميع أنواع القشرة الخشبية (250×125 سم)'
+    : ((state.catalog?.woodTypes || []).find(w => w.id === veneerFilterWood)?.name || 'قشرة خشبية');
+  triggerOfficialReportPdf(
+    '💰 جدول أسعار القطعة وتقييم المخزون والمبيعات (تخانات قص / سدا × درجات الجودة)',
+    `نطاق الفلتر: ${woodLabel}`,
+    buildVeneerPricesMatrixPrintHtml(),
+    true
+  );
+}
+
+function printBothMatricesPdf() {
+  const qtyHtml = buildVeneerQuantitiesMatrixPrintHtml();
+  const pricesHtml = canSeeFinancialPrices() ? `
+    <div style="margin-top:12px;page-break-inside:avoid;">
+      <h3 style="margin:0 0 6px;font-size:13px;color:#b45309;">💰 ثانياً: جدول أسعار القطعة وتقييم المخزون والمبيعات</h3>
+      ${buildVeneerPricesMatrixPrintHtml()}
+    </div>
+  ` : '';
+  triggerOfficialReportPdf(
+    '📊 التقرير الشامل: جدول كميات القشرة + جدول الأسعار وتقييم المخزون',
+    'مقاس الفرخ القياسي: 250×125 سم (3.125 م²)',
+    `<h3 style="margin:0 0 6px;font-size:13px;color:#0f766e;">📦 أولاً: جدول أرصدة كميات القشرة الخشبية (بالقطعة والمتر المكعب)</h3>${qtyHtml}${pricesHtml}`,
+    true
+  );
+}
+
+function printPalletsInventoryPdf() {
+  const showPrices = canSeeFinancialPrices();
+  const pallets = (state.pallets || []).filter(p => p.status === 'in_stock' && Number(p.sheetsCount || 0) > 0);
+  const bodyHtml = `
+    <table class="pdf-report-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>كود البالتة</th>
+          <th>نوع الخشب</th>
+          <th>التخانة والاتجاه</th>
+          <th>درجة الجودة</th>
+          <th>عدد الأفرخ</th>
+          <th>المساحة (م²)</th>
+          <th>الحجم (م³)</th>
+          ${showPrices ? '<th>سعر القطعة</th><th>إجمالي القيمة</th>' : ''}
+          <th>التاريخ / البيان</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${pallets.map((p, i) => `
+          <tr>
+            <td>${i + 1}</td>
+            <td><strong>${p.palletCode}</strong></td>
+            <td>${p.woodTypeName}</td>
+            <td><strong>${p.thicknessMm} مم (${p.direction === 'sada' ? 'سدا' : 'قص'})</strong></td>
+            <td><strong>${p.gradeCode || p.gradeName}</strong></td>
+            <td><strong>${fmtNum(p.sheetsCount, 0)} قطعة</strong></td>
+            <td>${fmtNum(p.areaM2, 2)} م²</td>
+            <td><strong>${fmtNum(p.volumeM3, 4)} م³</strong></td>
+            ${showPrices ? `<td>${fmtNum(p.unitSheetPrice || getCellUnitPrice(p.thicknessId, p.gradeId, p.thicknessMm, p.direction), 2)} ج</td><td><strong>${fmtMoney(p.totalValue)}</strong></td>` : ''}
+            <td>${p.entryDate || fmtDate(p.createdAt)} — ${sanitizeTextForWarehouseKeeper(p.batchNumber || '')}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  triggerOfficialReportPdf('🪵 تقرير سجل البالتات المتاحة بمخزن القشرة التامة', `إجمالي البالتات المتاحة: ${pallets.length} بالتة`, bodyHtml, true);
+}
+
+function printSalesReturnsReportPdf() {
+  const showPrices = canSeeFinancialPrices();
+  const returns = state.salesReturns || [];
+  const bodyHtml = `
+    <table class="pdf-report-table">
+      <thead>
+        <tr>
+          <th>رقم المرتجع</th>
+          <th>التاريخ</th>
+          <th>العميل</th>
+          <th>التخانة والاتجاه</th>
+          <th>الجودة</th>
+          <th>الكمية (قطعة)</th>
+          <th>الحجم (م³)</th>
+          ${showPrices ? '<th>القيمة المالية</th>' : ''}
+          <th>الحالة والاعتماد</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${returns.map(r => `
+          <tr>
+            <td><strong>${r.returnNumber}</strong></td>
+            <td>${r.date}</td>
+            <td><strong>${r.clientName || '-'}</strong></td>
+            <td>${r.thkMm} مم (${r.direction === 'sada' ? 'سدا' : 'قص'})</td>
+            <td>${r.gradeCode || r.gradeName}</td>
+            <td><strong>${fmtNum(r.sheetsCount, 0)} قطعة</strong></td>
+            <td>${fmtNum(r.volumeM3, 4)} م³</td>
+            ${showPrices ? `<td><strong>${fmtMoney(r.totalReturnAmount || 0)}</strong></td>` : ''}
+            <td>${r.status === 'approved' ? '✅ معتمد ودخل المخزن (' + (r.approvedBy || '') + ')' : r.status === 'rejected' ? '❌ مرفوض' : '⏳ بانتظار الموافقة'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  triggerOfficialReportPdf('🔄 تقرير سجل مرتجعات المبيعات وحالة اعتمادها', `إجمالي السجلات: ${returns.length}`, bodyHtml, false);
+}
+
+function printRawMaterialsReportPdf() {
+  const showPrices = canSeeFinancialPrices();
+  const items = state.rawMaterials || [];
+  const bodyHtml = `
+    <table class="pdf-report-table">
+      <thead>
+        <tr>
+          <th>الكود</th>
+          <th>الصنف / المادة الخام</th>
+          <th>الفئة</th>
+          <th>الرصيد المتاح</th>
+          <th>الوحدة</th>
+          ${showPrices ? '<th>تكلفة الوحدة</th><th>إجمالي القيمة</th>' : ''}
+          <th>المورد</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items.map(rm => `
+          <tr>
+            <td><strong>${rm.code}</strong></td>
+            <td><strong>${rm.name}</strong></td>
+            <td>${rm.category}</td>
+            <td><strong>${fmtNum(rm.quantity, 2)}</strong></td>
+            <td>${rm.unit}</td>
+            ${showPrices ? `<td>${fmtMoney(rm.unitCost)}</td><td><strong>${fmtMoney(Number(rm.quantity || 0) * Number(rm.unitCost || 0))}</strong></td>` : ''}
+            <td>${rm.supplierName || '-'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  triggerOfficialReportPdf('🪵 تقرير جرد مخزن الخامات ومستلزمات الإنتاج', `إجمالي الأصناف: ${items.length}`, bodyHtml, false);
+}
+
+function printScrapReportPdf() {
+  const showPrices = canSeeFinancialPrices();
+  const items = state.scrapItems || [];
+  const bodyHtml = `
+    <table class="pdf-report-table">
+      <thead>
+        <tr>
+          <th>الكود</th>
+          <th>نوع الهالك / المخلفات</th>
+          <th>المصدر</th>
+          <th>الكمية المتاحة</th>
+          <th>الوحدة</th>
+          ${showPrices ? '<th>السعر التقديري للوحدة</th><th>القيمة التقديرية</th>' : ''}
+        </tr>
+      </thead>
+      <tbody>
+        ${items.map(sc => `
+          <tr>
+            <td><strong>${sc.code}</strong></td>
+            <td><strong>${sc.name}</strong></td>
+            <td>${sc.source}</td>
+            <td><strong>${fmtNum(sc.quantity, 2)}</strong></td>
+            <td>${sc.unit}</td>
+            ${showPrices ? `<td>${fmtMoney(sc.estimatedUnitPrice)}</td><td><strong>${fmtMoney(Number(sc.quantity || 0) * Number(sc.estimatedUnitPrice || 0))}</strong></td>` : ''}
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  triggerOfficialReportPdf('♻️ تقرير جرد مخزن الهالك ومخلفات التصنيع', `إجمالي الأصناف: ${items.length}`, bodyHtml, false);
+}
+
+function printSparePartsReportPdf() {
+  const showPrices = canSeeFinancialPrices();
+  const items = state.spareParts || [];
+  const bodyHtml = `
+    <table class="pdf-report-table">
+      <thead>
+        <tr>
+          <th>الكود</th>
+          <th>اسم قطعة الغيار</th>
+          <th>الماكينة / القسم</th>
+          <th>الرصيد الحالي</th>
+          <th>الحد الأدنى</th>
+          <th>الوحدة</th>
+          ${showPrices ? '<th>سعر الوحدة</th><th>إجمالي القيمة</th>' : ''}
+        </tr>
+      </thead>
+      <tbody>
+        ${items.map(sp => `
+          <tr>
+            <td><strong>${sp.code}</strong></td>
+            <td><strong>${sp.name}</strong></td>
+            <td>${sp.machine}</td>
+            <td><strong>${fmtNum(sp.quantity, 0)}</strong></td>
+            <td>${sp.minStock}</td>
+            <td>${sp.unit}</td>
+            ${showPrices ? `<td>${fmtMoney(sp.unitCost)}</td><td><strong>${fmtMoney(Number(sp.quantity || 0) * Number(sp.unitCost || 0))}</strong></td>` : ''}
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  triggerOfficialReportPdf('⚙️ تقرير جرد مخزن قطع الغيار والمهمات الفنية', `إجمالي الأصناف: ${items.length}`, bodyHtml, false);
+}
+
+function printWarehouseMovementsReportPdf() {
+  const movs = state.warehouseMovements || [];
+  const bodyHtml = `
+    <table class="pdf-report-table">
+      <thead>
+        <tr>
+          <th>رقم الإذن</th>
+          <th>التاريخ</th>
+          <th>المخزن</th>
+          <th>نوع الحركة</th>
+          <th>البيان والتفاصيل</th>
+          <th>الكمية</th>
+          <th>المنفذ / المعتمد</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${movs.map(m => `
+          <tr>
+            <td><strong>${m.voucherNumber}</strong></td>
+            <td>${fmtDate(m.date)}</td>
+            <td>${m.warehouseLabel}</td>
+            <td><strong>${m.directionLabel}</strong></td>
+            <td style="text-align:right;">${sanitizeTextForWarehouseKeeper(m.itemSummary)}</td>
+            <td><strong>${sanitizeTextForWarehouseKeeper(m.quantitySummary)}</strong></td>
+            <td>${m.performedBy || '-'} / ${m.approvedBy || '-'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  triggerOfficialReportPdf('🔄 تقرير سجل حركات المخازن (إضافة إنتاج / مرتجعات / خروج مبيعات / إعادة تشغيل)', `إجمالي الحركات: ${movs.length}`, bodyHtml, true);
+}
+
+function printAllProductionOrdersReportPdf() {
+  const showPrices = canSeeFinancialPrices();
+  const orders = (state.productionOrders || []).filter(o => canUserSeeOrderInPrep(currentUser, o));
+  const bodyHtml = `
+    <table class="pdf-report-table">
+      <thead>
+        <tr>
+          <th>رقم الطلبية</th>
+          <th>التاريخ</th>
+          <th>العميل وكوده</th>
+          <th>الأصناف والكميات (التخانة × الجودة × القطع)</th>
+          <th>إجمالي القطع والمتر المكعب</th>
+          ${showPrices ? '<th>الصافي المالي</th>' : ''}
+          <th>المرحلة وحالة الصرف</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${orders.map(o => `
+          <tr>
+            <td><strong>${o.orderNumber}</strong></td>
+            <td>${o.date || fmtDate(o.createdAt)}</td>
+            <td><strong>${o.clientName}</strong> (${o.clientCode || 'CL'})</td>
+            <td style="text-align:right;">
+              ${(o.items || []).map(it => `${it.thicknessMm}مم (${it.direction === 'sada' ? 'سدا' : 'قص'}) × ${it.gradeName}: <strong>${it.sheetsCount} قطعة</strong>${showPrices ? ' × ' + fmtNum(it.unitPrice, 2) + ' ج' : ''}`).join('<br/>')}
+            </td>
+            <td><strong>${fmtNum(o.totalSheetsCount || 0, 0)} قطعة</strong><br/>(${fmtNum(o.totalVolumeM3 || 0, 4)} م³)</td>
+            ${showPrices ? `<td><strong>${fmtMoney(o.netTotalAmount || 0)}</strong></td>` : ''}
+            <td>${o.stage === 'completed' ? '✅ تم الصرف وتحميل السيارة' : o.stage === 'ready_for_car_dispatch' ? '🚚 جاهز لتحميل السيارة' : o.stage === 'pending_accountant_release' ? '💳 بانتظار اعتماد المحاسب' : o.stage === 'pending_warehouse_prep' ? '📦 قيد التجهيز بالمخزن' : '⏳ قيد موافقة الإدارة'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  triggerOfficialReportPdf('📋 تقرير سجل أوامر تجهيز طلبيات العملاء', `إجمالي الأوامر المعروضة: ${orders.length}`, bodyHtml, true);
+}
+
+function printAllApprovalsDispatchReportPdf() {
+  const showPrices = canSeeFinancialPrices();
+  const releaseOrders = (state.productionOrders || []).filter(o => {
+    const st = o.stage || o.status;
+    return st === 'pending_accountant_release' || st === 'ready_for_car_dispatch' || st === 'completed';
+  });
+  const bodyHtml = `
+    <table class="pdf-report-table">
+      <thead>
+        <tr>
+          <th>رقم الطلبية</th>
+          <th>التاريخ</th>
+          <th>العميل</th>
+          <th>إجمالي الكمية</th>
+          ${showPrices ? '<th>صافي القيمة</th><th>المدفوع / المتبقي</th>' : ''}
+          <th>بيانات السيارة والسائق</th>
+          <th>البالتات</th>
+          <th>الحالة</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${releaseOrders.map(o => {
+          const car = o.carDispatchVoucher || {};
+          return `
+            <tr>
+              <td><strong>${o.orderNumber}</strong></td>
+              <td>${o.date}</td>
+              <td><strong>${o.clientName}</strong></td>
+              <td><strong>${fmtNum(o.totalSheetsCount || 0, 0)} قطعة</strong> (${fmtNum(o.totalVolumeM3 || 0, 4)} م³)</td>
+              ${showPrices ? `
+                <td><strong>${fmtMoney(o.netTotalAmount || 0)}</strong></td>
+                <td>مدفوع: ${fmtMoney(o.financialSettlement?.paidAmount || 0)}<br/>متبقي: ${fmtMoney(o.financialSettlement?.remainingDebt || 0)}</td>
+              ` : ''}
+              <td>${car.carPlateNumber ? `سيارة: <strong>${car.carPlateNumber}</strong><br/>سائق: ${car.driverName || '-'}` : 'لم تحمل بعد'}</td>
+              <td>مسلم: ${car.palletsDeliveredCount || 0} | مستلم: ${car.palletsReceivedCount || 0}</td>
+              <td>${o.stage === 'completed' ? '✅ مكتمل' : o.stage === 'ready_for_car_dispatch' ? '🚚 جاهز للسيارة' : '💳 بانتظار المحاسب'}</td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+  triggerOfficialReportPdf('✅ تقرير أذون الصرف المعتمدة وأوامر تحميل السيارات', `إجمالي الأذون: ${releaseOrders.length}`, bodyHtml, true);
+}
+
+function printAllClientsAccountingReportPdf() {
+  if (!canSeeFinancialPrices()) return;
+  const allClients = (state.partners || []).filter(p => p.type !== 'supplier');
+  const rows = allClients.map(c => ({ partner: c, m: computeClientMetrics(c) }));
+  const bodyHtml = `
+    <table class="pdf-report-table">
+      <thead>
+        <tr>
+          <th>كود العميل</th>
+          <th>اسم العميل</th>
+          <th>التليفون / المدينة</th>
+          <th>عدد الطلبيات</th>
+          <th>إجمالي المسحوبات (مدين)</th>
+          <th>إجمالي المدفوعات (دائن)</th>
+          <th>صافي المديونية / المستحقات</th>
+          <th>رصيد البالتات طرف العميل</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(({ partner: pt, m }) => `
+          <tr>
+            <td><strong>${pt.code || 'CL'}</strong></td>
+            <td><strong>${pt.name}</strong></td>
+            <td>${pt.phone || '-'} / ${pt.city || '-'}</td>
+            <td>${m.orders.length} طلبية</td>
+            <td>${fmtMoney(m.totalDebit)}</td>
+            <td>${fmtMoney(m.totalCredit)}</td>
+            <td><strong>${m.netDebt > 0 ? 'مدين (عليه): ' + fmtMoney(m.netDebt) : m.netDebt < 0 ? 'دائن (له): ' + fmtMoney(Math.abs(m.netDebt)) : 'خالص (0 ج.م)'}</strong></td>
+            <td><strong>${m.netPalletsAtClient} بالتة</strong> (مسلم: ${m.palletsDelivered} / مستلم: ${m.palletsReceived})</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  triggerOfficialReportPdf('🤝 التقرير المالي الشامل لحسابات ومديونيات العملاء وأرصدة البالتات', `إجمالي العملاء: ${rows.length}`, bodyHtml, true);
+}
+
+function printAllFinancialTransactionsReportPdf() {
+  if (!canSeeFinancialPrices()) return;
+  const txs = state.financialTransactions || [];
+  const bodyHtml = `
+    <table class="pdf-report-table">
+      <thead>
+        <tr>
+          <th>رقم المستند</th>
+          <th>التاريخ</th>
+          <th>العميل / الجهة</th>
+          <th>النوع</th>
+          <th>البيان</th>
+          <th>الإجمالي</th>
+          <th>المدفوع</th>
+          <th>المتبقي</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${txs.map(tx => `
+          <tr>
+            <td><strong>${tx.voucherNo}</strong></td>
+            <td>${tx.date}</td>
+            <td><strong>${tx.partnerName || '-'}</strong></td>
+            <td>${tx.typeLabel || '-'}</td>
+            <td style="text-align:right;">${tx.description || '-'}</td>
+            <td><strong>${fmtMoney(tx.totalAmount)}</strong></td>
+            <td>${fmtMoney(tx.paidAmount)}</td>
+            <td><strong>${fmtMoney(tx.remainingAmount)}</strong></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  triggerOfficialReportPdf('💰 تقرير سجل الفواتير والتحصيلات والمعاملات المالية', `إجمالي المعاملات: ${txs.length}`, bodyHtml, true);
+}
+
+function printAllPalletMovementsReportPdf() {
+  const pms = state.palletMovements || [];
+  const bodyHtml = `
+    <table class="pdf-report-table">
+      <thead>
+        <tr>
+          <th>التاريخ</th>
+          <th>العميل وكوده</th>
+          <th>بالتات مسلمة للعميل</th>
+          <th>بالتات مستلمة من العميل</th>
+          <th>السيارة / الملاحظات</th>
+          <th>بواسطة</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${pms.map(pm => `
+          <tr>
+            <td>${pm.date}</td>
+            <td><strong>${pm.clientName}</strong> (${pm.clientCode || 'CL'})</td>
+            <td><strong>+${pm.deliveredCount || 0}</strong></td>
+            <td><strong>-${pm.receivedCount || 0}</strong></td>
+            <td>${pm.notes || pm.carPlateNumber || '-'}</td>
+            <td>${pm.createdBy || '-'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  triggerOfficialReportPdf('🪵 تقرير سجل حركة البالتات الخشبية مع العملاء', `إجمالي الحركات: ${pms.length}`, bodyHtml, false);
+}
+
+function printGeneralInventoryAndAuditReportPdf() {
+  const showPrices = canSeeFinancialPrices();
+  const woodSummary = (state.catalog?.woodTypes || []).map(wt => {
+    const pallets = (state.pallets || []).filter(p => p.woodTypeId === wt.id && p.status === 'in_stock');
+    const sheets = pallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+    const m3 = pallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
+    const val = pallets.reduce((s, p) => s + Number(p.totalValue || 0), 0);
+    return { name: wt.name, palletsCount: pallets.length, sheets, m3, val };
+  });
+  const bodyHtml = `
+    <h3 style="margin:0 0 6px;font-size:13px;color:#0f766e;">1️⃣ ملخص جرد القشرة الخشبية حسب النوع</h3>
+    <table class="pdf-report-table">
+      <thead>
+        <tr>
+          <th>نوع الخشب</th>
+          <th>عدد البالتات المتاحة</th>
+          <th>إجمالي عدد الأفرخ (250×125)</th>
+          <th>إجمالي الحجم (م³)</th>
+          ${showPrices ? '<th>القيمة السوقية التقديرية</th>' : ''}
+        </tr>
+      </thead>
+      <tbody>
+        ${woodSummary.map(ws => `
+          <tr>
+            <td><strong>${ws.name}</strong></td>
+            <td>${ws.palletsCount} بالتة</td>
+            <td><strong>${fmtNum(ws.sheets, 0)} فرخ</strong></td>
+            <td><strong>${fmtNum(ws.m3, 4)} م³</strong></td>
+            ${showPrices ? `<td><strong>${fmtMoney(ws.val)}</strong></td>` : ''}
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    <h3 style="margin:10px 0 6px;font-size:13px;color:#0f766e;">2️⃣ جدول أرصدة كميات القشرة التفصيلي (التخانات × الجودات)</h3>
+    ${buildVeneerQuantitiesMatrixPrintHtml()}
+  `;
+  triggerOfficialReportPdf('📈 التقرير العام لجرد القشرة الخشبية بالمخازن', 'شامل ملخص الأنواع وجدول كميات التخانات والجودات', bodyHtml, true);
+}
+
+function printAuditLogReportPdf() {
+  const logs = (state.auditLogs || []).filter(l => canUserSeeNotification(currentUser, l)).slice(0, 60);
+  const bodyHtml = `
+    <table class="pdf-report-table">
+      <thead>
+        <tr>
+          <th>التوقيت</th>
+          <th>المستخدم</th>
+          <th>الوظيفة</th>
+          <th>العملية المنفذة</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${logs.map(l => `
+          <tr>
+            <td>${new Date(l.timestamp).toLocaleString('ar-EG')}</td>
+            <td><strong>${l.userName}</strong></td>
+            <td>${l.roleTitle}</td>
+            <td style="text-align:right;">${sanitizeTextForWarehouseKeeper(l.action)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  triggerOfficialReportPdf('🛡️ تقرير سجل الرقابة والحركات الإدارية (Audit Log)', `آخر ${logs.length} حركة مسجلة`, bodyHtml, false);
+}
+
 // Backup & CSV Export
 function downloadBackupJson() {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
@@ -7840,15 +8762,15 @@ function deleteOrderWithStockRestore(orderId) {
   const ord = (state.productionOrders || []).find(o => o.id === orderId);
   if (!ord) return;
 
-  const isCompleted = ord.stage === 'completed' || ord.status === 'completed';
-  const msg = isCompleted
-    ? `⚠️ تأكيد حذف الطلبية والبيان رقم (${ord.orderNumber}) للعميل (${ord.clientName})؟\n\n🔄 نظراً لأن الطلبية تم صرفها، سيقوم النظام تلقائياً بإرجاع كامل كمياتها (${ord.totalSheetsCount || 0} قطعة) إلى خلايا المخزن، وحذف إذن صرف السيارة والفاتورة المرتبطة بها فوراً!`
+  const isCompletedOrDeducted = Boolean(ord.stockDeducted || ord.stage === 'completed' || ord.status === 'completed');
+  const msg = isCompletedOrDeducted
+    ? `⚠️ تأكيد حذف الطلبية والبيان رقم (${ord.orderNumber}) للعميل (${ord.clientName})؟\n\n🔄 نظراً لأن الطلبية تم خصمها/صرفها من المخزن، سيقوم النظام تلقائياً بإرجاع كامل كمياتها (${ord.totalSheetsCount || 0} قطعة) إلى خلايا المخزن، وحذف إذن الصرف والفاتورة المرتبطة بها فوراً!`
     : `⚠️ هل أنت متأكد من حذف بيان وأمر تجهيز الطلبية رقم (${ord.orderNumber}) للعميل (${ord.clientName}) نهائياً؟`;
 
   if (!confirm(msg)) return;
 
-  // Restore warehouse stock if order was already dispatched/completed
-  if (isCompleted) {
+  // Restore warehouse stock if order was already deducted/dispatched/completed
+  if (isCompletedOrDeducted) {
     for (const it of (ord.items || [])) {
       const sh = Number(it.sheetsCount || 0);
       if (sh > 0) {
