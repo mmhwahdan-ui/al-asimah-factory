@@ -1187,6 +1187,128 @@ function setTab(tabName) {
   render();
 }
 
+const DEFAULT_FACTORY_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><rect width="120" height="120" rx="26" fill="#0F172A"/><path d="M22 76L60 94L98 76L60 58L22 76Z" fill="#D97706" opacity="0.85"/><path d="M22 63L60 81L98 63L60 45L22 63Z" fill="#F59E0B"/><path d="M22 50L60 68L98 50L60 32L22 50Z" fill="#FBBF24"/><path d="M42 50L60 58.5L78 50" stroke="#78350F" stroke-width="2.5" stroke-linecap="round"/><path d="M50 44L60 48.8L70 44" stroke="#78350F" stroke-width="2" stroke-linecap="round"/></svg>`;
+const DEFAULT_FACTORY_LOGO_DATA_URL = 'data:image/svg+xml;utf8,' + encodeURIComponent(DEFAULT_FACTORY_LOGO_SVG);
+
+function getFactoryLogoSrc() {
+  const custom = state && state.factoryInfo && state.factoryInfo.logoDataUrl;
+  if (custom && typeof custom === 'string' && custom.startsWith('data:image/')) {
+    return custom;
+  }
+  return DEFAULT_FACTORY_LOGO_DATA_URL;
+}
+
+function getPrintTopLeftLogoHtml(metaHtml = '') {
+  const logoSrc = getFactoryLogoSrc();
+  return `
+    <div style="display:flex;align-items:center;gap:12px;direction:rtl;text-align:left;">
+      ${metaHtml ? `<div style="text-align:left;font-size:11.5px;line-height:1.45;">${metaHtml}</div>` : ''}
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;border:1.5px solid #0f172a;border-radius:8px;padding:4px 8px;background:#ffffff;min-width:64px;">
+        <img src="${logoSrc}" alt="لوجو الشركة" style="height:52px;max-width:125px;object-fit:contain;display:block;" />
+      </div>
+    </div>
+  `;
+}
+
+function openFactoryLogoModal() {
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  const currentLogo = getFactoryLogoSrc();
+  const hasCustom = Boolean(state?.factoryInfo?.logoDataUrl);
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:520px;text-align:center;">
+        <div class="card-header">
+          <div class="card-title">🖼️ لوجو الشركة (في واجهة النظام وأعلى يسار جميع التقارير)</div>
+          <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <div style="background:var(--bg-elevated);border:2px dashed var(--border-color);border-radius:14px;padding:18px;margin-bottom:16px;">
+          <div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:8px;">معاينة اللوجو الحالي:</div>
+          <div style="display:inline-flex;align-items:center;justify-content:center;background:#ffffff;border:1px solid #cbd5e1;border-radius:12px;padding:10px 18px;min-height:84px;">
+            <img id="logo-modal-preview-img" src="${currentLogo}" alt="لوجو الشركة" style="max-height:76px;max-width:220px;object-fit:contain;" />
+          </div>
+          <div style="margin-top:8px;font-size:0.78rem;color:var(--accent);font-weight:700;">
+            ✅ يظهر هذا اللوجو في واجهة النظام ويُطبع تلقائياً في أعلى يسار الصفحة في كل التقارير والأذونات
+          </div>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <label for="factory-logo-file-input" class="btn btn-primary" style="width:100%;justify-content:center;padding:12px;font-size:0.92rem;cursor:pointer;">
+            📤 اختر صورة لوجو الشركة من جهازك أو الموبايل (PNG / JPG / SVG)
+          </label>
+          <input id="factory-logo-file-input" type="file" accept="image/*" style="display:none;" onchange="handleFactoryLogoFileChange(event)" />
+        </div>
+
+        <div style="display:flex;justify-content:space-between;gap:10px;">
+          ${hasCustom ? `
+            <button type="button" class="btn btn-danger" onclick="resetFactoryLogoToDefault()">🔄 استعادة اللوجو الافتراضي</button>
+          ` : '<span></span>'}
+          <button type="button" class="btn btn-outline" onclick="closeModal()">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function handleFactoryLogoFileChange(event) {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const rawDataUrl = e.target?.result;
+    if (!rawDataUrl || typeof rawDataUrl !== 'string') return;
+
+    // Compress/resize via canvas if raster image so it syncs fast across Firebase & all devices
+    const img = new Image();
+    img.onload = function() {
+      try {
+        const maxW = 320;
+        const maxH = 160;
+        let w = img.width || 160;
+        let h = img.height || 160;
+        const ratio = Math.min(maxW / w, maxH / h, 1);
+        w = Math.max(1, Math.round(w * ratio));
+        h = Math.max(1, Math.round(h * ratio));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        const finalDataUrl = canvas.toDataURL('image/png');
+
+        state.factoryInfo = state.factoryInfo || {};
+        state.factoryInfo.logoDataUrl = finalDataUrl;
+        state.factoryInfo.updatedAt = new Date().toISOString();
+        saveState(`🖼️ تحديث لوجو الشركة الرسمي بواسطة ${currentUser ? currentUser.name : 'الإدارة'}`);
+        openFactoryLogoModal();
+        alert('✅ تم حفظ لوجو الشركة بنجاح! سيظهر الآن في واجهة النظام وفي أعلى يسار جميع التقارير والأذونات المطبوعة.');
+      } catch (_) {
+        state.factoryInfo = state.factoryInfo || {};
+        state.factoryInfo.logoDataUrl = rawDataUrl;
+        state.factoryInfo.updatedAt = new Date().toISOString();
+        saveState(`🖼️ تحديث لوجو الشركة الرسمي بواسطة ${currentUser ? currentUser.name : 'الإدارة'}`);
+        openFactoryLogoModal();
+      }
+    };
+    img.src = rawDataUrl;
+  };
+  reader.readAsDataURL(file);
+}
+
+function resetFactoryLogoToDefault() {
+  if (!confirm('هل تريد استعادة اللوجو الافتراضي للمصنع؟')) return;
+  if (state && state.factoryInfo) {
+    delete state.factoryInfo.logoDataUrl;
+    state.factoryInfo.updatedAt = new Date().toISOString();
+  }
+  saveState(`🔄 استعادة اللوجو الافتراضي للمصنع بواسطة ${currentUser ? currentUser.name : 'الإدارة'}`);
+  openFactoryLogoModal();
+}
+
 // Main Render Entry
 function render() {
   if (window._isPrintingActive) return;
@@ -1247,8 +1369,8 @@ function render() {
     <div class="app-layout">
       <!-- Sidebar -->
       <aside class="sidebar ${sidebarOpen ? 'open' : ''}">
-        <div class="sidebar-brand">
-          <img src="./icons/logo.svg" alt="شعار المصنع" />
+        <div class="sidebar-brand" style="cursor:pointer;" onclick="openFactoryLogoModal()" title="اضغط لرفع أو تغيير لوجو الشركة">
+          <img src="${getFactoryLogoSrc()}" alt="شعار المصنع" style="width:46px;height:46px;object-fit:contain;background:#fff;border-radius:10px;padding:2px;" />
           <div>
             <h2>مصنع العاصمة</h2>
             <small>للصناعات المتخصصة - القشرة الخشبية</small>
@@ -1335,6 +1457,7 @@ function render() {
         <header class="topbar">
           <div class="topbar-left">
             <button class="mobile-menu-btn" onclick="sidebarOpen = !sidebarOpen; render();">☰</button>
+            <img src="${getFactoryLogoSrc()}" alt="لوجو الشركة" onclick="openFactoryLogoModal()" title="اضغط لرفع أو تغيير لوجو الشركة" style="height:40px;max-width:95px;object-fit:contain;background:#fff;border:1px solid var(--border-color);border-radius:8px;padding:2px 5px;cursor:pointer;" />
             <div>
               <div style="font-weight:800;font-size:1.05rem;">${state.factoryInfo.name}</div>
               <div style="font-size:0.76rem;color:var(--text-muted);">المقاس القياسي للقشرة: <strong>${state.factoryInfo.standardDimensions}</strong> (مساحة الفرخ: 3.125 م²)</div>
@@ -1342,6 +1465,9 @@ function render() {
           </div>
 
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-outline" onclick="openFactoryLogoModal()" title="رفع أو تغيير لوجو الشركة ليظهر في النظام وفي أعلى يسار جميع التقارير">
+              🖼️ لوجو الشركة
+            </button>
             <button class="btn btn-sm ${activeTab === 'chat' ? 'btn-primary' : 'btn-outline'}" onclick="setTab('chat')" title="فتح غرفة الشات وتكليف المهام بين الـ 8 حسابات">
               💬 الشات والمهام ${openTasksForMeCount > 0 ? `<span class="badge badge-danger" style="margin-right:4px;">${openTasksForMeCount} مهمة</span>` : ''}
             </button>
@@ -1399,7 +1525,7 @@ function renderLoginScreen() {
     <div class="login-screen">
       <div class="login-card">
         <div class="login-header">
-          <img src="./icons/logo.svg" alt="مصنع العاصمة" class="login-logo" />
+          <img src="${getFactoryLogoSrc()}" alt="مصنع العاصمة" class="login-logo" style="object-fit:contain;background:#fff;border-radius:14px;padding:4px;" />
           <h1>${state.factoryInfo.name}</h1>
           <p>${state.factoryInfo.subtitle} — مقاس قياسي (${state.factoryInfo.standardDimensions})</p>
           <div style="margin-top:10px;display:flex;justify-content:center;gap:8px;flex-wrap:wrap;">
@@ -4226,6 +4352,21 @@ function renderUsersPermissionsSettings() {
 
 function renderBackupSettings() {
   return `
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">🖼️ لوجو الشركة الرسمي (في واجهة النظام وأعلى يسار جميع التقارير والأذونات)</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+        <div style="background:#fff;border:1px solid var(--border-color);border-radius:10px;padding:8px 14px;">
+          <img src="${getFactoryLogoSrc()}" alt="لوجو الشركة" style="height:56px;max-width:160px;object-fit:contain;display:block;" />
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="openFactoryLogoModal()">📤 رفع / تغيير لوجو الشركة</button>
+          ${state?.factoryInfo?.logoDataUrl ? `<button class="btn btn-outline" onclick="resetFactoryLogoToDefault()">🔄 استعادة اللوجو الافتراضي</button>` : ''}
+        </div>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-header">
         <div class="card-title">💾 النسخ الاحتياطي الكامل وإعدادات مصنع العاصمة</div>
@@ -8071,9 +8212,7 @@ function printPalletTag(palletId) {
           <h1 style="font-size:24px;margin:0;">${state.factoryInfo.name}</h1>
           <p style="margin:4px 0 0;font-size:14px;">بطاقة تعريف بالتة قشرة خشبية (Pallet Quality Tag)</p>
         </div>
-        <div style="text-align:left;font-weight:800;font-size:20px;border:2px solid #000;padding:6px 14px;border-radius:8px;">
-          ${p.palletCode}
-        </div>
+        ${getPrintTopLeftLogoHtml(`<div style="font-weight:800;font-size:18px;border:2px solid #000;padding:5px 12px;border-radius:8px;">${p.palletCode}</div>`)}
       </div>
 
       <table style="width:100%;border-collapse:collapse;font-size:16px;margin-bottom:18px;">
@@ -8124,15 +8263,15 @@ function printApprovalDispatchOrder(reqId) {
   if (!r) return;
   const html = `
     <div style="border:2px solid #000;padding:28px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
-      <div style="display:flex;justify-content:space-between;border-bottom:2px solid #000;padding-bottom:14px;margin-bottom:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #000;padding-bottom:14px;margin-bottom:20px;">
         <div>
           <h1 style="margin:0;font-size:22px;">${state.factoryInfo.name}</h1>
           <p style="margin:4px 0 0;">إذن صرف وتسليم قشرة خشبية (معتمد)</p>
         </div>
-        <div style="text-align:left;">
+        ${getPrintTopLeftLogoHtml(`
           <div><strong>رقم الإذن:</strong> ${r.requestNumber}</div>
           <div><strong>التاريخ:</strong> ${fmtDate(r.createdAt)}</div>
-        </div>
+        `)}
       </div>
 
       <p style="font-size:16px;margin-bottom:14px;">
@@ -8180,9 +8319,13 @@ function printWarehouseVoucher(movId) {
   if (!m) return;
   const html = `
     <div style="border:2px solid #000;padding:28px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
-      <h2>${state.factoryInfo.name}</h2>
-      <h3>${m.directionLabel} — رقم: ${m.voucherNumber}</h3>
-      <hr style="margin:14px 0;"/>
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #000;padding-bottom:12px;margin-bottom:16px;">
+        <div>
+          <h2 style="margin:0;">${state.factoryInfo.name}</h2>
+          <h3 style="margin:4px 0 0;">${m.directionLabel} — رقم: ${m.voucherNumber || '-'}</h3>
+        </div>
+        ${getPrintTopLeftLogoHtml(`<div><strong>التاريخ:</strong> ${fmtDate(m.date)}</div>`)}
+      </div>
       <p><strong>التاريخ:</strong> ${fmtDate(m.date)}</p>
       <p><strong>المخزن:</strong> ${m.warehouseLabel}</p>
       <p><strong>البيان:</strong> ${sanitizeTextForWarehouseKeeper(m.itemSummary)}</p>
@@ -8213,11 +8356,11 @@ function printClientOrderStatement(orderId) {
           <h1 style="margin:0;font-size:22px;">${state.factoryInfo.name}</h1>
           <p style="margin:4px 0 0;font-size:14px;">بيان طلبية وأمر تجهيز قشرة خشبية للعميل (250×125 سم)</p>
         </div>
-        <div style="text-align:left;font-size:13px;">
+        ${getPrintTopLeftLogoHtml(`
           <div><strong>رقم الطلبية:</strong> ${ord.orderNumber}</div>
           <div><strong>التاريخ:</strong> ${ord.date || fmtDate(ord.createdAt)}</div>
           <div><strong>كود العميل:</strong> ${ord.clientCode || 'CL'}</div>
-        </div>
+        `)}
       </div>
 
       <p style="font-size:15px;margin-bottom:12px;">
@@ -8303,11 +8446,13 @@ function printVehicleDispatchVoucher(orderId) {
           <h1 style="margin:0;font-size:22px;">${state.factoryInfo.name}</h1>
           <h2 style="margin:6px 0 0;font-size:17px;">🚚 إذن صرف وتحميل سيارة بالبضاعة (معتمد للخروج من البوابة)</h2>
         </div>
-        <div style="text-align:left;font-size:13px;border:2px solid #000;padding:7px 12px;border-radius:8px;">
-          <div><strong>رقم إذن السيارة:</strong> ${car.voucherNo || 'CAR-' + ord.orderNumber}</div>
-          <div><strong>رقم الطلبية:</strong> ${ord.orderNumber}</div>
-          <div><strong>تاريخ التحميل:</strong> ${car.dispatchDate || ord.date}</div>
-        </div>
+        ${getPrintTopLeftLogoHtml(`
+          <div style="border:2px solid #000;padding:5px 10px;border-radius:8px;">
+            <div><strong>رقم إذن السيارة:</strong> ${car.voucherNo || 'CAR-' + ord.orderNumber}</div>
+            <div><strong>رقم الطلبية:</strong> ${ord.orderNumber}</div>
+            <div><strong>تاريخ التحميل:</strong> ${car.dispatchDate || ord.date}</div>
+          </div>
+        `)}
       </div>
 
       <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:14px;">
@@ -8375,11 +8520,11 @@ function printClientFullStatement(clientId) {
           <h1 style="margin:0;font-size:21px;">${state.factoryInfo.name}</h1>
           <p style="margin:4px 0 0;font-size:14px;">بيان كشف حساب عميل شامل (الطلبيات الفائتة + المديونيات والمستحقات + حساب البالتات)</p>
         </div>
-        <div style="text-align:left;font-size:13px;">
+        ${getPrintTopLeftLogoHtml(`
           <div><strong>كود العميل:</strong> ${pt.code || 'CL'}</div>
           <div><strong>اسم العميل:</strong> ${pt.name}</div>
           <div><strong>تاريخ البيان:</strong> ${todayStr()}</div>
-        </div>
+        `)}
       </div>
 
       <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px;">
@@ -8437,9 +8582,13 @@ function printFinancialInvoice(txId) {
   if (!tx) return;
   const html = `
     <div style="border:2px solid #000;padding:24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
-      <h2>${state.factoryInfo.name}</h2>
-      <h3>${tx.typeLabel} — رقم: ${tx.voucherNo}</h3>
-      <hr style="margin:14px 0;"/>
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #000;padding-bottom:12px;margin-bottom:16px;">
+        <div>
+          <h2 style="margin:0;">${state.factoryInfo.name}</h2>
+          <h3 style="margin:4px 0 0;">${tx.typeLabel} — رقم: ${tx.voucherNo}</h3>
+        </div>
+        ${getPrintTopLeftLogoHtml(`<div><strong>التاريخ:</strong> ${tx.date}</div>`)}
+      </div>
       <p><strong>التاريخ:</strong> ${tx.date}</p>
       <p><strong>العميل / الجهة:</strong> ${tx.partnerName}</p>
       <p><strong>البيان:</strong> ${tx.description}</p>
@@ -8468,11 +8617,13 @@ function triggerOfficialReportPdf(title, subtitle, bodyHtml, landscape = false) 
           <div style="font-size:13px;font-weight:800;color:#0f766e;margin-top:2px;">${title}</div>
           ${subtitle ? `<div style="font-size:11px;color:#475569;margin-top:1px;">${subtitle}</div>` : ''}
         </div>
-        <div style="text-align:left;font-size:11px;border:1px solid #0f172a;padding:5px 10px;border-radius:6px;background:#f8fafc;">
-          <div><strong>تاريخ الطباعة:</strong> ${todayStr()}</div>
-          <div><strong>التوقيت:</strong> ${new Date().toLocaleTimeString('ar-EG')}</div>
-          <div><strong>المستخدم:</strong> ${userLabel}</div>
-        </div>
+        ${getPrintTopLeftLogoHtml(`
+          <div style="font-size:11px;border:1px solid #0f172a;padding:5px 10px;border-radius:6px;background:#f8fafc;">
+            <div><strong>تاريخ الطباعة:</strong> ${todayStr()}</div>
+            <div><strong>التوقيت:</strong> ${new Date().toLocaleTimeString('ar-EG')}</div>
+            <div><strong>المستخدم:</strong> ${userLabel}</div>
+          </div>
+        `)}
       </div>
       ${bodyHtml}
       <div class="pdf-report-footer">
