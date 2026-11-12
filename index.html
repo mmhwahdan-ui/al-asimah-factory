@@ -15,12 +15,14 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./icons/logo.svg" />
   <link rel="apple-touch-icon" href="./icons/logo.svg" />
-  <link rel="stylesheet" href="./styles.css?v=18" />
+  <link rel="stylesheet" href="./styles.css?v=19" />
   <script>
     (function() {
-      var TARGET_VER = 'v18';
-      if (localStorage.getItem('al_asimah_app_ver') !== TARGET_VER) {
+      var TARGET_VER = 'v19';
+      var rawState = localStorage.getItem('al_asimah_factory_v1_state') || '';
+      if (localStorage.getItem('al_asimah_app_ver') !== TARGET_VER || rawState.indexOf('\uFFFD') !== -1) {
         localStorage.setItem('al_asimah_app_ver', TARGET_VER);
+        localStorage.removeItem('al_asimah_factory_v1_state');
         if ('caches' in window) {
           caches.keys().then(function(names) {
             return Promise.all(names.map(function(n) { return caches.delete(n); }));
@@ -45,16 +47,16 @@
   <div id="modal-root"></div>
   <div id="print-area"></div>
 
-  <script src="./app.js?v=18"></script>
+  <script src="./app.js?v=19"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.addEventListener('message', (e) => {
-        if (e.data && e.data.type === 'FORCE_RELOAD_V18') {
+        if (e.data && e.data.type === 'FORCE_RELOAD_V19') {
           window.location.reload();
         }
       });
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js?v=18').then(reg => {
+        navigator.serviceWorker.register('./sw.js?v=19').then(reg => {
           reg.update();
         }).catch(() => {});
       });

@@ -591,6 +591,24 @@ let liveServerUrls = {
 };
 let deferredInstallPrompt = null;
 
+function mergeCleanStringsClient(existingObj, incomingObj) {
+  if (!existingObj || typeof existingObj !== 'object') return incomingObj;
+  if (!incomingObj || typeof incomingObj !== 'object') return existingObj;
+  const result = { ...existingObj, ...incomingObj };
+  for (const key of Object.keys(result)) {
+    const exVal = existingObj[key];
+    const inVal = incomingObj[key];
+    if (typeof inVal === 'string' && inVal.includes('\uFFFD') && typeof exVal === 'string' && !exVal.includes('\uFFFD')) {
+      result[key] = exVal;
+    } else if (Array.isArray(inVal) && Array.isArray(exVal) && inVal.length === exVal.length) {
+      result[key] = inVal.map((item, idx) => (item && typeof item === 'object' && exVal[idx] && typeof exVal[idx] === 'object') ? mergeCleanStringsClient(exVal[idx], item) : item);
+    } else if (inVal && typeof inVal === 'object' && !Array.isArray(inVal) && exVal && typeof exVal === 'object' && !Array.isArray(exVal)) {
+      result[key] = mergeCleanStringsClient(exVal, inVal);
+    }
+  }
+  return result;
+}
+
 function smartMergeListClient(a = [], b = [], deletedSet = new Set()) {
   const map = new Map();
   for (const item of (Array.isArray(a) ? a : [])) {
@@ -604,7 +622,7 @@ function smartMergeListClient(a = [], b = [], deletedSet = new Set()) {
     } else {
       const tA = new Date(prev.updatedAt || prev.timestamp || prev.createdAt || 0).getTime() || 0;
       const tB = new Date(item.updatedAt || item.timestamp || item.createdAt || 0).getTime() || 0;
-      map.set(item.id, tB >= tA ? { ...prev, ...item } : { ...item, ...prev });
+      map.set(item.id, tB >= tA ? mergeCleanStringsClient(prev, item) : mergeCleanStringsClient(item, prev));
     }
   }
   return Array.from(map.values());
@@ -614,12 +632,39 @@ function normalizeState(s) {
   const def = getDefaultInitialState();
   if (!s || typeof s !== 'object') return def;
   s.factoryInfo = { ...def.factoryInfo, ...(s.factoryInfo || {}) };
+  if (!s.factoryInfo.name || s.factoryInfo.name.includes('\uFFFD')) s.factoryInfo.name = def.factoryInfo.name;
+  if (!s.factoryInfo.subtitle || s.factoryInfo.subtitle.includes('\uFFFD')) s.factoryInfo.subtitle = def.factoryInfo.subtitle;
+  if (!s.factoryInfo.standardDimensions || s.factoryInfo.standardDimensions.includes('\uFFFD')) s.factoryInfo.standardDimensions = def.factoryInfo.standardDimensions;
+  if (!s.factoryInfo.address || s.factoryInfo.address.includes('\uFFFD')) s.factoryInfo.address = def.factoryInfo.address;
+  if (!s.factoryInfo.currency || s.factoryInfo.currency.includes('\uFFFD')) s.factoryInfo.currency = def.factoryInfo.currency;
+
   s.catalog = s.catalog && typeof s.catalog === 'object' ? s.catalog : {};
   s.catalog.woodTypes = Array.isArray(s.catalog.woodTypes) ? s.catalog.woodTypes : [];
   s.catalog.thicknesses = Array.isArray(s.catalog.thicknesses) ? s.catalog.thicknesses : [];
   s.catalog.grades = Array.isArray(s.catalog.grades) ? s.catalog.grades : [];
   s.catalog.dimensions = Array.isArray(s.catalog.dimensions) && s.catalog.dimensions.length > 0 ? s.catalog.dimensions : def.catalog.dimensions;
   s.catalog.cellPrices = sanitizeCellPricesMap(s.catalog.cellPrices && typeof s.catalog.cellPrices === 'object' ? s.catalog.cellPrices : {});
+
+  // Sanitize catalog labels against any encoding corruption
+  s.catalog.dimensions.forEach(d => {
+    if (!d.label || d.label.includes('\uFFFD')) d.label = '250 × 125 سم (مقاس طبيعي قياسي)';
+  });
+  s.catalog.woodTypes.forEach(w => {
+    if (!w.name || w.name.includes('\uFFFD')) w.name = 'قشرة خشبية (250×125)';
+    if (!w.origin || w.origin.includes('\uFFFD')) w.origin = 'مصنع العاصمة';
+  });
+  s.catalog.grades.forEach(g => {
+    if (g.code && g.code.startsWith('P- C')) g.code = 'P- C قطع';
+    if (!g.name || g.name.includes('\uFFFD')) g.name = `جودة (${g.code})`;
+    if (!g.description || g.description.includes('\uFFFD')) g.description = 'درجة جودة';
+  });
+  s.catalog.thicknesses.forEach(t => {
+    const dir = t.direction === 'sada' ? 'sada' : 'qas';
+    t.direction = dir;
+    t.directionLabel = dir === 'sada' ? 'اتجاه سدا' : 'اتجاه قص';
+    t.category = t.directionLabel;
+    t.label = `${t.mm} مم — ${t.directionLabel}`;
+  });
 
   const arrayKeys = [
     'users', 'pallets', 'rawMaterials', 'scrapItems', 'spareParts',
@@ -657,6 +702,11 @@ function normalizeState(s) {
   };
 
   for (const u of s.users) {
+    const defUser = def.users.find(du => du.roleKey === u.roleKey || du.id === u.id);
+    if (defUser) {
+      if (!u.name || u.name.includes('\uFFFD')) u.name = defUser.name;
+      if (!u.roleTitle || u.roleTitle.includes('\uFFFD')) u.roleTitle = defUser.roleTitle;
+    }
     u.permissions = u.permissions || {};
     u.permissions.dashboard = true;
     u.permissions.warehouses = true;
