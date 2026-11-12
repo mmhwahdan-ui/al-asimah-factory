@@ -7717,48 +7717,174 @@ function closeUniversalPrintView() {
   render();
 }
 
-function openStandalonePrintPopup() {
-  if (!_lastPrintDocumentHtml) return;
-  const w = window.open('', '_blank', 'width=1050,height=800');
-  if (!w) {
-    window.print();
-    return;
-  }
-  w.document.open();
-  w.document.write(`<!DOCTYPE html>
+function buildStandalonePrintHtml(docHtml, docTitle, landscape) {
+  return `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
-  <title>${_lastPrintDocumentTitle}</title>
-  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${docTitle}</title>
   <style>
-    @page { size: ${_lastPrintLandscape ? 'A4 landscape' : 'A4 portrait'}; margin: 8mm; }
-    * { box-sizing: border-box; font-family: 'Cairo', Tahoma, Arial, sans-serif; }
-    html, body { background: #ffffff !important; color: #000000 !important; margin: 0; padding: 12px; direction: rtl; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-    table { width: 100%; border-collapse: collapse; }
+    @page { size: ${landscape ? 'A4 landscape' : 'A4 portrait'}; margin: 7mm; }
+    * {
+      box-sizing: border-box;
+      font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    html, body {
+      background: #ffffff !important;
+      color: #000000 !important;
+      margin: 0 !important;
+      padding: 12px !important;
+      direction: rtl !important;
+      text-align: right !important;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .pdf-report-wrap {
+      border: 2px solid #0f172a;
+      border-radius: 8px;
+      padding: 14px 16px;
+      direction: rtl;
+      color: #0f172a;
+      background: #ffffff;
+    }
+    .pdf-report-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 8px;
+      margin-bottom: 10px;
+    }
+    .pdf-report-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      margin-bottom: 10px;
+    }
+    .pdf-report-table th, .pdf-report-table td {
+      border: 1px solid #334155;
+      padding: 4px 6px;
+      text-align: center;
+      vertical-align: middle;
+    }
+    .pdf-report-table th {
+      background: #e2e8f0;
+      font-weight: 800;
+      color: #0f172a;
+    }
+    .pdf-report-footer {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 16px;
+      padding-top: 8px;
+      border-top: 1px dashed #64748b;
+      font-size: 11px;
+      font-weight: 700;
+    }
     @media print {
-      body { padding: 0; }
-      .no-print-bar { display: none !important; }
+      html, body {
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+      .no-print-bar {
+        display: none !important;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="no-print-bar" style="display:flex;justify-content:space-between;align-items:center;background:#0f172a;color:#fff;padding:10px 16px;border-radius:10px;margin-bottom:16px;">
-    <strong style="font-size:14px;">🖨️ ${_lastPrintDocumentTitle}</strong>
-    <div style="display:flex;gap:8px;">
-      <button onclick="window.print()" style="background:#10b981;color:#fff;border:none;padding:7px 16px;border-radius:8px;font-weight:800;cursor:pointer;">🖨️ طباعة / حفظ PDF الآن</button>
-      <button onclick="window.close()" style="background:#ef4444;color:#fff;border:none;padding:7px 14px;border-radius:8px;font-weight:800;cursor:pointer;">✕ إغلاق النافذة</button>
+  <div class="no-print-bar" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:#0f172a;color:#fff;padding:10px 16px;border-radius:10px;margin-bottom:14px;">
+    <strong style="font-size:14px;color:#fbbf24;">🖨️ ${docTitle}</strong>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button type="button" onclick="window.focus(); window.print();" style="background:#10b981;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">🖨️ فتح صفحة الطابعة الآن</button>
+      <button type="button" onclick="window.close();" style="background:#ef4444;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">✕ إغلاق النافذة</button>
     </div>
   </div>
-  ${_lastPrintDocumentHtml}
-  <script>
-    window.onload = function() {
-      setTimeout(function() { window.print(); }, 250);
-    };
-  </script>
+  <div id="standalone-print-body">
+    ${docHtml}
+  </div>
 </body>
-</html>`);
+</html>`;
+}
+
+function triggerDirectIframePrint(fullHtml) {
+  try {
+    let iframe = document.getElementById('direct-print-iframe');
+    if (iframe && iframe.parentNode) {
+      iframe.parentNode.removeChild(iframe);
+    }
+    iframe = document.createElement('iframe');
+    iframe.id = 'direct-print-iframe';
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '1px';
+    iframe.style.height = '1px';
+    iframe.style.border = '0';
+    iframe.style.opacity = '0.01';
+    document.body.appendChild(iframe);
+
+    const iDoc = iframe.contentWindow ? iframe.contentWindow.document : iframe.contentDocument;
+    if (!iDoc) return false;
+    iDoc.open();
+    iDoc.write(fullHtml);
+    iDoc.close();
+    if (iDoc.body) {
+      void iDoc.body.offsetHeight;
+    }
+    if (iframe.contentWindow && typeof iframe.contentWindow.print === 'function') {
+      const t0 = Date.now();
+      iframe.contentWindow.focus();
+      iframe.contentWindow.print();
+      if (Date.now() - t0 < 80) {
+        setTimeout(() => {
+          try {
+            iframe.contentWindow.focus();
+            iframe.contentWindow.print();
+          } catch (_) {}
+        }, 120);
+      }
+      return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
+function openStandalonePrintPopup() {
+  if (!_lastPrintDocumentHtml) return;
+  const fullHtml = buildStandalonePrintHtml(_lastPrintDocumentHtml, _lastPrintDocumentTitle, _lastPrintLandscape);
+  const w = typeof window.open === 'function' ? window.open('', '_blank') : null;
+  if (!w || !w.document) {
+    if (!triggerDirectIframePrint(fullHtml)) {
+      window.focus();
+      window.print();
+    }
+    return;
+  }
+  w.document.open();
+  w.document.write(fullHtml);
   w.document.close();
+  if (w.document.body) {
+    void w.document.body.offsetHeight;
+  }
+  const t0 = Date.now();
+  try {
+    w.focus();
+    w.print();
+  } catch (_) {}
+  if (Date.now() - t0 < 80) {
+    setTimeout(() => {
+      try {
+        w.focus();
+        w.print();
+      } catch (_) {}
+    }, 150);
+  }
 }
 
 function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند رسمي - مصنع العاصمة', landscape = false) {
@@ -7808,7 +7934,7 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
           -webkit-print-color-adjust: exact !important;
           print-color-adjust: exact !important;
         }
-        #app, #modal-root, .live-alert-banner, .floating-chat-fab, .no-print-bar {
+        #app, #modal-root, .live-alert-banner, .floating-chat-fab, .no-print-bar, #direct-print-iframe {
           display: none !important;
         }
         #print-area, #print-area * {
@@ -7828,7 +7954,7 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
         border: 2px solid #0f172a;
         border-radius: 8px;
         padding: 14px 16px;
-        font-family: 'Cairo', sans-serif;
+        font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif;
         direction: rtl;
         color: #0f172a;
         background: #fff;
@@ -7871,14 +7997,14 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
     <div class="no-print-bar" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:#0f172a;color:#fff;padding:12px 18px;border-radius:10px;margin-bottom:16px;font-family:'Cairo',sans-serif;direction:rtl;">
       <div>
         <strong style="font-size:15px;color:#fbbf24;">🖨️ معاينة الطباعة الرسمية: ${docTitle}</strong>
-        <div style="font-size:12px;color:#cbd5e1;">المستند جاهز أمامك للطباعة الفورية أو الحفظ بصيغة PDF</div>
+        <div style="font-size:12px;color:#cbd5e1;">تم فتح صفحة الطابعة تلقائياً — يمكنك أيضاً الضغط على زر الطباعة بالأسفل</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button type="button" onclick="window.print()" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
-          🖨️ طباعة / حفظ PDF الآن
+        <button type="button" onclick="openStandalonePrintPopup()" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
+          🖨️ فتح في صفحة الطابعة الآن
         </button>
-        <button type="button" onclick="openStandalonePrintPopup()" style="background:#2563eb;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
-          🗗 فتح في نافذة طباعة مستقلة
+        <button type="button" onclick="window.focus(); window.print();" style="background:#2563eb;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
+          🖨️ طباعة مباشرة من نفس الشاشة
         </button>
         <button type="button" onclick="closeUniversalPrintView()" style="background:#ef4444;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
           🔙 العودة للنظام وإغلاق شاشة الطباعة
@@ -7893,11 +8019,43 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
   if (typeof window.scrollTo === 'function') {
     window.scrollTo(0, 0);
   }
+  void printEl.offsetHeight;
 
-  // Trigger print after ensuring the visible DOM is painted (and call immediately in synchronous test environments)
-  setTimeout(() => {
-    window.print();
-  }, 180);
+  // Open clean dedicated print window synchronously on user click so the Printer Dialog opens immediately with 100% visible content
+  const fullStandaloneHtml = buildStandalonePrintHtml(docHtml, docTitle, landscape);
+  const popupWin = typeof window.open === 'function' ? window.open('', '_blank') : null;
+  if (popupWin && popupWin.document) {
+    popupWin.document.open();
+    popupWin.document.write(fullStandaloneHtml);
+    popupWin.document.close();
+    if (popupWin.document.body) {
+      void popupWin.document.body.offsetHeight;
+    }
+    const t0 = Date.now();
+    try {
+      popupWin.focus();
+      popupWin.print();
+    } catch (_) {}
+    if (Date.now() - t0 < 80) {
+      setTimeout(() => {
+        try {
+          popupWin.focus();
+          popupWin.print();
+        } catch (_) {}
+      }, 150);
+    }
+    return;
+  }
+
+  // Fallback if popup is blocked (e.g. PWA or strict browser): synchronous print on visible #print-area
+  const t0 = Date.now();
+  if (typeof window.focus === 'function') window.focus();
+  window.print();
+  if (Date.now() - t0 < 80) {
+    setTimeout(() => {
+      window.print();
+    }, 150);
+  }
 }
 
 // ============================================================================
