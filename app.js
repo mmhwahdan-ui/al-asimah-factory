@@ -16,6 +16,7 @@ let movementDateFilterTo = '';
 
 // filters for finished veneer warehouse
 let veneerFilterWood = 'all';
+let veneerFilterDimension = 'all'; // 'all' | 'standard' | 'custom' | 'LxW'
 let veneerFilterGrade = 'all';
 let veneerFilterThickness = 'all';
 let veneerFilterStatus = 'in_stock';
@@ -173,13 +174,165 @@ function getCellUnitPrice(thkId, gradeId, thkMm = null, direction = null) {
   return 0;
 }
 
-// Wood Veneer Engineering Calculations (250cm x 125cm x Thickness mm)
+// Wood Veneer Engineering Calculations (Standard: 125cm x 250cm = 3.125 m², plus full support for custom client dimensions & thicknesses)
+function isStandardVeneerDimension(lengthCm = 250, widthCm = 125) {
+  const l = Number(lengthCm || 250);
+  const w = Number(widthCm || 125);
+  return (l === 250 && w === 125) || (l === 125 && w === 250);
+}
+
+function formatVeneerDimensions(lengthCm = 250, widthCm = 125, withTag = false) {
+  const l = Number(lengthCm || 250);
+  const w = Number(widthCm || 125);
+  if (isStandardVeneerDimension(l, w)) {
+    return withTag ? `125×250 سم (معتمد)` : `125×250 سم`;
+  }
+  return withTag ? `${w}×${l} سم (مقاس خاص)` : `${w}×${l} سم`;
+}
+
+function getVeneerDimensionBadgeHtml(lengthCm = 250, widthCm = 125) {
+  const l = Number(lengthCm || 250);
+  const w = Number(widthCm || 125);
+  if (isStandardVeneerDimension(l, w)) {
+    return `<span class="badge" style="background:rgba(15,118,110,0.12);color:var(--primary);font-size:0.68rem;padding:2px 6px;">📏 125×250 سم (معتمد)</span>`;
+  }
+  return `<span class="badge" style="background:#fef3c7;color:#b45309;border:1px solid #f59e0b;font-size:0.7rem;padding:2px 7px;font-weight:800;">📐 مقاس خاص: ${w}×${l} سم</span>`;
+}
+
+function getPresetVeneerDimensions() {
+  const defaults = [
+    { key: '250x125', lengthCm: 250, widthCm: 125, label: '125 × 250 سم (المقاس المعتمد - 3.125 م²)', isStandard: true },
+    { key: '244x122', lengthCm: 244, widthCm: 122, label: '122 × 244 سم (مقاس خاص للشركات - 2.9768 م²)', isStandard: false },
+    { key: '220x110', lengthCm: 220, widthCm: 110, label: '110 × 220 سم (مقاس خاص للشركات - 2.42 م²)', isStandard: false },
+    { key: '215x100', lengthCm: 215, widthCm: 100, label: '100 × 215 سم (مقاس خاص للشركات - 2.15 م²)', isStandard: false },
+    { key: '210x90', lengthCm: 210, widthCm: 90, label: '90 × 210 سم (مقاس أبواب خاص - 1.89 م²)', isStandard: false },
+    { key: '200x100', lengthCm: 200, widthCm: 100, label: '100 × 200 سم (مقاس خاص للشركات - 2.00 م²)', isStandard: false },
+    { key: '180x90', lengthCm: 180, widthCm: 90, label: '90 × 180 سم (مقاس خاص للشركات - 1.62 م²)', isStandard: false }
+  ];
+  const map = new Map();
+  for (const d of defaults) map.set(d.key, d);
+
+  const customList = state?.catalog?.customDimensions || [];
+  for (const cd of customList) {
+    const l = Number(cd.lengthCm || 250);
+    const w = Number(cd.widthCm || 125);
+    const key = isStandardVeneerDimension(l, w) ? '250x125' : `${l}x${w}`;
+    if (!map.has(key)) {
+      const area = +((l / 100) * (w / 100)).toFixed(4);
+      map.set(key, {
+        key,
+        lengthCm: l,
+        widthCm: w,
+        label: cd.label || `${w} × ${l} سم (${cd.clientNote || 'مقاس خاص'} - ${area} م²)`,
+        isStandard: false
+      });
+    }
+  }
+
+  // Also discover any custom dimensions used on existing pallets or productionOrders
+  for (const p of (state?.pallets || [])) {
+    const l = Number(p.lengthCm || 250);
+    const w = Number(p.widthCm || 125);
+    if (!isStandardVeneerDimension(l, w) && l > 0 && w > 0) {
+      const key = `${l}x${w}`;
+      if (!map.has(key)) {
+        const area = +((l / 100) * (w / 100)).toFixed(4);
+        map.set(key, { key, lengthCm: l, widthCm: w, label: `${w} × ${l} سم (مقاس خاص مسجل - ${area} م²)`, isStandard: false });
+      }
+    }
+  }
+  for (const o of (state?.productionOrders || [])) {
+    for (const it of (o.items || [])) {
+      const l = Number(it.lengthCm || 250);
+      const w = Number(it.widthCm || 125);
+      if (!isStandardVeneerDimension(l, w) && l > 0 && w > 0) {
+        const key = `${l}x${w}`;
+        if (!map.has(key)) {
+          const area = +((l / 100) * (w / 100)).toFixed(4);
+          map.set(key, { key, lengthCm: l, widthCm: w, label: `${w} × ${l} سم (مقاس خاص بطلبية - ${area} م²)`, isStandard: false });
+        }
+      }
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+function ensureCustomDimensionInCatalog(lengthCm, widthCm, clientNote = '') {
+  const l = Number(lengthCm || 250);
+  const w = Number(widthCm || 125);
+  if (isStandardVeneerDimension(l, w) || l <= 0 || w <= 0) return;
+  if (!state || !state.catalog) return;
+  state.catalog.customDimensions = state.catalog.customDimensions || [];
+  const exists = state.catalog.customDimensions.some(d => Number(d.lengthCm) === l && Number(d.widthCm) === w);
+  if (!exists) {
+    const area = +((l / 100) * (w / 100)).toFixed(4);
+    state.catalog.customDimensions.push({
+      id: `dim-${l}x${w}`,
+      lengthCm: l,
+      widthCm: w,
+      areaM2: area,
+      clientNote: clientNote || 'مقاس خاص للشركات',
+      label: `${w} × ${l} سم (${clientNote || 'مقاس خاص'} - ${area} م²)`
+    });
+  }
+}
+
+function ensureCatalogThicknessExists(mmVal, direction = 'qas', customUnitPrice = 0, gradeId = '') {
+  const mm = Number(mmVal || 1.5);
+  const dir = direction === 'sada' ? 'sada' : 'qas';
+  const dirLabel = dir === 'sada' ? 'اتجاه سدا' : 'اتجاه قص';
+  const rowId = `th-${mm}-${dir}`;
+  if (!state || !state.catalog) {
+    return { id: rowId, mm, direction: dir, directionLabel: dirLabel, label: `${mm} مم — ${dirLabel}`, standardSheetsPerPallet: 400 };
+  }
+  state.catalog.thicknesses = state.catalog.thicknesses || [];
+  let existing = state.catalog.thicknesses.find(
+    t => t.id === rowId || (Number(t.mm) === mm && (t.direction || 'qas') === dir)
+  );
+  if (!existing) {
+    state.deletedIds = (state.deletedIds || []).filter(id => id !== rowId);
+    existing = {
+      id: rowId,
+      mm,
+      direction: dir,
+      directionLabel: dirLabel,
+      label: `${mm} مم — ${dirLabel}`,
+      category: dirLabel,
+      standardSheetsPerPallet: 400
+    };
+    state.catalog.thicknesses.push(existing);
+    state.catalog.thicknesses.sort((a, b) => {
+      if (Number(a.mm) !== Number(b.mm)) return Number(a.mm) - Number(b.mm);
+      return (a.direction || 'qas').localeCompare(b.direction || 'qas');
+    });
+  }
+  if (customUnitPrice > 0 && gradeId && canSeeFinancialPrices()) {
+    state.catalog.cellPrices = state.catalog.cellPrices || {};
+    const cKey = getCellPriceKey(existing.id, gradeId);
+    if (!state.catalog.cellPrices[cKey]) {
+      state.catalog.cellPrices[cKey] = Number(customUnitPrice);
+    }
+  }
+  return existing;
+}
+
+function matchesPalletDimensionFilter(p, filterVal = veneerFilterDimension) {
+  if (!filterVal || filterVal === 'all') return true;
+  const l = Number(p?.lengthCm || 250);
+  const w = Number(p?.widthCm || 125);
+  const isStd = isStandardVeneerDimension(l, w);
+  if (filterVal === 'standard') return isStd;
+  if (filterVal === 'custom') return !isStd;
+  return `${l}x${w}` === filterVal || `${w}x${l}` === filterVal;
+}
+
 function calculateVeneerMetrics(lengthCm, widthCm, thicknessMm, sheetsCount) {
   const lM = Number(lengthCm || 250) / 100;
   const wM = Number(widthCm || 125) / 100;
   const tM = Number(thicknessMm || 1.5) / 1000;
   const sheets = Number(sheetsCount || 0);
-  const sheetAreaM2 = lM * wM; // 2.5 * 1.25 = 3.125 m2
+  const sheetAreaM2 = lM * wM; // Standard: 2.5 * 1.25 = 3.125 m2 (or custom L * W)
   const totalAreaM2 = +(sheetAreaM2 * sheets).toFixed(4);
   const totalVolumeM3 = +(totalAreaM2 * tM).toFixed(4);
   return {
@@ -2376,10 +2529,12 @@ function renderFinishedVeneerWarehouse() {
     return (a.direction || 'qas').localeCompare(b.direction || 'qas');
   });
   const grades = state.catalog.grades || [];
+  const presetDims = getPresetVeneerDimensions();
   const inStockPallets = (state.pallets || []).filter(p => {
     if (p.status !== 'in_stock') return false;
     if (Number(p.sheetsCount || 0) <= 0) return false;
     if (veneerFilterWood !== 'all' && p.woodTypeId !== veneerFilterWood) return false;
+    if (!matchesPalletDimensionFilter(p, veneerFilterDimension)) return false;
     return true;
   });
 
@@ -2393,6 +2548,19 @@ function renderFinishedVeneerWarehouse() {
     const volumeM3 = cellPallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
     const unitPiecePrice = getCellUnitPrice(t.id, gradeId, t.mm, t.direction);
     const stockValueByPiece = +(sheets * unitPiecePrice).toFixed(2);
+
+    // Track custom dimensions inside this cell
+    const customDimBreakdown = [];
+    const customMap = new Map();
+    for (const p of cellPallets) {
+      if (!isStandardVeneerDimension(p.lengthCm, p.widthCm)) {
+        const lbl = `${Number(p.widthCm || 125)}×${Number(p.lengthCm || 250)}`;
+        customMap.set(lbl, (customMap.get(lbl) || 0) + Number(p.sheetsCount || 0));
+      }
+    }
+    for (const [dimLbl, dimSheets] of customMap.entries()) {
+      customDimBreakdown.push(`${dimLbl}: ${fmtNum(dimSheets, 0)} ق`);
+    }
 
     // Calculate sold pieces & revenue from movements for this cell (supporting both . and _dot_ keys)
     const targetSafeKey = getCellPriceKey(t.id, gradeId);
@@ -2412,7 +2580,8 @@ function renderFinishedVeneerWarehouse() {
       unitPiecePrice,
       stockValueByPiece,
       soldSheets,
-      soldRevenue: +soldRevenue.toFixed(2)
+      soldRevenue: +soldRevenue.toFixed(2),
+      customDimBreakdown
     };
   }
 
@@ -2502,18 +2671,27 @@ function renderFinishedVeneerWarehouse() {
         </div>
       </div>
 
-      <!-- Top Bar: Wood Filter + Quick Add Thickness (Cut/Warp) / Grade -->
+      <!-- Top Bar: Wood Filter + Dimension Filter + Quick Add Thickness (Cut/Warp) / Custom Dimension / Grade -->
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;background:var(--bg-elevated);padding:8px 12px;border-radius:10px;">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <label style="font-weight:700;font-size:0.8rem;">تصفية حسب نوع الخشب:</label>
-          <select class="form-control" style="min-width:190px;padding:4px 10px;font-size:0.82rem;" onchange="veneerFilterWood=this.value; render();">
-            <option value="all" ${veneerFilterWood === 'all' ? 'selected' : ''}>🌳 إجمالي جميع الأخشاب بالمخزن</option>
+          <label style="font-weight:700;font-size:0.8rem;">نوع الخشب:</label>
+          <select class="form-control" style="min-width:175px;padding:4px 10px;font-size:0.82rem;" onchange="veneerFilterWood=this.value; render();">
+            <option value="all" ${veneerFilterWood === 'all' ? 'selected' : ''}>🌳 جميع الأخشاب بالمخزن</option>
             ${state.catalog.woodTypes.map(w => `<option value="${w.id}" ${veneerFilterWood === w.id ? 'selected' : ''}>${w.name}</option>`).join('')}
+          </select>
+
+          <label style="font-weight:700;font-size:0.8rem;">المقاس:</label>
+          <select class="form-control" style="min-width:210px;padding:4px 10px;font-size:0.82rem;border-color:var(--primary);font-weight:700;" onchange="veneerFilterDimension=this.value; render();">
+            <option value="all" ${veneerFilterDimension === 'all' ? 'selected' : ''}>📐 كل المقاسات (المعتمد 125×250 + الخاصة)</option>
+            <option value="standard" ${veneerFilterDimension === 'standard' ? 'selected' : ''}>📏 المقاس المعتمد فقط (125×250 سم)</option>
+            <option value="custom" ${veneerFilterDimension === 'custom' ? 'selected' : ''}>✨ المقاسات الخاصة فقط (مقاسات الشركات)</option>
+            ${presetDims.filter(d => !d.isStandard).map(d => `<option value="${d.key}" ${veneerFilterDimension === d.key ? 'selected' : ''}>📐 مقاس خاص: ${d.label}</option>`).join('')}
           </select>
         </div>
 
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button class="btn btn-sm btn-primary" onclick="openAddThicknessModal()">➕ تخانة (قص/سدا)</button>
+          <button class="btn btn-sm btn-primary" onclick="openAddThicknessModal()">➕ تخانة محددة (قص/سدا)</button>
+          <button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openCustomDimensionsModal()">📐 إضافة مقاس خاص للشركات</button>
           <button class="btn btn-sm btn-accent" onclick="addGradePrompt()">➕ جودة جديدة</button>
           <button class="btn btn-sm btn-outline" onclick="openAddPalletModal()">📦 بالتة بالباركود</button>
         </div>
@@ -2522,7 +2700,7 @@ function renderFinishedVeneerWarehouse() {
       ${veneerViewMode === 'matrix' ? `
         <!-- TABLE 1: 2D WAREHOUSE STOCK MATRIX (THICKNESS [QAS/SADA] x GRADE) -->
         <div style="margin-bottom:6px;font-weight:800;font-size:0.9rem;color:var(--primary);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
-          <span>1️⃣ جدول أرصدة كميات القشرة بالقطعة (الفرخ) والمتر المكعب (م³)</span>
+          <span>1️⃣ جدول أرصدة كميات القشرة بالقطعة (الفرخ) والمتر المكعب (م³) — يدعم المقاس المعتمد (125×250 سم) والمقاسات الخاصة</span>
           <div style="display:flex;align-items:center;gap:6px;">
             <button class="btn btn-sm btn-outline" style="padding:3px 9px;font-size:0.74rem;border-color:var(--primary);color:var(--primary);" onclick="printVeneerQuantitiesMatrixPdf()">
               🖨️ طباعة / تصدير جدول الكميات PDF
@@ -2603,6 +2781,11 @@ function renderFinishedVeneerWarehouse() {
                           <span>(${fmtNum(cell.areaM2, 0)} م²)</span>
                           ${canSeeFinancialPrices() && cell.unitPiecePrice > 0 ? `<span style="color:var(--success);font-weight:700;">${fmtNum(cell.unitPiecePrice, 1)} ج</span>` : ''}
                         </div>
+                        ${cell.customDimBreakdown && cell.customDimBreakdown.length > 0 ? `
+                          <div style="margin-top:2px;font-size:0.62rem;background:#fef3c7;color:#b45309;border:1px solid #f59e0b;border-radius:4px;padding:1px 4px;font-weight:800;">
+                            📐 خاص: ${cell.customDimBreakdown.join(' | ')}
+                          </div>
+                        ` : ''}
                       ` : `
                         <div style="color:var(--text-muted);font-size:0.74rem;font-weight:600;">0</div>
                       `}
@@ -2809,6 +2992,7 @@ function renderFinishedVeneerWarehouse() {
                 <th>كود البالتة</th>
                 <th>التاريخ</th>
                 <th>نوع الخشب</th>
+                <th>المقاس (سم)</th>
                 <th>التخانة والاتجاه</th>
                 <th>الجودة / الفرز</th>
                 <th>عدد القطع (الأفرخ)</th>
@@ -2823,6 +3007,7 @@ function renderFinishedVeneerWarehouse() {
                   <td><strong>${p.palletCode}</strong><br/><small style="color:var(--text-muted);">${p.batchNumber || ''}</small></td>
                   <td>${fmtDate(p.operationDate || p.createdAt)}</td>
                   <td>${p.woodTypeName}</td>
+                  <td>${getVeneerDimensionBadgeHtml(p.lengthCm, p.widthCm)}</td>
                   <td>
                     <span class="badge badge-info">${p.thicknessMm} مم</span>
                     <span class="badge" style="background:${p.direction === 'sada' ? '#0284c7' : '#d97706'};color:#fff;">
@@ -2891,7 +3076,7 @@ function renderSalesReturnsSection() {
               <tr>
                 <th>رقم المرتجع والتاريخ</th>
                 <th>العميل</th>
-                <th>الصنف والتخانة والجودة</th>
+                <th>الصنف والمقاس والتخانة والجودة</th>
                 <th>الكمية المرتجعة</th>
                 ${showPrices ? '<th>قيمة المرتجع</th>' : ''}
                 <th>مسجل بواسطة / السبب</th>
@@ -2912,6 +3097,7 @@ function renderSalesReturnsSection() {
                     <td><strong>${r.clientName || 'عميل مبيعات'}</strong></td>
                     <td>
                       <strong>${r.woodTypeName || 'قشرة خشبية'}</strong><br/>
+                      ${getVeneerDimensionBadgeHtml(r.lengthCm, r.widthCm)}
                       <span class="badge badge-info">${r.thkMm} مم (${r.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص'})</span>
                       <span class="badge" style="background:#0f766e;color:#fff;">${r.gradeName || ''}</span>
                     </td>
@@ -3516,6 +3702,8 @@ function renderProduction() {
                 const st = ord.stage || ord.status || 'pending_executive';
                 const items = Array.isArray(ord.items) && ord.items.length > 0 ? ord.items : [{
                   woodTypeName: ord.woodTypeName || 'قشرة خشبية',
+                  lengthCm: ord.lengthCm || 250,
+                  widthCm: ord.widthCm || 125,
                   thicknessMm: ord.targetThicknessMm || 1.5,
                   direction: ord.targetDirection || 'qas',
                   gradeName: ord.gradeName || 'عام',
@@ -3545,6 +3733,7 @@ function renderProduction() {
                         ${items.map((it, idx) => `
                           <div style="font-size:0.74rem;background:var(--bg-elevated);padding:3px 6px;border-radius:5px;border-right:3px solid ${it.direction === 'sada' ? '#0284c7' : '#d97706'};">
                             <strong>${idx + 1}.</strong> <strong>${it.thicknessMm} مم (${it.direction === 'sada' ? 'سدا' : 'قص'})</strong> × <strong>${it.gradeName}</strong>
+                            ${getVeneerDimensionBadgeHtml(it.lengthCm, it.widthCm)}
                             — <strong>${fmtNum(it.sheetsCount, 0)} ق</strong>
                             ${canSeeFinancialPrices() ? `× ${fmtNum(it.unitPrice, 2)} ج = <strong>${fmtMoney(it.totalItemAmount)}</strong>` : `(${fmtNum(it.volumeM3 || 0, 3)} م³)`}
                           </div>
@@ -3729,7 +3918,7 @@ function renderApprovals() {
                     <td>
                       <strong>${items.length} بنود</strong> (${fmtNum(ord.totalSheetsCount || 0, 0)} ق | ${fmtNum(ord.totalVolumeM3 || 0, 3)} م³)<br/>
                       <small style="color:var(--text-muted);font-size:0.7rem;">
-                        ${items.map(i => `${i.thicknessMm}مم (${i.direction === 'sada' ? 'سدا' : 'قص'}) ${i.gradeName}: ${i.sheetsCount} ق`).join(' + ')}
+                        ${items.map(i => `${i.thicknessMm}مم (${i.direction === 'sada' ? 'سدا' : 'قص'}) ${i.gradeName} [${formatVeneerDimensions(i.lengthCm, i.widthCm, false)}]: ${i.sheetsCount} ق`).join(' + ')}
                       </small>
                     </td>
                     ${canSeeFinancialPrices() ? `
@@ -4268,6 +4457,35 @@ function renderCatalogSettings() {
           </tbody>
         </table>
       </div>
+
+      <!-- Approved & Custom Company Dimensions -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📐 مقاسات القشرة (المقاس المعتمد 125×250 سم + مقاسات الشركات الخاصة)</div>
+          <button class="btn btn-sm btn-primary" onclick="openCustomDimensionsModal()">➕ إدارة وإضافة مقاس خاص</button>
+        </div>
+        <table>
+          <thead>
+            <tr><th>المقاس (العرض × الطول)</th><th>مساحة الفرخ (م²)</th><th>النوع / الشركات</th></tr>
+          </thead>
+          <tbody>
+            ${getPresetVeneerDimensions().map(d => {
+              const area = +((Number(d.lengthCm) / 100) * (Number(d.widthCm) / 100)).toFixed(4);
+              return `
+                <tr>
+                  <td><strong>${d.widthCm} × ${d.lengthCm} سم</strong></td>
+                  <td>${area} م²</td>
+                  <td>
+                    ${d.isStandard
+                      ? `<span class="badge badge-success">المقاس المعتمد الأساسي</span>`
+                      : `<span class="badge" style="background:#7c3aed;color:#fff;">مقاس خاص للشركات</span> <small style="color:var(--text-muted);">${d.clientNote || ''}</small>`}
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
     </div>
   `;
 }
@@ -4406,12 +4624,16 @@ function openAddPalletModal() {
   const modalRoot = document.getElementById('modal-root');
   const nextNum = (state.pallets?.length || 0) + 1;
   const defaultCode = `PLT-2026-00${nextNum}`;
+  const presetDims = getPresetVeneerDimensions();
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box">
+      <div class="modal-box" style="max-width:720px;">
         <div class="card-header">
-          <div class="card-title">➕ إضافة بالتة قشرة خشبية جديدة (تاريخ حالي أو سابق)</div>
+          <div>
+            <div class="card-title">➕ إضافة بالتة قشرة خشبية جديدة (المقاس المعتمد 125×250 سم أو مقاس خاص للشركات وتخانة محددة)</div>
+            <small style="color:var(--text-muted);">يمكنك اختيار المقاس المعتمد (125×250 سم) أو إدخال أي مقاس خاص وتخانة محددة مطلوبة للشركات</small>
+          </div>
           <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
         </div>
 
@@ -4428,25 +4650,29 @@ function openAddPalletModal() {
             <div class="form-group">
               <label>نوع الخشب</label>
               <select id="plt-wood" class="form-control" required>
-                ${state.catalog.woodTypes.length === 0 ? `<option value="wt-general">قشرة خشبية عامة (250×125)</option>` : ''}
+                ${state.catalog.woodTypes.length === 0 ? `<option value="wt-general">قشرة خشبية عامة (125×250)</option>` : ''}
                 ${state.catalog.woodTypes.map(w => `<option value="${w.id}">${w.name}</option>`).join('')}
               </select>
             </div>
             <div class="form-group">
-              <label>التخانة والاتجاه (قص / سدا)</label>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">
+                <label style="margin:0;">التخانة والاتجاه (قص / سدا أو تخانة محددة)</label>
+                <button type="button" class="btn btn-sm btn-outline" style="padding:1px 6px;font-size:0.68rem;" onclick="const box=document.getElementById('plt-custom-thk-box'); box.style.display=box.style.display==='none'?'flex':'none';">
+                  ➕ تخانة محددة جديدة
+                </button>
+              </div>
               ${state.catalog.thicknesses.length > 0 ? `
                 <select id="plt-thk-id" class="form-control" onchange="recalcModalPallet()">
-                  ${state.catalog.thicknesses.map(t => `<option value="${t.id}" data-mm="${t.mm}" data-dir="${t.direction || 'qas'}" data-sheets="${t.standardSheetsPerPallet}">${t.mm} مم — ${t.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص'} (${t.label || ''})</option>`).join('')}
+                  ${getSortedThicknesses().map(t => `<option value="${t.id}" data-mm="${t.mm}" data-dir="${t.direction || 'qas'}" data-sheets="${t.standardSheetsPerPallet}">${t.mm} مم — ${t.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص'} (${t.label || ''})</option>`).join('')}
                 </select>
-              ` : `
-                <div style="display:flex;gap:6px;">
-                  <input id="plt-thk-mm" type="number" step="0.1" class="form-control" value="1.5" placeholder="مم" oninput="recalcModalPallet()" required />
-                  <select id="plt-thk-dir" class="form-control">
-                    <option value="qas">✂️ اتجاه قص</option>
-                    <option value="sada">📏 اتجاه سدا</option>
-                  </select>
-                </div>
-              `}
+              ` : ''}
+              <div id="plt-custom-thk-box" style="display:${state.catalog.thicknesses.length === 0 ? 'flex' : 'none'};gap:6px;margin-top:5px;background:rgba(124,58,237,0.08);padding:6px;border-radius:8px;border:1px dashed #7c3aed;">
+                <input id="plt-thk-mm" type="number" step="0.05" min="0.1" class="form-control" placeholder="اكتب التخانة بالـ مم (مثل 0.9 أو 1.8)" oninput="recalcModalPallet()" />
+                <select id="plt-thk-dir" class="form-control" style="max-width:130px;" onchange="recalcModalPallet()">
+                  <option value="qas">✂️ اتجاه قص</option>
+                  <option value="sada">📏 اتجاه سدا</option>
+                </select>
+              </div>
             </div>
             <div class="form-group">
               <label>درجة الجودة والفرز</label>
@@ -4456,7 +4682,7 @@ function openAddPalletModal() {
               </select>
             </div>
             <div class="form-group">
-              <label>عدد القطع (الأفرخ 250×125) في البالتة</label>
+              <label>عدد القطع (الأفرخ) في البالتة</label>
               <input id="plt-sheets" type="number" class="form-control" value="400" oninput="recalcModalPallet()" required />
             </div>
             ${canSeeFinancialPrices() ? `
@@ -4465,11 +4691,22 @@ function openAddPalletModal() {
               <input id="plt-piece-price" type="number" step="0.5" class="form-control" value="50" oninput="recalcModalPallet()" required />
             </div>
             ` : `<input id="plt-piece-price" type="hidden" value="0" />`}
-            <div class="form-group">
-              <label>الطول × العرض (سم)</label>
-              <div style="display:flex;gap:6px;">
-                <input id="plt-len" type="number" class="form-control" value="250" oninput="recalcModalPallet()" required />
-                <input id="plt-wid" type="number" class="form-control" value="125" oninput="recalcModalPallet()" required />
+            <div class="form-group" style="grid-column: span 2;background:rgba(15,118,110,0.06);padding:10px 12px;border-radius:10px;border:1px solid rgba(15,118,110,0.25);">
+              <label style="color:var(--primary);font-weight:800;">📐 مقاس القشرة (المقاس المعتمد 125 سم × 250 سم أو مقاس خاص للشركات)</label>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:4px;">
+                <select id="plt-dim-preset" class="form-control" style="max-width:280px;font-weight:800;" onchange="if(this.value!=='custom'){const [l,w]=this.value.split('x').map(Number);document.getElementById('plt-wid').value=w;document.getElementById('plt-len').value=l;recalcModalPallet();}">
+                  ${presetDims.map(d => `<option value="${d.lengthCm}x${d.widthCm}" ${d.isStandard ? 'selected' : ''}>${d.label}</option>`).join('')}
+                  <option value="custom">✏️ كتابة مقاس خاص آخر (العرض × الطول سم)...</option>
+                </select>
+                <div style="display:flex;align-items:center;gap:4px;">
+                  <span style="font-size:0.76rem;font-weight:700;">العرض (سم):</span>
+                  <input id="plt-wid" type="number" step="0.5" min="10" class="form-control" style="width:82px;font-weight:800;" value="125" oninput="document.getElementById('plt-dim-preset').value='custom'; recalcModalPallet();" required />
+                </div>
+                <span style="font-weight:900;">×</span>
+                <div style="display:flex;align-items:center;gap:4px;">
+                  <span style="font-size:0.76rem;font-weight:700;">الطول (سم):</span>
+                  <input id="plt-len" type="number" step="0.5" min="10" class="form-control" style="width:82px;font-weight:800;" value="250" oninput="document.getElementById('plt-dim-preset').value='custom'; recalcModalPallet();" required />
+                </div>
               </div>
             </div>
             <div class="form-group">
@@ -4477,7 +4714,7 @@ function openAddPalletModal() {
               <input id="plt-loc" class="form-control" value="عنبر أ - صف 1" />
             </div>
             <div class="form-group">
-              <label>رقم التشغيلة / الباتش</label>
+              <label>رقم التشغيلة / الباتش / اسم الشركة صاحبة المقاس</label>
               <input id="plt-batch" class="form-control" value="BATCH-26-01" />
             </div>
           </div>
@@ -4498,10 +4735,13 @@ function openAddPalletModal() {
 function recalcModalPallet() {
   const len = Number(document.getElementById('plt-len')?.value || 250);
   const wid = Number(document.getElementById('plt-wid')?.value || 125);
+  const customMmVal = Number(document.getElementById('plt-thk-mm')?.value || 0);
+  const customBox = document.getElementById('plt-custom-thk-box');
+  const useCustomThk = customBox && customBox.style.display !== 'none' && customMmVal > 0;
   const thkSel = document.getElementById('plt-thk-id');
-  const thk = thkSel
-    ? Number(thkSel.selectedOptions[0]?.dataset?.mm || 1.5)
-    : Number(document.getElementById('plt-thk-mm')?.value || 1.5);
+  const thk = useCustomThk
+    ? customMmVal
+    : (thkSel ? Number(thkSel.selectedOptions[0]?.dataset?.mm || 1.5) : (customMmVal || 1.5));
   const sheets = Number(document.getElementById('plt-sheets')?.value || 400);
   const piecePrice = Number(document.getElementById('plt-piece-price')?.value || 0);
   const m = calculateVeneerMetrics(len, wid, thk, sheets);
@@ -4509,7 +4749,8 @@ function recalcModalPallet() {
   const box = document.getElementById('plt-calc-preview');
   if (box) {
     box.innerHTML = `
-      <div class="calc-preview-item"><span>المساحة الإجمالية</span><strong>${fmtNum(m.totalAreaM2, 2)} م²</strong></div>
+      <div class="calc-preview-item"><span>المقاس والتخانة</span><strong>${formatVeneerDimensions(len, wid, true)} | ${thk} مم</strong></div>
+      <div class="calc-preview-item"><span>المساحة الإجمالية</span><strong>${fmtNum(m.totalAreaM2, 2)} م² (${fmtNum(m.sheetAreaM2, 4)} م²/فرخ)</strong></div>
       <div class="calc-preview-item"><span>الحجم الفعلي للبالتة</span><strong>${fmtNum(m.totalVolumeM3, 4)} م³</strong></div>
       ${canSeeFinancialPrices() ? `<div class="calc-preview-item"><span>القيمة بسعر القطعة (${fmtNum(piecePrice, 2)} ج)</span><strong>${fmtMoney(totalVal)}</strong></div>` : ''}
     `;
@@ -4522,32 +4763,39 @@ function submitAddPallet(e) {
   const code = document.getElementById('plt-code').value.trim();
   const woodId = document.getElementById('plt-wood').value;
   const woodObj = state.catalog.woodTypes.find(w => w.id === woodId);
-  const len = Number(document.getElementById('plt-len').value);
-  const wid = Number(document.getElementById('plt-wid').value);
-
-  const thkSel = document.getElementById('plt-thk-id');
-  let thkObj = null;
-  let thkMm = 1.5;
-  let direction = 'qas';
-  let thkId = '';
-
-  if (thkSel) {
-    thkId = thkSel.value;
-    thkObj = state.catalog.thicknesses.find(t => t.id === thkId);
-    thkMm = thkObj ? Number(thkObj.mm) : 1.5;
-    direction = thkObj ? (thkObj.direction || 'qas') : 'qas';
-  } else {
-    thkMm = Number(document.getElementById('plt-thk-mm')?.value || 1.5);
-    direction = document.getElementById('plt-thk-dir')?.value || 'qas';
-    thkId = `th-${thkMm}-${direction}`;
-  }
-
+  const len = Number(document.getElementById('plt-len').value || 250);
+  const wid = Number(document.getElementById('plt-wid').value || 125);
   const gradeId = document.getElementById('plt-grade').value;
   const gradeObj = state.catalog.grades.find(g => g.id === gradeId);
   const sheets = Number(document.getElementById('plt-sheets').value);
   const piecePrice = Number(document.getElementById('plt-piece-price').value || 0);
   const loc = document.getElementById('plt-loc').value.trim();
   const batch = document.getElementById('plt-batch').value.trim();
+
+  const customMmVal = Number(document.getElementById('plt-thk-mm')?.value || 0);
+  const customBox = document.getElementById('plt-custom-thk-box');
+  const useCustomThk = customBox && customBox.style.display !== 'none' && customMmVal > 0;
+  const thkSel = document.getElementById('plt-thk-id');
+  let thkObj = null;
+  let thkMm = 1.5;
+  let direction = 'qas';
+  let thkId = '';
+
+  if (useCustomThk || !thkSel) {
+    thkMm = customMmVal || 1.5;
+    direction = document.getElementById('plt-thk-dir')?.value || 'qas';
+    thkObj = ensureCatalogThicknessExists(thkMm, direction, piecePrice, gradeId);
+    thkId = thkObj ? thkObj.id : `th-${thkMm}-${direction}`;
+  } else {
+    thkId = thkSel.value;
+    thkObj = state.catalog.thicknesses.find(t => t.id === thkId);
+    thkMm = thkObj ? Number(thkObj.mm) : 1.5;
+    direction = thkObj ? (thkObj.direction || 'qas') : 'qas';
+  }
+
+  if (!isStandardVeneerDimension(len, wid)) {
+    ensureCustomDimensionInCatalog(len, wid, batch);
+  }
 
   const metrics = calculateVeneerMetrics(len, wid, thkMm, sheets);
   const now = new Date().toISOString();
@@ -4562,7 +4810,7 @@ function submitAddPallet(e) {
     id: uid('plt'),
     palletCode: code,
     woodTypeId: woodId,
-    woodTypeName: woodObj ? woodObj.name : 'قشرة خشبية (250×125)',
+    woodTypeName: woodObj ? woodObj.name : 'قشرة خشبية',
     lengthCm: len,
     widthCm: wid,
     thicknessId: thkId,
@@ -4597,19 +4845,21 @@ function submitAddPallet(e) {
     direction: 'in',
     directionLabel: 'إذن دخول منتج تام',
     cellKey: getCellPriceKey(thkId, gradeId),
+    lengthCm: len,
+    widthCm: wid,
     sheetsCount: sheets,
     unitSheetPrice: piecePrice,
     totalSaleAmount: +(sheets * piecePrice).toFixed(2),
-    itemSummary: `بالتة ${newPallet.woodTypeName} مقاس ${len}×${wid} سم - تخانة ${thkMm} مم (${dirLabel}) - ${newPallet.gradeName}`,
+    itemSummary: `بالتة ${newPallet.woodTypeName} مقاس (${formatVeneerDimensions(len, wid, true)}) - تخانة ${thkMm} مم (${dirLabel}) - ${newPallet.gradeName}`,
     referenceCode: code,
-    quantitySummary: `1 بالتة | ${sheets} قطعة | ${metrics.totalVolumeM3} م³`,
+    quantitySummary: `1 بالتة | ${sheets} قطعة (${formatVeneerDimensions(len, wid, false)}) | ${metrics.totalVolumeM3} م³`,
     performedBy: currentUser.name,
     approvedBy: currentUser.name,
     updatedAt: now
   });
 
   closeModal();
-  saveState(`إضافة بالتة قشرة جديدة كود ${code} بتاريخ ${opDate} (${sheets} قطعة - ${dirLabel})`);
+  saveState(`إضافة بالتة قشرة جديدة كود ${code} مقاس (${formatVeneerDimensions(len, wid, true)}) وتخانة ${thkMm} مم (${dirLabel}) بتاريخ ${opDate} (${sheets} قطعة)`);
 }
 
 // ============================================================================
@@ -4619,10 +4869,19 @@ let draftOrderItems = [];
 let draftOrderDiscountType = 'amount'; // 'amount' | 'percent'
 let draftOrderDiscountValue = 0;
 
-function getAvailableSheetsInCell(thkId, thkMm, direction, gradeId) {
+function getAvailableSheetsInCell(thkId, thkMm, direction, gradeId, lengthCm = 0, widthCm = 0) {
   const thkObj = state.catalog.thicknesses.find(t => t.id === thkId) || { id: thkId, mm: Number(thkMm || 1.5), direction: direction || 'qas' };
   return (state.pallets || [])
-    .filter(p => p.status === 'in_stock' && matchPalletToThicknessRow(p, thkObj) && (!gradeId || p.gradeId === gradeId))
+    .filter(p => {
+      if (p.status !== 'in_stock' || !matchPalletToThicknessRow(p, thkObj)) return false;
+      if (gradeId && p.gradeId !== gradeId) return false;
+      if (lengthCm > 0 && widthCm > 0 && !isStandardVeneerDimension(lengthCm, widthCm)) {
+        const pLen = Number(p.lengthCm || 250);
+        const pWid = Number(p.widthCm || 125);
+        return (pLen === Number(lengthCm) && pWid === Number(widthCm)) || (pLen === Number(widthCm) && pWid === Number(lengthCm));
+      }
+      return true;
+    })
     .reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
 }
 
@@ -4671,6 +4930,9 @@ function createDefaultDraftOrderItem() {
     id: uid('itm'),
     woodTypeId: firstWood.id,
     woodTypeName: firstWood.name,
+    lengthCm: 250,
+    widthCm: 125,
+    customThkMode: false,
     thicknessId: chosenThk.id,
     thicknessMm: Number(chosenThk.mm || 1.5),
     direction: chosenThk.direction || 'qas',
@@ -4702,12 +4964,12 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box" style="max-width:920px;">
+      <div class="modal-box" style="max-width:980px;">
         <div class="card-header">
           <div>
-            <div class="card-title">📋 أمر تجهيز طلبية للعميل + إصدار بيان للعميل (متعدد التخانات والجودات)</div>
+            <div class="card-title">📋 أمر تجهيز طلبية للعميل + إصدار بيان للعميل (المقاس المعتمد 125×250 سم أو مقاسات وتخانات خاصة للشركات)</div>
             <small style="color:var(--text-muted);">
-              يطلب المحاسب من أمين المخزن تجهيز الطلبية لصالح العميل المذكور (يمكن إضافة أكثر من تخانة [قص/سدا] وأكثر من جودة في نفس الطلبية مع تعديل الأسعار وعمل خصم)
+              المقاس المعتمد افتراضياً هو <strong>125 سم × 250 سم</strong>، ويمكنك لأي بند اختيار أو كتابة <strong>مقاس مختلف للشركات (العرض × الطول سم)</strong> أو كتابة <strong>تخانة محددة (مم)</strong> مع السعر التلقائي من الجدول
             </small>
           </div>
           <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
@@ -4748,10 +5010,10 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
           <div style="background:var(--bg-elevated);padding:14px;border-radius:12px;border:1px solid var(--border-color);margin-bottom:14px;">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
               <div>
-                <strong style="color:var(--primary);font-size:0.96rem;">🪵 بنود الطلبية (يمكن للعميل طلب أكثر من تخانة [قص/سدا] وأكثر من جودة في نفس الطلبية):</strong>
+                <strong style="color:var(--primary);font-size:0.92rem;">🪵 بنود الطلبية (المقاس المعتمد 125×250 سم أو مقاس خاص للشركات + تخانات محددة [قص/سدا] وجودات):</strong>
               </div>
               <button type="button" class="btn btn-sm btn-primary" onclick="addDraftOrderItemRow()">
-                ➕ إضافة تخانة / جودة أخرى للطلبية
+                ➕ إضافة بند (تخانة / مقاس / جودة أخرى) للطلبية
               </button>
             </div>
 
@@ -4773,7 +5035,7 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
             </div>
             <div class="form-group" style="grid-column: span 2;">
               <label>ملاحظات البيان والتجهيز لأمين المخزن</label>
-              <input id="ord-notes" class="form-control" placeholder="مثال: تجهيز على بالتات سليمة ومراجعة الفرز جيداً لصالح العميل..." />
+              <input id="ord-notes" class="form-control" placeholder="مثال: تجهيز بالمقاس والتخانة المحددة على بالتات سليمة ومراجعة الفرز..." />
             </div>
           </div>
 
@@ -4812,6 +5074,12 @@ function removeDraftOrderItemRow(idx) {
 function onDraftItemThicknessSelect(idx, thkId) {
   const item = draftOrderItems[idx];
   if (!item) return;
+  if (thkId === '__custom__') {
+    item.customThkMode = true;
+    renderDraftOrderItemsTable();
+    return;
+  }
+  item.customThkMode = false;
   const thkObj = (state.catalog.thicknesses || []).find(t => t.id === thkId);
   if (thkObj) {
     item.thicknessId = thkObj.id;
@@ -4820,6 +5088,30 @@ function onDraftItemThicknessSelect(idx, thkId) {
     item.directionLabel = thkObj.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص';
     // Automatically set unitPrice from the price table (جدول الأسعار) while keeping it editable
     item.unitPrice = getCellUnitPrice(item.thicknessId, item.gradeId, item.thicknessMm, item.direction);
+  }
+  renderDraftOrderItemsTable();
+}
+
+function toggleDraftItemCustomThk(idx) {
+  const item = draftOrderItems[idx];
+  if (!item) return;
+  item.customThkMode = !item.customThkMode;
+  renderDraftOrderItemsTable();
+}
+
+function onDraftItemDimensionPresetSelect(idx, presetVal) {
+  const item = draftOrderItems[idx];
+  if (!item) return;
+  if (presetVal === 'custom') {
+    item.customDimMode = true;
+    renderDraftOrderItemsTable();
+    return;
+  }
+  const [l, w] = String(presetVal).split('x').map(Number);
+  if (l > 0 && w > 0) {
+    item.lengthCm = l;
+    item.widthCm = w;
+    item.customDimMode = !isStandardVeneerDimension(l, w);
   }
   renderDraftOrderItemsTable();
 }
@@ -4849,17 +5141,28 @@ function updateDraftItemNumeric(idx, field, val) {
   const item = draftOrderItems[idx];
   if (!item) return;
   if (field === 'thicknessMm') {
-    item.thicknessMm = Number(val || 1.5);
-    item.thicknessId = `th-${item.thicknessMm}-${item.direction || 'qas'}`;
-    item.unitPrice = getCellUnitPrice(item.thicknessId, item.gradeId, item.thicknessMm, item.direction);
-    renderDraftOrderItemsTable();
+    const mmNum = Math.max(0.1, Number(val || 1.5));
+    item.thicknessMm = mmNum;
+    item.thicknessId = `th-${mmNum}-${item.direction || 'qas'}`;
+    const tblP = getCellUnitPrice(item.thicknessId, item.gradeId, item.thicknessMm, item.direction);
+    if (tblP > 0) item.unitPrice = tblP;
+    recalcDraftOrderTotals();
     return;
   } else if (field === 'direction') {
     item.direction = val;
     item.directionLabel = val === 'sada' ? 'اتجاه سدا' : 'اتجاه قص';
     item.thicknessId = `th-${item.thicknessMm}-${val}`;
-    item.unitPrice = getCellUnitPrice(item.thicknessId, item.gradeId, item.thicknessMm, item.direction);
+    const tblP = getCellUnitPrice(item.thicknessId, item.gradeId, item.thicknessMm, item.direction);
+    if (tblP > 0) item.unitPrice = tblP;
     renderDraftOrderItemsTable();
+    return;
+  } else if (field === 'widthCm') {
+    item.widthCm = Math.max(10, Number(val || 125));
+    recalcDraftOrderTotals();
+    return;
+  } else if (field === 'lengthCm') {
+    item.lengthCm = Math.max(10, Number(val || 250));
+    recalcDraftOrderTotals();
     return;
   } else if (field === 'gradeName') {
     item.gradeName = val;
@@ -4878,50 +5181,77 @@ function renderDraftOrderItemsTable() {
   const sortedThk = getSortedThicknesses();
   const hasCatalogThk = sortedThk.length > 0;
   const hasCatalogGrades = (state.catalog.grades || []).length > 0;
+  const presetDims = getPresetVeneerDimensions();
 
   container.innerHTML = `
     <table>
       <thead>
         <tr>
-          <th style="width:28px;">#</th>
-          <th>التخانة والاتجاه</th>
+          <th style="width:24px;">#</th>
+          <th>التخانة والاتجاه (أو تخانة محددة)</th>
+          <th>📐 المقاس (العرض × الطول سم)</th>
           <th>درجة الجودة</th>
           <th>المتاح</th>
           <th>الكمية (قطعة)</th>
           <th>💰 سعر القطعة (ج.م)</th>
           <th>إجمالي البند</th>
-          <th style="width:36px;">حذف</th>
+          <th style="width:32px;">حذف</th>
         </tr>
       </thead>
       <tbody>
         ${draftOrderItems.map((it, idx) => {
-          const avail = getAvailableSheetsInCell(it.thicknessId, it.thicknessMm, it.direction, it.gradeId);
+          const len = Number(it.lengthCm || 250);
+          const wid = Number(it.widthCm || 125);
+          const avail = getAvailableSheetsInCell(it.thicknessId, it.thicknessMm, it.direction, it.gradeId, len, wid);
           const tablePrice = getCellUnitPrice(it.thicknessId, it.gradeId, it.thicknessMm, it.direction);
           const itemTotal = +(Number(it.sheetsCount || 0) * Number(it.unitPrice || 0)).toFixed(2);
+          const dimKey = `${len}x${wid}`;
+          const matchedPreset = presetDims.some(d => `${d.lengthCm}x${d.widthCm}` === dimKey);
           return `
             <tr>
               <td><strong>${idx + 1}</strong></td>
               <td>
-                ${hasCatalogThk ? `
-                  <select class="form-control" onchange="onDraftItemThicknessSelect(${idx}, this.value)" style="font-weight:700;padding:4px 6px;font-size:0.76rem;">
-                    ${sortedThk.map(t => {
-                      const pForGrade = getCellUnitPrice(t.id, it.gradeId, t.mm, t.direction);
-                      return `
-                        <option value="${t.id}" ${t.id === it.thicknessId ? 'selected' : ''}>
-                          ${t.mm} مم (${t.direction === 'sada' ? 'سدا' : 'قص'})${pForGrade > 0 ? ' — ' + pForGrade + ' ج' : ''}
-                        </option>
-                      `;
-                    }).join('')}
-                  </select>
-                ` : `
-                  <div style="display:flex;gap:4px;">
-                    <input type="number" step="0.1" class="form-control" style="width:65px;padding:4px;" value="${it.thicknessMm}" oninput="updateDraftItemNumeric(${idx}, 'thicknessMm', this.value)" placeholder="مم" />
-                    <select class="form-control" style="padding:4px;" onchange="updateDraftItemNumeric(${idx}, 'direction', this.value)">
-                      <option value="qas" ${it.direction === 'qas' ? 'selected' : ''}>قص</option>
-                      <option value="sada" ${it.direction === 'sada' ? 'selected' : ''}>سدا</option>
+                ${hasCatalogThk && !it.customThkMode ? `
+                  <div style="display:flex;flex-direction:column;gap:3px;">
+                    <select class="form-control" onchange="onDraftItemThicknessSelect(${idx}, this.value)" style="font-weight:700;padding:3px 6px;font-size:0.75rem;">
+                      ${sortedThk.map(t => {
+                        const pForGrade = getCellUnitPrice(t.id, it.gradeId, t.mm, t.direction);
+                        return `
+                          <option value="${t.id}" ${t.id === it.thicknessId ? 'selected' : ''}>
+                            ${t.mm} مم (${t.direction === 'sada' ? 'سدا' : 'قص'})${pForGrade > 0 ? ' — ' + pForGrade + ' ج' : ''}
+                          </option>
+                        `;
+                      }).join('')}
+                      <option value="__custom__">➕ كتابة تخانة محددة أخرى (مم)...</option>
                     </select>
                   </div>
+                ` : `
+                  <div style="display:flex;flex-direction:column;gap:3px;">
+                    <div style="display:flex;gap:3px;align-items:center;">
+                      <input type="number" step="0.05" min="0.1" class="form-control" style="width:64px;padding:3px 5px;font-weight:800;border-color:#7c3aed;" value="${it.thicknessMm}" oninput="updateDraftItemNumeric(${idx}, 'thicknessMm', this.value)" placeholder="مم" title="التخانة المحددة بالمليمتر" />
+                      <select class="form-control" style="padding:3px 5px;font-size:0.74rem;font-weight:700;" onchange="updateDraftItemNumeric(${idx}, 'direction', this.value)">
+                        <option value="qas" ${it.direction === 'qas' ? 'selected' : ''}>قص</option>
+                        <option value="sada" ${it.direction === 'sada' ? 'selected' : ''}>سدا</option>
+                      </select>
+                      ${hasCatalogThk ? `<button type="button" class="btn btn-sm btn-outline" style="padding:1px 5px;font-size:0.65rem;" onclick="toggleDraftItemCustomThk(${idx})" title="العودة لقائمة التخانات">📋</button>` : ''}
+                    </div>
+                    <small style="font-size:0.64rem;color:#7c3aed;font-weight:700;">تخانة محددة (تضاف للجدول تلقائياً)</small>
+                  </div>
                 `}
+              </td>
+              <td>
+                <div style="display:flex;flex-direction:column;gap:3px;min-width:145px;">
+                  <select class="form-control" style="padding:3px 5px;font-size:0.73rem;font-weight:700;border-color:${isStandardVeneerDimension(len, wid) ? 'var(--border-color)' : '#7c3aed'};" onchange="onDraftItemDimensionPresetSelect(${idx}, this.value)">
+                    ${presetDims.map(d => `<option value="${d.lengthCm}x${d.widthCm}" ${!it.customDimMode && `${d.lengthCm}x${d.widthCm}` === dimKey ? 'selected' : ''}>${d.widthCm}×${d.lengthCm} سم ${d.isStandard ? '(معتمد)' : '(خاص)'}</option>`).join('')}
+                    <option value="custom" ${it.customDimMode || !matchedPreset ? 'selected' : ''}>📐 مقاس خاص للشركة (عرض×طول)...</option>
+                  </select>
+                  <div style="display:flex;align-items:center;gap:3px;">
+                    <input type="number" step="0.5" min="10" class="form-control" style="width:58px;padding:2px 4px;font-size:0.73rem;font-weight:800;text-align:center;" value="${wid}" oninput="updateDraftItemNumeric(${idx}, 'widthCm', this.value)" title="العرض بالسم" placeholder="العرض" />
+                    <span style="font-size:0.72rem;font-weight:800;">×</span>
+                    <input type="number" step="0.5" min="10" class="form-control" style="width:58px;padding:2px 4px;font-size:0.73rem;font-weight:800;text-align:center;" value="${len}" oninput="updateDraftItemNumeric(${idx}, 'lengthCm', this.value)" title="الطول بالسم" placeholder="الطول" />
+                    <small style="font-size:0.65rem;color:var(--text-muted);">سم</small>
+                  </div>
+                </div>
               </td>
               <td>
                 ${hasCatalogGrades ? `
@@ -4945,21 +5275,22 @@ function renderDraftOrderItemsTable() {
                 </span>
               </td>
               <td>
-                <input type="number" min="1" class="form-control" style="width:82px;padding:4px 6px;font-weight:800;" value="${it.sheetsCount}" oninput="updateDraftItemNumeric(${idx}, 'sheetsCount', this.value)" required />
+                <input type="number" min="1" class="form-control" style="width:76px;padding:4px 6px;font-weight:800;" value="${it.sheetsCount}" oninput="updateDraftItemNumeric(${idx}, 'sheetsCount', this.value)" required />
               </td>
               <td>
                 <div style="display:flex;flex-direction:column;gap:2px;">
-                  <input type="number" step="0.5" min="0" class="form-control" style="width:92px;padding:4px 6px;font-weight:800;border-color:var(--accent);" value="${it.unitPrice}" oninput="updateDraftItemNumeric(${idx}, 'unitPrice', this.value)" required />
-                  <small style="font-size:0.68rem;color:var(--text-muted);">
+                  <input type="number" step="0.5" min="0" class="form-control" style="width:86px;padding:4px 6px;font-weight:800;border-color:var(--accent);" value="${it.unitPrice}" oninput="updateDraftItemNumeric(${idx}, 'unitPrice', this.value)" required />
+                  <small style="font-size:0.66rem;color:var(--text-muted);">
                     الجدول: <strong style="color:var(--primary);">${fmtNum(tablePrice, 2)} ج</strong>
                     ${Number(it.unitPrice) !== Number(tablePrice) && tablePrice > 0 ? `
-                      <button type="button" class="btn btn-sm btn-outline" style="padding:0px 4px;font-size:0.64rem;" onclick="resetDraftItemToTablePrice(${idx})">🔄</button>
+                      <button type="button" class="btn btn-sm btn-outline" style="padding:0px 4px;font-size:0.62rem;" onclick="resetDraftItemToTablePrice(${idx})">🔄</button>
                     ` : ''}
                   </small>
                 </div>
               </td>
               <td>
-                <strong id="draft-item-total-${idx}" style="color:var(--primary);font-size:0.8rem;">${fmtMoney(itemTotal)}</strong>
+                <strong id="draft-item-total-${idx}" style="color:var(--primary);font-size:0.78rem;">${fmtMoney(itemTotal)}</strong>
+                <div id="draft-item-vol-${idx}" style="font-size:0.66rem;color:var(--text-muted);"></div>
               </td>
               <td>
                 <button type="button" class="btn btn-sm btn-danger" style="padding:2px 6px;" onclick="removeDraftOrderItemRow(${idx})">✕</button>
@@ -4981,8 +5312,12 @@ function recalcDraftOrderTotals() {
   let totalVolumeM3 = 0;
 
   draftOrderItems.forEach((it, idx) => {
-    const m = calculateVeneerMetrics(250, 125, it.thicknessMm, it.sheetsCount);
+    const len = Number(it.lengthCm || 250);
+    const wid = Number(it.widthCm || 125);
+    const m = calculateVeneerMetrics(len, wid, it.thicknessMm, it.sheetsCount);
     const rowAmt = +(Number(it.sheetsCount || 0) * Number(it.unitPrice || 0)).toFixed(2);
+    it.lengthCm = len;
+    it.widthCm = wid;
     it.areaM2 = m.totalAreaM2;
     it.volumeM3 = m.totalVolumeM3;
     it.totalItemAmount = rowAmt;
@@ -4994,6 +5329,8 @@ function recalcDraftOrderTotals() {
 
     const rowTotalEl = document.getElementById(`draft-item-total-${idx}`);
     if (rowTotalEl) rowTotalEl.textContent = fmtMoney(rowAmt);
+    const rowVolEl = document.getElementById(`draft-item-vol-${idx}`);
+    if (rowVolEl) rowVolEl.textContent = `${fmtNum(m.totalVolumeM3, 3)} م³ (${wid}×${len} سم)`;
   });
 
   subtotal = +subtotal.toFixed(2);
@@ -5013,7 +5350,7 @@ function recalcDraftOrderTotals() {
         <strong>${draftOrderItems.length} بنود (${fmtNum(totalSheets, 0)} قطعة)</strong>
       </div>
       <div class="calc-preview-item">
-        <span>إجمالي المساحة والحجم</span>
+        <span>إجمالي المساحة والحجم (حسب مقاس وتخانة كل بند)</span>
         <strong>${fmtNum(totalAreaM2, 2)} م² | ${fmtNum(totalVolumeM3, 4)} م³</strong>
       </div>
       <div class="calc-preview-item">
@@ -5063,6 +5400,22 @@ function submitNewClientOrderPrep(e) {
     };
     state.partners.push(clientObj);
   }
+
+  // Ensure any custom thickness or custom company dimension entered in the order is saved to catalog
+  draftOrderItems.forEach(it => {
+    const tObj = ensureCatalogThicknessExists(it.thicknessMm, it.direction || 'qas', it.unitPrice, it.gradeId);
+    if (tObj) {
+      it.thicknessId = tObj.id;
+      it.thicknessMm = Number(tObj.mm);
+      it.direction = tObj.direction || 'qas';
+      it.directionLabel = tObj.directionLabel;
+    }
+    it.lengthCm = Number(it.lengthCm || 250);
+    it.widthCm = Number(it.widthCm || 125);
+    if (!isStandardVeneerDimension(it.lengthCm, it.widthCm)) {
+      ensureCustomDimensionInCatalog(it.lengthCm, it.widthCm, clientObj.name);
+    }
+  });
 
   recalcDraftOrderTotals();
   const subtotalAmount = +draftOrderItems.reduce((s, i) => s + Number(i.totalItemAmount || 0), 0).toFixed(2);
@@ -5146,10 +5499,10 @@ function openClientOrderStatementModal(orderId) {
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box" style="max-width:940px;">
+      <div class="modal-box" style="max-width:960px;">
         <div class="card-header">
           <div>
-            <div class="card-title">${canSeeFinancialPrices() ? `📄 بيان للعميل بالطلبية (${ord.orderNumber}) — تعديل البيان والأسعار والخصم وإرجاع/تحديث أرصدة المخازن` : `📄 بيان كميات الطلبية للتجهيز بالمخزن (${ord.orderNumber}) — كميات فقط`}</div>
+            <div class="card-title">${canSeeFinancialPrices() ? `📄 بيان للعميل بالطلبية (${ord.orderNumber}) — تعديل البيان والمقاسات والتخانات والأسعار والخصم` : `📄 بيان كمياتومقاسات الطلبية للتجهيز بالمخزن (${ord.orderNumber}) — كميات فقط`}</div>
             <small style="color:var(--text-muted);">
               العميل: <strong>${ord.clientName} (${ord.clientCode || 'CL'})</strong> | التاريخ: <strong>${ord.date}</strong> | الحالة: ${getOrderStageBadge(ord)}
             </small>
@@ -5160,7 +5513,7 @@ function openClientOrderStatementModal(orderId) {
         ${ord.stage === 'completed' && isExec ? `
           <div style="background:rgba(2,132,199,0.1);border:2px solid #0284c7;padding:10px 14px;border-radius:10px;margin-bottom:12px;font-size:0.85rem;">
             🔄 <strong>صلاحية المدير التنفيذي / مدير المشروعات (تعديل مع إرجاع أرصدة المخازن تلقائياً):</strong><br/>
-            هذه الطلبية تم صرفها بالفعل من المخزن. عند تعديل أي كمية أو تخانة أو جودة وحفظ التعديل، سيقوم النظام <strong>بإرجاع الأرصدة القديمة للمخزن تلقائياً وخصم الأرصدة الجديدة</strong> وتحديث فاتورة العميل وإذن الصرف فوراً!
+            هذه الطلبية تم صرفها بالفعل من المخزن. عند تعديل أي كمية أو مقاس أو تخانة أو جودة وحفظ التعديل، سيقوم النظام <strong>بإرجاع الأرصدة القديمة للمخزن تلقائياً وخصم الأرصدة الجديدة</strong> وتحديث فاتورة العميل وإذن الصرف فوراً!
           </div>
         ` : ''}
 
@@ -5184,6 +5537,7 @@ function openClientOrderStatementModal(orderId) {
                 <tr>
                   <th style="width:28px;">#</th>
                   <th>التخانة والاتجاه</th>
+                  <th>📐 المقاس (العرض × الطول سم)</th>
                   <th>الجودة</th>
                   <th>الكمية (قطعة)</th>
                   <th>الحجم (م³)</th>
@@ -5193,14 +5547,20 @@ function openClientOrderStatementModal(orderId) {
               <tbody>
                 ${items.map((it, idx) => {
                   const curThkId = it.thicknessId || `th-${it.thicknessMm}-${it.direction || 'qas'}`;
+                  const len = Number(it.lengthCm || 250);
+                  const wid = Number(it.widthCm || 125);
                   return `
                   <tr>
                     <td><strong>${idx + 1}</strong></td>
                     <td>
-                      ${isExec ? `
-                        <select id="stmt-thk-${idx}" class="form-control" style="min-width:115px;padding:4px 6px;font-size:0.76rem;font-weight:700;" onchange="recalcStatementModalLive('${ord.id}', ${idx})">
-                          ${thicknesses.map(t => `<option value="${t.id}" ${t.id === curThkId ? 'selected' : ''}>${t.mm} مم (${t.direction === 'sada' ? 'سدا' : 'قص'})</option>`).join('')}
-                        </select>
+                      ${isExec || canSeeFinancialPrices() ? `
+                        <div style="display:flex;gap:3px;align-items:center;">
+                          <input id="stmt-thk-mm-${idx}" type="number" step="0.05" min="0.1" class="form-control" style="width:62px;padding:3px 5px;font-weight:800;" value="${it.thicknessMm}" oninput="recalcStatementModalLive('${ord.id}', ${idx})" title="التخانة بالـ مم" />
+                          <select id="stmt-thk-dir-${idx}" class="form-control" style="padding:3px 5px;font-size:0.74rem;font-weight:700;" onchange="recalcStatementModalLive('${ord.id}', ${idx})">
+                            <option value="qas" ${it.direction !== 'sada' ? 'selected' : ''}>قص</option>
+                            <option value="sada" ${it.direction === 'sada' ? 'selected' : ''}>سدا</option>
+                          </select>
+                        </div>
                       ` : `
                         <strong>${it.thicknessMm} مم</strong>
                         <span class="badge" style="background:${it.direction === 'sada' ? '#0284c7' : '#d97706'};color:#fff;margin-right:3px;">
@@ -5209,8 +5569,18 @@ function openClientOrderStatementModal(orderId) {
                       `}
                     </td>
                     <td>
+                      ${isExec || canSeeFinancialPrices() ? `
+                        <div style="display:flex;align-items:center;gap:3px;">
+                          <input id="stmt-wid-${idx}" type="number" step="0.5" min="10" class="form-control" style="width:58px;padding:3px 4px;font-weight:800;text-align:center;" value="${wid}" oninput="recalcStatementModalLive('${ord.id}')" title="العرض (سم)" />
+                          <span>×</span>
+                          <input id="stmt-len-${idx}" type="number" step="0.5" min="10" class="form-control" style="width:58px;padding:3px 4px;font-weight:800;text-align:center;" value="${len}" oninput="recalcStatementModalLive('${ord.id}')" title="الطول (سم)" />
+                          <small style="font-size:0.66rem;color:var(--text-muted);">سم</small>
+                        </div>
+                      ` : getVeneerDimensionBadgeHtml(len, wid)}
+                    </td>
+                    <td>
                       ${isExec ? `
-                        <select id="stmt-grd-${idx}" class="form-control" style="min-width:95px;padding:4px 6px;font-size:0.76rem;font-weight:700;" onchange="recalcStatementModalLive('${ord.id}', ${idx})">
+                        <select id="stmt-grd-${idx}" class="form-control" style="min-width:90px;padding:4px 6px;font-size:0.76rem;font-weight:700;" onchange="recalcStatementModalLive('${ord.id}', ${idx})">
                           ${grades.map(g => `<option value="${g.id}" ${g.id === it.gradeId ? 'selected' : ''}>${g.code}</option>`).join('')}
                         </select>
                       ` : `<strong>${it.gradeName}</strong>`}
@@ -5301,21 +5671,16 @@ function recalcStatementModalLive(orderId, changedRowIdx = null) {
   let totalVol = 0;
 
   items.forEach((it, idx) => {
-    const thkSel = document.getElementById(`stmt-thk-${idx}`);
+    const thkMmInput = document.getElementById(`stmt-thk-mm-${idx}`);
+    const thkDirInput = document.getElementById(`stmt-thk-dir-${idx}`);
     const grdSel = document.getElementById(`stmt-grd-${idx}`);
-    let thkMm = it.thicknessMm;
-    let thkDir = it.direction || 'qas';
-    const curThkId = thkSel ? thkSel.value : (it.thicknessId || `th-${it.thicknessMm}-${thkDir}`);
+    const thkMm = thkMmInput ? Math.max(0.1, Number(thkMmInput.value || it.thicknessMm || 1.5)) : Number(it.thicknessMm || 1.5);
+    const thkDir = thkDirInput ? (thkDirInput.value || 'qas') : (it.direction || 'qas');
+    const curThkId = `th-${thkMm}-${thkDir}`;
     const curGrdId = grdSel ? grdSel.value : it.gradeId;
-    if (thkSel) {
-      const tObj = (state.catalog?.thicknesses || []).find(t => t.id === thkSel.value);
-      if (tObj) {
-        thkMm = Number(tObj.mm);
-        thkDir = tObj.direction || 'qas';
-      }
-    }
+
     const autoPrice = getCellUnitPrice(curThkId, curGrdId, thkMm, thkDir);
-    if (changedRowIdx === idx) {
+    if (changedRowIdx === idx && autoPrice > 0) {
       const prInput = document.getElementById(`stmt-price-${idx}`);
       if (prInput) prInput.value = autoPrice;
     }
@@ -5324,9 +5689,11 @@ function recalcStatementModalLive(orderId, changedRowIdx = null) {
       hintEl.innerHTML = `سعر الجدول: <strong>${fmtNum(autoPrice, 2)} ج.م</strong>`;
     }
 
+    const len = Number(document.getElementById(`stmt-len-${idx}`)?.value ?? it.lengthCm ?? 250);
+    const wid = Number(document.getElementById(`stmt-wid-${idx}`)?.value ?? it.widthCm ?? 125);
     const sh = Number(document.getElementById(`stmt-sheets-${idx}`)?.value ?? it.sheetsCount ?? 0);
     const pr = Number(document.getElementById(`stmt-price-${idx}`)?.value ?? it.unitPrice ?? 0);
-    const m = calculateVeneerMetrics(250, 125, thkMm, sh);
+    const m = calculateVeneerMetrics(len, wid, thkMm, sh);
     const rowAmt = +(sh * pr).toFixed(2);
     subtotal += rowAmt;
     totalSheets += sh;
@@ -5386,7 +5753,9 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
           oldSh,
           `إرجاع رصيد لتعديل بيان الطلبية ${oldOrderNumber}`,
           ord.date || todayStr(),
-          Number(oldIt.unitPrice || 0)
+          Number(oldIt.unitPrice || 0),
+          Number(oldIt.lengthCm || 250),
+          Number(oldIt.widthCm || 125)
         );
       }
     }
@@ -5400,16 +5769,15 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
   const updatedItems = [];
 
   (ord.items || []).forEach((it, idx) => {
-    const thkSel = document.getElementById(`stmt-thk-${idx}`);
+    const thkMmInput = document.getElementById(`stmt-thk-mm-${idx}`);
+    const thkDirInput = document.getElementById(`stmt-thk-dir-${idx}`);
     const grdSel = document.getElementById(`stmt-grd-${idx}`);
-    if (thkSel) {
-      const tObj = (state.catalog?.thicknesses || []).find(t => t.id === thkSel.value);
-      if (tObj) {
-        it.thicknessId = tObj.id;
-        it.thicknessMm = Number(tObj.mm);
-        it.direction = tObj.direction || 'qas';
-      }
-    }
+    const lenInput = document.getElementById(`stmt-len-${idx}`);
+    const widInput = document.getElementById(`stmt-wid-${idx}`);
+
+    const sh = Math.max(0, Number(document.getElementById(`stmt-sheets-${idx}`)?.value ?? it.sheetsCount ?? 0));
+    const pr = Math.max(0, Number(document.getElementById(`stmt-price-${idx}`)?.value ?? it.unitPrice ?? 0));
+
     if (grdSel) {
       const gObj = (state.catalog?.grades || []).find(g => g.id === grdSel.value);
       if (gObj) {
@@ -5418,9 +5786,25 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
       }
     }
 
-    const sh = Math.max(0, Number(document.getElementById(`stmt-sheets-${idx}`)?.value ?? it.sheetsCount ?? 0));
-    const pr = Math.max(0, Number(document.getElementById(`stmt-price-${idx}`)?.value ?? it.unitPrice ?? 0));
-    const m = calculateVeneerMetrics(250, 125, it.thicknessMm, sh);
+    if (thkMmInput) {
+      const newMm = Math.max(0.1, Number(thkMmInput.value || it.thicknessMm || 1.5));
+      const newDir = thkDirInput ? (thkDirInput.value || 'qas') : (it.direction || 'qas');
+      const tObj = ensureCatalogThicknessExists(newMm, newDir, pr, it.gradeId);
+      it.thicknessMm = newMm;
+      it.direction = newDir;
+      it.directionLabel = newDir === 'sada' ? 'اتجاه سدا' : 'اتجاه قص';
+      it.thicknessId = tObj ? tObj.id : `th-${newMm}-${newDir}`;
+    }
+
+    const len = lenInput ? Math.max(10, Number(lenInput.value || 250)) : Number(it.lengthCm || 250);
+    const wid = widInput ? Math.max(10, Number(widInput.value || 125)) : Number(it.widthCm || 125);
+    it.lengthCm = len;
+    it.widthCm = wid;
+    if (!isStandardVeneerDimension(len, wid)) {
+      ensureCustomDimensionInCatalog(len, wid, ord.clientName);
+    }
+
+    const m = calculateVeneerMetrics(len, wid, it.thicknessMm, sh);
     it.sheetsCount = sh;
     it.unitPrice = pr;
     it.areaM2 = m.totalAreaM2;
@@ -5473,7 +5857,7 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
 
     for (const it of ord.items) {
       const thkId = it.thicknessId || `th-${it.thicknessMm}-${it.direction || 'qas'}`;
-      deductSheetsFromCellPallets(thkId, it.gradeId, it.woodTypeId || 'wt-general', Number(it.sheetsCount || 0), Number(it.unitPrice || 0));
+      deductSheetsFromCellPallets(thkId, it.gradeId, it.woodTypeId || 'wt-general', Number(it.sheetsCount || 0), Number(it.unitPrice || 0), Number(it.lengthCm || 250), Number(it.widthCm || 125));
 
       state.warehouseMovements.unshift({
         id: uid('mov'),
@@ -5485,12 +5869,14 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
         directionLabel: 'صرف طلبية للسيارة',
         movementCategory: 'sales_exit',
         cellKey: getCellPriceKey(thkId, it.gradeId),
+        lengthCm: Number(it.lengthCm || 250),
+        widthCm: Number(it.widthCm || 125),
         sheetsCount: Number(it.sheetsCount || 0),
         unitSheetPrice: Number(it.unitPrice || 0),
         totalSaleAmount: Number(it.totalItemAmount || 0),
-        itemSummary: `صرف طلبية (${ord.orderNumber}) للعميل ${ord.clientName} — تخانة ${it.thicknessMm} مم (${it.direction === 'sada' ? 'سدا' : 'قص'}) × ${it.gradeName} — سيارة رقم (${carPlate}) سائق (${driverName})`,
+        itemSummary: `صرف طلبية (${ord.orderNumber}) للعميل ${ord.clientName} — مقاس (${formatVeneerDimensions(it.lengthCm, it.widthCm, true)}) تخانة ${it.thicknessMm} مم (${it.direction === 'sada' ? 'سدا' : 'قص'}) × ${it.gradeName} — سيارة رقم (${carPlate}) سائق (${driverName})`,
         referenceCode: carPlate,
-        quantitySummary: `${it.sheetsCount} قطعة | ${it.volumeM3} م³`,
+        quantitySummary: `${it.sheetsCount} قطعة (${formatVeneerDimensions(it.lengthCm, it.widthCm, false)}) | ${it.volumeM3} م³`,
         performedBy: currentUser.name,
         approvedBy: currentUser.name,
         updatedAt: now
@@ -5501,7 +5887,7 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
   // 3) Sync linked financial invoice if order already passed accountant release
   const linkedTx = (state.financialTransactions || []).find(tx => tx.orderId === ord.id || tx.voucherNo === `INV-${oldOrderNumber}` || tx.voucherNo === `INV-${ord.orderNumber}`);
   if (linkedTx) {
-    const itemsSummary = (ord.items || []).map(i => `${i.sheetsCount} قطعة (${i.thicknessMm}مم ${i.direction === 'sada' ? 'سدا' : 'قص'} - ${i.gradeName})`).join(' + ');
+    const itemsSummary = (ord.items || []).map(i => `${i.sheetsCount} قطعة (${i.thicknessMm}مم ${i.direction === 'sada' ? 'سدا' : 'قص'} - ${i.gradeName} [${formatVeneerDimensions(i.lengthCm, i.widthCm, false)}])`).join(' + ');
     linkedTx.voucherNo = `INV-${ord.orderNumber}`;
     linkedTx.totalAmount = net;
     linkedTx.remainingAmount = Math.max(0, +(net - Number(linkedTx.paidAmount || 0)).toFixed(2));
@@ -5563,7 +5949,9 @@ function ensureOrderStockDeducted(ord, performedBy = '', opDate = '') {
     const sh = Number(it.sheetsCount || 0);
     if (sh <= 0) continue;
     const thkId = it.thicknessId || `th-${it.thicknessMm}-${it.direction || 'qas'}`;
-    deductSheetsFromCellPallets(thkId, it.gradeId, it.woodTypeId || 'wt-general', sh, Number(it.unitPrice || 0));
+    const len = Number(it.lengthCm || 250);
+    const wid = Number(it.widthCm || 125);
+    deductSheetsFromCellPallets(thkId, it.gradeId, it.woodTypeId || 'wt-general', sh, Number(it.unitPrice || 0), len, wid);
 
     state.warehouseMovements = state.warehouseMovements || [];
     state.warehouseMovements.unshift({
@@ -5576,12 +5964,14 @@ function ensureOrderStockDeducted(ord, performedBy = '', opDate = '') {
       directionLabel: 'خروج طلبية من المخزن',
       movementCategory: 'sales_exit',
       cellKey: getCellPriceKey(thkId, it.gradeId),
+      lengthCm: len,
+      widthCm: wid,
       sheetsCount: sh,
       unitSheetPrice: Number(it.unitPrice || 0),
       totalSaleAmount: Number(it.totalItemAmount || 0),
-      itemSummary: `خروج وصرف طلبية (${ord.orderNumber}) للعميل ${ord.clientName} — تخانة ${it.thicknessMm} مم (${it.direction === 'sada' ? 'سدا' : 'قص'}) × ${it.gradeName}${driverName !== '-' ? ' — سيارة رقم (' + carPlate + ') سائق (' + driverName + ')' : ''}`,
+      itemSummary: `خروج وصرف طلبية (${ord.orderNumber}) للعميل ${ord.clientName} — مقاس (${formatVeneerDimensions(len, wid, true)}) تخانة ${it.thicknessMm} مم (${it.direction === 'sada' ? 'سدا' : 'قص'}) × ${it.gradeName}${driverName !== '-' ? ' — سيارة رقم (' + carPlate + ') سائق (' + driverName + ')' : ''}`,
       referenceCode: carPlate,
-      quantitySummary: `${sh} قطعة | ${it.volumeM3} م³`,
+      quantitySummary: `${sh} قطعة (${formatVeneerDimensions(len, wid, false)}) | ${it.volumeM3} م³`,
       performedBy: actor,
       approvedBy: ord.executiveApprovedBy || actor,
       updatedAt: now
@@ -5739,7 +6129,7 @@ function submitAccountantRelease(e, orderId) {
   ensureOrderStockDeducted(ord, currentUser.name, relDate);
 
   // Record the official sales invoice in client's financial transactions
-  const itemsSummary = (ord.items || []).map(i => `${i.sheetsCount} قطعة (${i.thicknessMm}مم ${i.direction === 'sada' ? 'سدا' : 'قص'} - ${i.gradeName})`).join(' + ');
+  const itemsSummary = (ord.items || []).map(i => `${i.sheetsCount} قطعة (${i.thicknessMm}مم ${i.direction === 'sada' ? 'سدا' : 'قص'} - ${i.gradeName} [${formatVeneerDimensions(i.lengthCm, i.widthCm, false)}])`).join(' + ');
   state.financialTransactions.unshift({
     id: uid('fin'),
     voucherNo: `INV-${ord.orderNumber}`,
@@ -5798,6 +6188,7 @@ function openVehicleDispatchVoucherModal(orderId) {
           ${(ord.items || []).map((it, idx) => `
             <div style="font-size:0.86rem;padding:4px 0;border-bottom:1px dashed var(--border-color);">
               <strong>${idx + 1}.</strong> تخانة <strong>${it.thicknessMm} مم (${it.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص'})</strong> × جودة <strong>${it.gradeName}</strong>
+              ${getVeneerDimensionBadgeHtml(it.lengthCm, it.widthCm)}
               ⬅ الكمية: <strong>${fmtNum(it.sheetsCount, 0)} قطعة</strong> (${fmtNum(it.volumeM3, 4)} م³)
             </div>
           `).join('')}
@@ -5864,7 +6255,9 @@ function submitVehicleDispatchVoucher(e, orderId) {
   if (!ord.stockDeducted) {
     for (const it of (ord.items || [])) {
       const thkId = it.thicknessId || `th-${it.thicknessMm}-${it.direction || 'qas'}`;
-      deductSheetsFromCellPallets(thkId, it.gradeId, it.woodTypeId, Number(it.sheetsCount || 0), Number(it.unitPrice || 0));
+      const len = Number(it.lengthCm || 250);
+      const wid = Number(it.widthCm || 125);
+      deductSheetsFromCellPallets(thkId, it.gradeId, it.woodTypeId, Number(it.sheetsCount || 0), Number(it.unitPrice || 0), len, wid);
 
       state.warehouseMovements.unshift({
         id: uid('mov'),
@@ -5876,12 +6269,14 @@ function submitVehicleDispatchVoucher(e, orderId) {
         directionLabel: 'صرف طلبية للسيارة',
         movementCategory: 'sales_exit',
         cellKey: getCellPriceKey(thkId, it.gradeId),
+        lengthCm: len,
+        widthCm: wid,
         sheetsCount: Number(it.sheetsCount || 0),
         unitSheetPrice: Number(it.unitPrice || 0),
         totalSaleAmount: Number(it.totalItemAmount || 0),
-        itemSummary: `صرف طلبية (${ord.orderNumber}) للعميل ${ord.clientName} — تخانة ${it.thicknessMm} مم (${it.direction === 'sada' ? 'سدا' : 'قص'}) × ${it.gradeName} — سيارة رقم (${carPlateNumber}) سائق (${driverName})`,
+        itemSummary: `صرف طلبية (${ord.orderNumber}) للعميل ${ord.clientName} — مقاس (${formatVeneerDimensions(len, wid, true)}) تخانة ${it.thicknessMm} مم (${it.direction === 'sada' ? 'سدا' : 'قص'}) × ${it.gradeName} — سيارة رقم (${carPlateNumber}) سائق (${driverName})`,
         referenceCode: carPlateNumber,
-        quantitySummary: `${it.sheetsCount} قطعة | ${it.volumeM3} م³`,
+        quantitySummary: `${it.sheetsCount} قطعة (${formatVeneerDimensions(len, wid, false)}) | ${it.volumeM3} م³`,
         performedBy: currentUser.name,
         approvedBy: ord.accountantReleaseBy || currentUser.name,
         updatedAt: now
@@ -6294,7 +6689,7 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
                     <tr>
                       <th>الطلبية</th>
                       <th>التاريخ</th>
-                      <th>الأصناف (تخانة × جودة × كمية)</th>
+                      <th>الأصناف (تخانة × جودة × مقاس × كمية)</th>
                       <th>قبل الخصم</th>
                       <th>الخصم</th>
                       <th>الصافي</th>
@@ -6311,7 +6706,7 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
                           <td><strong>${o.orderNumber}</strong></td>
                           <td>${o.date}</td>
                           <td>
-                            ${items.map(i => `<div style="font-size:0.73rem;">• ${i.thicknessMm}مم (${i.direction === 'sada' ? 'سدا' : 'قص'}) × ${i.gradeName}: <strong>${i.sheetsCount} ق</strong> × ${i.unitPrice} ج = ${fmtMoney(i.totalItemAmount)}</div>`).join('')}
+                            ${items.map(i => `<div style="font-size:0.73rem;">• ${i.thicknessMm}مم (${i.direction === 'sada' ? 'سدا' : 'قص'}) × ${i.gradeName} <span style="color:var(--accent);">[${formatVeneerDimensions(i.lengthCm, i.widthCm, false)}]</span>: <strong>${i.sheetsCount} ق</strong> × ${i.unitPrice} ج = ${fmtMoney(i.totalItemAmount)}</div>`).join('')}
                           </td>
                           <td>${fmtMoney(o.subtotalAmount || o.netTotalAmount || 0)}</td>
                           <td style="color:var(--danger);">-${fmtMoney(o.discountAmount || 0)}</td>
@@ -6680,6 +7075,101 @@ function addWoodTypePrompt() {
   saveState(`إضافة نوع خشب جديد للكتالوج: ${name}`);
 }
 
+// Modal to manage and add Custom Company Dimensions (المقاس المعتمد 125×250 سم + مقاسات الشركات الخاصة)
+function openCustomDimensionsModal() {
+  const modalRoot = document.getElementById('modal-root');
+  const dims = getPresetVeneerDimensions();
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:680px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">📐 إدارة مقاسات القشرة (المقاس المعتمد 125×250 سم + مقاسات الشركات الخاصة)</div>
+            <small style="color:var(--text-muted);">المقاس المعتمد الأساسي للقشرة هو <strong>125 سم × 250 سم</strong>، ويمكنك هنا إضافة أي مقاسات خاصة تطلبها بعض الشركات لتظهر في قوائم أوامر التشغيل والمخازن</small>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <form onsubmit="submitAddCustomDimension(event)" style="background:var(--bg-elevated);padding:12px 14px;border-radius:10px;border:1px solid var(--border-color);margin-bottom:14px;">
+          <div style="font-weight:800;color:var(--primary);margin-bottom:8px;">➕ إضافة مقاس خاص جديد للشركات:</div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>العرض (سم) — مثال: 122 أو 110 أو 100</label>
+              <input id="cdim-wid" type="number" step="0.5" min="10" class="form-control" placeholder="مثال: 122" required autofocus />
+            </div>
+            <div class="form-group">
+              <label>الطول (سم) — مثال: 244 أو 220 أو 200</label>
+              <input id="cdim-len" type="number" step="0.5" min="10" class="form-control" placeholder="مثال: 244" required />
+            </div>
+            <div class="form-group" style="grid-column: span 2;">
+              <label>اسم الشركة / ملاحظة المقاس الخاص (اختياري)</label>
+              <input id="cdim-note" class="form-control" placeholder="مثال: مقاس خاص لشركة الكونتر / الأبواب..." />
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:10px;">
+            <button type="submit" class="btn btn-sm btn-primary">➕ حفظ المقاس الخاص في النظام</button>
+          </div>
+        </form>
+
+        <div class="table-responsive" style="max-height:45vh;overflow-y:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>المقاس (العرض × الطول)</th>
+                <th>مساحة الفرخ (م²)</th>
+                <th>التصنيف / البيان</th>
+                <th>إجراء</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${dims.map(d => {
+                const area = +((Number(d.lengthCm) / 100) * (Number(d.widthCm) / 100)).toFixed(4);
+                const isSavedCustom = (state.catalog?.customDimensions || []).some(cd => cd.id === d.id);
+                return `
+                  <tr>
+                    <td><strong>${d.widthCm} × ${d.lengthCm} سم</strong></td>
+                    <td>${area} م²</td>
+                    <td>
+                      ${d.isStandard
+                        ? `<span class="badge badge-success">المقاس المعتمد الأساسي</span>`
+                        : `<span class="badge" style="background:#7c3aed;color:#fff;">مقاس خاص للشركات</span> <small>${d.clientNote || ''}</small>`}
+                    </td>
+                    <td>
+                      ${isSavedCustom ? `<button type="button" class="btn btn-sm btn-danger" style="padding:2px 6px;font-size:0.68rem;" onclick="deleteCustomDimension('${d.id}')">🗑️ حذف</button>` : '-'}
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function submitAddCustomDimension(e) {
+  e.preventDefault();
+  const wid = Math.max(10, Number(document.getElementById('cdim-wid')?.value || 125));
+  const len = Math.max(10, Number(document.getElementById('cdim-len')?.value || 250));
+  const note = (document.getElementById('cdim-note')?.value || '').trim();
+  if (isStandardVeneerDimension(len, wid)) {
+    alert('المقاس 125 × 250 سم هو المقاس المعتمد الأساسي وموجود بالفعل!');
+    return;
+  }
+  ensureCustomDimensionInCatalog(len, wid, note);
+  saveState(`📐 إضافة مقاس قشرة خاص للشركات: ${wid}×${len} سم ${note ? '(' + note + ')' : ''}`);
+  openCustomDimensionsModal();
+}
+
+function deleteCustomDimension(dimId) {
+  if (!state.catalog?.customDimensions) return;
+  markRecordIdDeleted(dimId);
+  state.catalog.customDimensions = state.catalog.customDimensions.filter(d => d.id !== dimId);
+  saveState(`🗑️ حذف مقاس خاص من قائمة المقاسات`);
+  openCustomDimensionsModal();
+}
+
 // Modal to add Thickness asking whether it is Cut (قص) or Warp (سدا) or Both
 function openAddThicknessModal() {
   const modalRoot = document.getElementById('modal-root');
@@ -6999,6 +7489,8 @@ function openMatrixCellModal(thkIdOrMm, gradeId, defaultOp = 'in') {
     gradeId: gradeObj.id,
     gradeName: gradeObj.name,
     gradeCode: gradeObj.code,
+    lengthCm: 250,
+    widthCm: 125,
     unitPiecePrice,
     defaultPrice: gradeObj.defaultPricePerM3,
     currentSheets,
@@ -7019,17 +7511,21 @@ function renderMatrixCellModalUI(selectedWoodId, defaultSheets = 400) {
   const clients = (state.partners || []).filter(pt => pt.type === 'client');
   const thicknesses = getSortedThicknesses();
   const grades = state.catalog?.grades || [];
+  const presetDims = getPresetVeneerDimensions();
+  const curLen = Number(ctx.lengthCm || 250);
+  const curWid = Number(ctx.widthCm || 125);
+  const curDimKey = `${curLen}x${curWid}`;
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box">
+      <div class="modal-box" style="max-width:780px;">
         <div class="card-header">
           <div>
             <div class="card-title">
               🪵 حركة كميات المخزن: تخانة (${ctx.thkMm} مم — <span style="color:${isSada ? '#0284c7' : '#d97706'};">${ctx.directionLabel}</span>) × جودة (${ctx.gradeName})
             </div>
             <small style="color:var(--text-muted);">
-              المقاس: 250 × 125 سم | الرصيد المتاح حالياً بالخلية: <strong>${fmtNum(ctx.currentSheets, 0)} قطعة (${fmtNum(ctx.currentM3, 4)} م³)</strong>
+              المقاس المعتمد: 125 × 250 سم (مع دعم المقاسات والتخانات الخاصة للشركات) | الرصيد المتاح بالخلية: <strong>${fmtNum(ctx.currentSheets, 0)} قطعة (${fmtNum(ctx.currentM3, 4)} م³)</strong>
               ${canSeeFinancialPrices() ? `| سعر القطعة: <strong>${fmtNum(ctx.unitPiecePrice, 2)} ج.م</strong>` : ''}
             </small>
           </div>
@@ -7067,10 +7563,22 @@ function renderMatrixCellModalUI(selectedWoodId, defaultSheets = 400) {
         <form onsubmit="submitMatrixCellOperation(event)">
           <div class="form-grid">
             <div class="form-group">
-              <label style="font-weight:800;">التخانة والاتجاه (قص / سدا)</label>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">
+                <label style="font-weight:800;margin:0;">التخانة والاتجاه (قص / سدا)</label>
+                <button type="button" class="btn btn-sm btn-outline" style="padding:1px 6px;font-size:0.68rem;" onclick="const b=document.getElementById('cell-custom-thk-box'); b.style.display=b.style.display==='none'?'flex':'none';">
+                  ➕ تخانة محددة جديدة
+                </button>
+              </div>
               <select id="cell-select-thk" class="form-control" style="font-weight:800;" onchange="switchMatrixModalCell(this.value, '${ctx.gradeId}')">
                 ${thicknesses.map(t => `<option value="${t.id}" ${t.id === ctx.thkId ? 'selected' : ''}>${t.mm} مم — ${t.direction === 'sada' ? '📏 اتجاه سدا' : '✂️ اتجاه قص'}</option>`).join('')}
               </select>
+              <div id="cell-custom-thk-box" style="display:none;gap:5px;margin-top:5px;background:rgba(124,58,237,0.08);padding:6px;border-radius:8px;border:1px dashed #7c3aed;">
+                <input id="cell-custom-thk-mm" type="number" step="0.05" min="0.1" class="form-control" placeholder="التخانة المحددة (مم)" oninput="updateMatrixCellModalPreview()" />
+                <select id="cell-custom-thk-dir" class="form-control" style="max-width:120px;" onchange="updateMatrixCellModalPreview()">
+                  <option value="qas" ${ctx.direction !== 'sada' ? 'selected' : ''}>✂️ قص</option>
+                  <option value="sada" ${ctx.direction === 'sada' ? 'selected' : ''}>📏 سدا</option>
+                </select>
+              </div>
             </div>
 
             <div class="form-group">
@@ -7078,6 +7586,26 @@ function renderMatrixCellModalUI(selectedWoodId, defaultSheets = 400) {
               <select id="cell-select-grade" class="form-control" style="font-weight:800;" onchange="switchMatrixModalCell('${ctx.thkId}', this.value)">
                 ${grades.map(g => `<option value="${g.id}" ${g.id === ctx.gradeId ? 'selected' : ''}>${g.name} (${g.code})</option>`).join('')}
               </select>
+            </div>
+
+            <!-- Dimension Selector (Standard 125x250 cm or Custom Company Dimension) -->
+            <div class="form-group" style="grid-column: span 2;background:rgba(15,118,110,0.06);padding:8px 12px;border-radius:10px;border:1px solid rgba(15,118,110,0.25);">
+              <label style="color:var(--primary);font-weight:800;">📐 مقاس القشرة (المقاس المعتمد 125 سم × 250 سم أو مقاس مختلف للشركات)</label>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:4px;">
+                <select id="cell-dim-preset" class="form-control" style="max-width:270px;font-weight:800;" onchange="if(this.value!=='custom'){const [l,w]=this.value.split('x').map(Number);document.getElementById('cell-wid').value=w;document.getElementById('cell-len').value=l;activeCellContext.lengthCm=l;activeCellContext.widthCm=w;updateMatrixCellModalPreview();}">
+                  ${presetDims.map(d => `<option value="${d.lengthCm}x${d.widthCm}" ${`${d.lengthCm}x${d.widthCm}` === curDimKey ? 'selected' : ''}>${d.label}</option>`).join('')}
+                  <option value="custom">✏️ كتابة مقاس خاص آخر للشركة (العرض × الطول)...</option>
+                </select>
+                <div style="display:flex;align-items:center;gap:4px;">
+                  <span style="font-size:0.75rem;font-weight:700;">العرض (سم):</span>
+                  <input id="cell-wid" type="number" step="0.5" min="10" class="form-control" style="width:78px;font-weight:800;" value="${curWid}" oninput="document.getElementById('cell-dim-preset').value='custom'; activeCellContext.widthCm=Number(this.value||125); updateMatrixCellModalPreview();" required />
+                </div>
+                <span style="font-weight:900;">×</span>
+                <div style="display:flex;align-items:center;gap:4px;">
+                  <span style="font-size:0.75rem;font-weight:700;">الطول (سم):</span>
+                  <input id="cell-len" type="number" step="0.5" min="10" class="form-control" style="width:78px;font-weight:800;" value="${curLen}" oninput="document.getElementById('cell-dim-preset').value='custom'; activeCellContext.lengthCm=Number(this.value||250); updateMatrixCellModalPreview();" required />
+                </div>
+              </div>
             </div>
 
             <div class="form-group">
@@ -7088,14 +7616,14 @@ function renderMatrixCellModalUI(selectedWoodId, defaultSheets = 400) {
             <div class="form-group">
               <label>نوع الخشب</label>
               <select id="cell-wood" class="form-control" required>
-                ${state.catalog.woodTypes.length === 0 ? `<option value="wt-general">قشرة خشبية عامة (250×125)</option>` : ''}
+                ${state.catalog.woodTypes.length === 0 ? `<option value="wt-general">قشرة خشبية عامة (125×250)</option>` : ''}
                 ${state.catalog.woodTypes.map(w => `<option value="${w.id}" ${w.id === selectedWoodId ? 'selected' : ''}>${w.name}</option>`).join('')}
               </select>
             </div>
 
             <div class="form-group">
               <label style="font-weight:800;">
-                ${ctx.op === 'in' ? '📥 كمية الإنتاج الواردة للمخزن (عدد القطع / الأفرخ 250×125)' :
+                ${ctx.op === 'in' ? '📥 كمية الإنتاج الواردة للمخزن (عدد القطع / الأفرخ)' :
                   ctx.op === 'sales_return' ? '🔄 كمية مرتجع المبيعات المطلوبة للإرجاع للمخزن (عدد القطع)' :
                   ctx.op === 'out' ? '📤 الكمية الخارجة حسب المبيعات (عدد القطع)' :
                   ctx.op === 'rework' ? '♻️ الكمية الخارجة لإعادة التشغيل (عدد القطع)' :
@@ -7134,7 +7662,7 @@ function renderMatrixCellModalUI(selectedWoodId, defaultSheets = 400) {
 
           ${ctx.op === 'rework' ? `
             <div class="card" style="margin-top:14px;background:var(--bg-elevated);padding:14px;">
-              <div style="font-weight:800;margin-bottom:10px;color:var(--primary);">♻️ تفاصيل ناتج إعادة التشغيل (تحويل لخلية أخرى / هالك):</div>
+              <div style="font-weight:800;margin-bottom:10px;color:var(--primary);">♻️ تفاصيل ناتج إعادة التشغيل (تحويل لخلية أخرى / مقاس جديد / هالك):</div>
               <div class="form-grid">
                 <div class="form-group">
                   <label>التخانة والاتجاه الجديد بعد إعادة التشغيل</label>
@@ -7160,7 +7688,7 @@ function renderMatrixCellModalUI(selectedWoodId, defaultSheets = 400) {
           ` : ''}
 
           <div class="form-group" style="margin-top:12px;">
-            <label>البيان / الملاحظات (رقم التشغيلة أو سبب المرتجع أو رقم الطلبية)</label>
+            <label>البيان / الملاحظات (رقم التشغيلة أو اسم الشركة صاحبة المقاس أو سبب المرتجع)</label>
             <input id="cell-notes" class="form-control" placeholder="${
               ctx.op === 'in' ? 'مثال: إضافة كميات إنتاج جديدة للمخزن...' :
               ctx.op === 'sales_return' ? 'مثال: مرتجع مبيعات من عميل بانتظار موافقة الإدارة/الحسابات...' :
@@ -7189,10 +7717,23 @@ function renderMatrixCellModalUI(selectedWoodId, defaultSheets = 400) {
   updateMatrixCellModalPreview();
 }
 
+function getEffectiveCellModalThicknessAndDimensions() {
+  if (!activeCellContext) return { len: 250, wid: 125, thkMm: 1.5, thkDir: 'qas', useCustomThk: false };
+  const len = Math.max(10, Number(document.getElementById('cell-len')?.value || activeCellContext.lengthCm || 250));
+  const wid = Math.max(10, Number(document.getElementById('cell-wid')?.value || activeCellContext.widthCm || 125));
+  const customBox = document.getElementById('cell-custom-thk-box');
+  const customMmVal = Number(document.getElementById('cell-custom-thk-mm')?.value || 0);
+  const useCustomThk = Boolean(customBox && customBox.style.display !== 'none' && customMmVal > 0);
+  const thkMm = useCustomThk ? customMmVal : Number(activeCellContext.thkMm || 1.5);
+  const thkDir = useCustomThk ? (document.getElementById('cell-custom-thk-dir')?.value || activeCellContext.direction || 'qas') : (activeCellContext.direction || 'qas');
+  return { len, wid, thkMm, thkDir, useCustomThk };
+}
+
 function syncSheetsFromM3Input(m3Val) {
   if (!activeCellContext) return;
   const vol = Number(m3Val || 0);
-  const sheetVol = 2.5 * 1.25 * (activeCellContext.thkMm / 1000);
+  const { len, wid, thkMm } = getEffectiveCellModalThicknessAndDimensions();
+  const sheetVol = (len / 100) * (wid / 100) * (thkMm / 1000);
   const sheets = sheetVol > 0 ? Math.round(vol / sheetVol) : 0;
   const sheetsInput = document.getElementById('cell-sheets');
   if (sheetsInput) {
@@ -7204,9 +7745,10 @@ function syncSheetsFromM3Input(m3Val) {
 function updateMatrixCellModalPreview(updateM3Box = true) {
   if (!activeCellContext) return;
   const ctx = activeCellContext;
+  const { len, wid, thkMm } = getEffectiveCellModalThicknessAndDimensions();
   const sheets = Number(document.getElementById('cell-sheets')?.value || 0);
   const unitPrice = Number(document.getElementById('cell-unit-price')?.value || 0);
-  const m = calculateVeneerMetrics(250, 125, ctx.thkMm, sheets);
+  const m = calculateVeneerMetrics(len, wid, thkMm, sheets);
   if (updateM3Box) {
     const m3Input = document.getElementById('cell-m3-input');
     if (m3Input) m3Input.value = m.totalVolumeM3;
@@ -7217,7 +7759,7 @@ function updateMatrixCellModalPreview(updateM3Box = true) {
   else if (ctx.op === 'out' || ctx.op === 'rework') afterSheets = Math.max(0, ctx.currentSheets - sheets);
   else if (ctx.op === 'set') afterSheets = sheets;
 
-  const afterM = calculateVeneerMetrics(250, 125, ctx.thkMm, afterSheets);
+  const afterM = calculateVeneerMetrics(len, wid, thkMm, afterSheets);
   const totalOperationMoney = +(sheets * unitPrice).toFixed(2);
   const afterStockMoney = +(afterSheets * unitPrice).toFixed(2);
 
@@ -7225,8 +7767,8 @@ function updateMatrixCellModalPreview(updateM3Box = true) {
   if (previewEl) {
     previewEl.innerHTML = `
       <div class="calc-preview-item">
-        <span>كمية الحركة (قطعة 250×125)</span>
-        <strong>${fmtNum(sheets, 0)} قطعة (${fmtNum(m.totalVolumeM3, 4)} م³)</strong>
+        <span>كمية الحركة (${formatVeneerDimensions(len, wid, true)})</span>
+        <strong>${fmtNum(sheets, 0)} قطعة (${fmtNum(m.totalAreaM2, 2)} م² | ${fmtNum(m.totalVolumeM3, 4)} م³)</strong>
       </div>
       ${canSeeFinancialPrices() ? `
       <div class="calc-preview-item">
@@ -7248,7 +7790,7 @@ function updateMatrixCellModalPreview(updateM3Box = true) {
   }
 }
 
-function deductSheetsFromCellPallets(thkId, gradeId, woodId, sheetsToDeduct, unitPrice = 0) {
+function deductSheetsFromCellPallets(thkId, gradeId, woodId, sheetsToDeduct, unitPrice = 0, targetLenCm = 0, targetWidCm = 0) {
   let remaining = Number(sheetsToDeduct);
   const thkObj = state.catalog.thicknesses.find(t => t.id === thkId) || { id: thkId, mm: activeCellContext?.thkMm || 1.5, direction: activeCellContext?.direction || 'qas' };
   const candidates = (state.pallets || []).filter(p =>
@@ -7257,7 +7799,17 @@ function deductSheetsFromCellPallets(thkId, gradeId, woodId, sheetsToDeduct, uni
     matchPalletToGrade(p, gradeId)
   );
 
-  candidates.sort((a, b) => (a.woodTypeId === woodId ? -1 : 1));
+  // Prefer pallets matching requested dimension (if custom dimension specified) and wood type
+  candidates.sort((a, b) => {
+    if (targetLenCm > 0 && targetWidCm > 0) {
+      const aMatchDim = (Number(a.lengthCm || 250) === Number(targetLenCm) && Number(a.widthCm || 125) === Number(targetWidCm)) ||
+                        (Number(a.lengthCm || 250) === Number(targetWidCm) && Number(a.widthCm || 125) === Number(targetLenCm));
+      const bMatchDim = (Number(b.lengthCm || 250) === Number(targetLenCm) && Number(b.widthCm || 125) === Number(targetWidCm)) ||
+                        (Number(b.lengthCm || 250) === Number(targetWidCm) && Number(b.widthCm || 125) === Number(targetLenCm));
+      if (aMatchDim !== bMatchDim) return aMatchDim ? -1 : 1;
+    }
+    return (a.woodTypeId === woodId ? -1 : 1);
+  });
 
   for (const p of candidates) {
     if (remaining <= 0) break;
@@ -7288,17 +7840,19 @@ function deductSheetsFromCellPallets(thkId, gradeId, woodId, sheetsToDeduct, uni
   }
 }
 
-function addSheetsToCellPallets(thkId, gradeId, woodId, sheetsToAdd, notes = '', opDate = todayStr(), unitPrice = 0) {
+function addSheetsToCellPallets(thkId, gradeId, woodId, sheetsToAdd, notes = '', opDate = todayStr(), unitPrice = 0, lengthCm = 250, widthCm = 125) {
   if (sheetsToAdd <= 0) return;
+  const len = Number(lengthCm || 250);
+  const wid = Number(widthCm || 125);
   const thkObj = state.catalog.thicknesses.find(t => t.id === thkId) || {
     id: thkId,
     mm: activeCellContext?.thkMm || 1.5,
     direction: activeCellContext?.direction || 'qas',
     directionLabel: activeCellContext?.directionLabel || 'اتجاه قص'
   };
-  const woodObj = state.catalog.woodTypes.find(w => w.id === woodId) || state.catalog.woodTypes[0] || { id: 'wt-general', name: 'قشرة خشبية (250×125)' };
+  const woodObj = state.catalog.woodTypes.find(w => w.id === woodId) || state.catalog.woodTypes[0] || { id: 'wt-general', name: 'قشرة خشبية' };
   const gradeObj = state.catalog.grades.find(g => g.id === gradeId || g.code === gradeId || g.name === gradeId) || state.catalog.grades[0] || { id: gradeId, code: 'A', name: 'عام', defaultPricePerM3: 20000 };
-  const m = calculateVeneerMetrics(250, 125, thkObj.mm, sheetsToAdd);
+  const m = calculateVeneerMetrics(len, wid, thkObj.mm, sheetsToAdd);
   const now = new Date().toISOString();
   const code = `PLT-2026-00${(state.pallets?.length || 0) + 1}`;
   const effectiveUnitPrice = unitPrice > 0 ? unitPrice : getCellUnitPrice(thkId, gradeId);
@@ -7306,13 +7860,17 @@ function addSheetsToCellPallets(thkId, gradeId, woodId, sheetsToAdd, notes = '',
     ? +(sheetsToAdd * effectiveUnitPrice).toFixed(2)
     : +(m.totalVolumeM3 * (gradeObj.defaultPricePerM3 || 20000)).toFixed(2);
 
+  if (!isStandardVeneerDimension(len, wid)) {
+    ensureCustomDimensionInCatalog(len, wid, notes);
+  }
+
   state.pallets.unshift({
     id: uid('plt'),
     palletCode: code,
     woodTypeId: woodObj.id,
     woodTypeName: woodObj.name,
-    lengthCm: 250,
-    widthCm: 125,
+    lengthCm: len,
+    widthCm: wid,
     thicknessId: thkObj.id,
     thicknessMm: Number(thkObj.mm),
     direction: thkObj.direction || 'qas',
@@ -7342,13 +7900,31 @@ function submitMatrixCellOperation(e) {
   const ctx = activeCellContext;
   const opDate = document.getElementById('cell-date')?.value || todayStr();
   const woodId = document.getElementById('cell-wood').value;
-  const woodObj = state.catalog.woodTypes.find(w => w.id === woodId) || state.catalog.woodTypes[0] || { id: 'wt-general', name: 'قشرة خشبية (250×125)' };
+  const woodObj = state.catalog.woodTypes.find(w => w.id === woodId) || state.catalog.woodTypes[0] || { id: 'wt-general', name: 'قشرة خشبية' };
   const sheets = Number(document.getElementById('cell-sheets').value || 0);
   const unitPrice = Math.max(0, Number(document.getElementById('cell-unit-price')?.value || ctx.unitPiecePrice || 0));
   const notes = document.getElementById('cell-notes').value.trim();
   const now = new Date().toISOString();
-  const m = calculateVeneerMetrics(250, 125, ctx.thkMm, sheets);
+
+  const { len, wid, thkMm, thkDir, useCustomThk } = getEffectiveCellModalThicknessAndDimensions();
+  if (useCustomThk) {
+    const ensured = ensureCatalogThicknessExists(thkMm, thkDir, unitPrice, ctx.gradeId);
+    if (ensured) {
+      ctx.thkId = ensured.id;
+      ctx.thkMm = Number(ensured.mm);
+      ctx.direction = ensured.direction || 'qas';
+      ctx.directionLabel = ensured.directionLabel;
+    }
+  }
+  ctx.lengthCm = len;
+  ctx.widthCm = wid;
+  if (!isStandardVeneerDimension(len, wid)) {
+    ensureCustomDimensionInCatalog(len, wid, notes);
+  }
+
+  const m = calculateVeneerMetrics(len, wid, ctx.thkMm, sheets);
   const cellKey = getCellPriceKey(ctx.thkId, ctx.gradeId);
+  const dimLabel = formatVeneerDimensions(len, wid, true);
 
   // Persist unit piece price in the mirror table automatically if user has financial permission
   if (unitPrice > 0 && canSeeFinancialPrices()) {
@@ -7364,7 +7940,7 @@ function submitMatrixCellOperation(e) {
       alert('يرجى إدخال عدد قطع أكبر من صفر!');
       return;
     }
-    addSheetsToCellPallets(ctx.thkId, ctx.gradeId, woodId, sheets, notes || 'إضافة كميات إنتاج', opDate, unitPrice);
+    addSheetsToCellPallets(ctx.thkId, ctx.gradeId, woodId, sheets, notes || 'إضافة كميات إنتاج', opDate, unitPrice, len, wid);
     state.warehouseMovements.unshift({
       id: uid('mov'),
       voucherNumber: `IN-${Date.now().toString().slice(-5)}`,
@@ -7375,18 +7951,20 @@ function submitMatrixCellOperation(e) {
       directionLabel: 'إضافة كميات إنتاج',
       movementCategory: 'production_in',
       cellKey,
+      lengthCm: len,
+      widthCm: wid,
       sheetsCount: sheets,
       unitSheetPrice: unitPrice,
       totalSaleAmount: totalAmount,
-      itemSummary: `إضافة كميات إنتاج قشرة ${woodObj.name} — تخانة ${ctx.thkMm} مم (${ctx.directionLabel}) × ${ctx.gradeName} (${notes || 'إنتاج جديد'})`,
+      itemSummary: `إضافة كميات إنتاج قشرة ${woodObj.name} — مقاس (${dimLabel}) — تخانة ${ctx.thkMm} مم (${ctx.directionLabel}) × ${ctx.gradeName} (${notes || 'إنتاج جديد'})`,
       referenceCode: `${ctx.thkMm}mm-${ctx.direction}-${ctx.gradeCode}`,
-      quantitySummary: `${sheets} قطعة | ${m.totalVolumeM3} م³`,
+      quantitySummary: `${sheets} قطعة (${formatVeneerDimensions(len, wid, false)}) | ${m.totalVolumeM3} م³`,
       performedBy: currentUser.name,
       approvedBy: currentUser.name,
       updatedAt: now
     });
     closeModal();
-    saveState(`📥 إضافة كميات إنتاج (${sheets} قطعة — ${m.totalVolumeM3} م³) بتاريخ ${opDate} لخلية تخانة ${ctx.thkMm} مم (${ctx.directionLabel}) × ${ctx.gradeName}`);
+    saveState(`📥 إضافة كميات إنتاج (${sheets} قطعة — مقاس ${dimLabel} — ${m.totalVolumeM3} م³) بتاريخ ${opDate} لخلية تخانة ${ctx.thkMm} مم (${ctx.directionLabel}) × ${ctx.gradeName}`);
     return;
   }
 
@@ -7405,6 +7983,8 @@ function submitMatrixCellOperation(e) {
       clientName,
       woodTypeId: woodObj.id,
       woodTypeName: woodObj.name,
+      lengthCm: len,
+      widthCm: wid,
       thkId: ctx.thkId,
       thkMm: ctx.thkMm,
       direction: ctx.direction,
@@ -7433,7 +8013,7 @@ function submitMatrixCellOperation(e) {
 
     closeModal();
     saveState(
-      `🔄 تسجيل طلب مرتجع مبيعات رقم (${retNum}) من العميل (${clientName}) بكمية (${sheets} قطعة — تخانة ${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName}) — بانتظار موافقة (المدير التنفيذي أو مدير المشروعات أو المحاسب فقط) ليدخل المخزن مرة أخرى`
+      `🔄 تسجيل طلب مرتجع مبيعات رقم (${retNum}) من العميل (${clientName}) بكمية (${sheets} قطعة — مقاس ${dimLabel} — تخانة ${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName}) — بانتظار موافقة (المدير التنفيذي أو مدير المشروعات أو المحاسب فقط) ليدخل المخزن مرة أخرى`
     );
     return;
   }
@@ -7445,7 +8025,7 @@ function submitMatrixCellOperation(e) {
       return;
     }
     const clientName = (document.getElementById('cell-client-name')?.value || 'عميل مبيعات قشرة').trim();
-    deductSheetsFromCellPallets(ctx.thkId, ctx.gradeId, woodId, sheets, unitPrice);
+    deductSheetsFromCellPallets(ctx.thkId, ctx.gradeId, woodId, sheets, unitPrice, len, wid);
 
     const voucherNo = `OUT-${Date.now().toString().slice(-5)}`;
     state.warehouseMovements.unshift({
@@ -7458,12 +8038,14 @@ function submitMatrixCellOperation(e) {
       directionLabel: 'خروج حسب المبيعات',
       movementCategory: 'sales_exit',
       cellKey,
+      lengthCm: len,
+      widthCm: wid,
       sheetsCount: sheets,
       unitSheetPrice: unitPrice,
       totalSaleAmount: totalAmount,
-      itemSummary: `خروج كميات حسب المبيعات — قشرة ${woodObj.name} تخانة ${ctx.thkMm} مم (${ctx.directionLabel}) × ${ctx.gradeName} للعميل (${clientName}) ${notes ? '— ' + notes : ''}`,
+      itemSummary: `خروج كميات حسب المبيعات — قشرة ${woodObj.name} مقاس (${dimLabel}) تخانة ${ctx.thkMm} مم (${ctx.directionLabel}) × ${ctx.gradeName} للعميل (${clientName}) ${notes ? '— ' + notes : ''}`,
       referenceCode: `${ctx.thkMm}mm-${ctx.direction}-${ctx.gradeCode}`,
-      quantitySummary: `${sheets} قطعة | ${m.totalVolumeM3} م³`,
+      quantitySummary: `${sheets} قطعة (${formatVeneerDimensions(len, wid, false)}) | ${m.totalVolumeM3} م³`,
       performedBy: currentUser.name,
       approvedBy: currentUser.name,
       updatedAt: now
@@ -7478,7 +8060,7 @@ function submitMatrixCellOperation(e) {
         type: 'sales_invoice',
         typeLabel: 'فاتورة مبيعات قشرة من المخزن',
         partnerName: clientName,
-        description: `بيع ${sheets} قطعة قشرة (${ctx.thkMm} مم ${ctx.directionLabel} - جودة ${ctx.gradeName}) بسعر ${unitPrice} ج للقطعة ${notes ? '— ' + notes : ''}`,
+        description: `بيع ${sheets} قطعة قشرة مقاس (${dimLabel}) (${ctx.thkMm} مم ${ctx.directionLabel} - جودة ${ctx.gradeName}) بسعر ${unitPrice} ج للقطعة ${notes ? '— ' + notes : ''}`,
         totalAmount,
         paidAmount: totalAmount,
         remainingAmount: 0,
@@ -7491,7 +8073,7 @@ function submitMatrixCellOperation(e) {
     }
 
     closeModal();
-    saveState(`📤 خروج كميات حسب المبيعات (${sheets} قطعة — ${m.totalVolumeM3} م³) من خلية (${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName}) للعميل (${clientName}) بتاريخ ${opDate}`);
+    saveState(`📤 خروج كميات حسب المبيعات (${sheets} قطعة — مقاس ${dimLabel} — ${m.totalVolumeM3} م³) من خلية (${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName}) للعميل (${clientName}) بتاريخ ${opDate}`);
     return;
   }
 
@@ -7508,17 +8090,17 @@ function submitMatrixCellOperation(e) {
     const targetGradeObj = state.catalog.grades.find(g => g.id === targetGradeId) || state.catalog.grades[0] || { id: targetGradeId, code: 'A', name: 'عام' };
 
     // 1. Deduct from source cell
-    deductSheetsFromCellPallets(ctx.thkId, ctx.gradeId, woodId, sheets, unitPrice);
+    deductSheetsFromCellPallets(ctx.thkId, ctx.gradeId, woodId, sheets, unitPrice, len, wid);
 
     // 2. Add good output sheets to target cell
     if (goodSheets > 0) {
       const targetUnitPrice = getCellUnitPrice(targetThkObj.id, targetGradeId) || unitPrice;
-      addSheetsToCellPallets(targetThkObj.id, targetGradeId, woodId, goodSheets, `ناتج إعادة تشغيل (${notes || ''})`, opDate, targetUnitPrice);
+      addSheetsToCellPallets(targetThkObj.id, targetGradeId, woodId, goodSheets, `ناتج إعادة تشغيل (${notes || ''})`, opDate, targetUnitPrice, len, wid);
     }
 
     // 3. Calculate scrap/waste difference and add to Scrap Warehouse
     const scrapSheets = Math.max(0, sheets - goodSheets);
-    const scrapMetrics = calculateVeneerMetrics(250, 125, ctx.thkMm, scrapSheets);
+    const scrapMetrics = calculateVeneerMetrics(len, wid, ctx.thkMm, scrapSheets);
     if (scrapMetrics.totalVolumeM3 > 0 && state.scrapItems?.length > 0) {
       state.scrapItems[0].quantity = +(Number(state.scrapItems[0].quantity) + scrapMetrics.totalVolumeM3).toFixed(3);
       state.scrapItems[0].updatedAt = now;
@@ -7534,19 +8116,21 @@ function submitMatrixCellOperation(e) {
       directionLabel: 'خروج لإعادة التشغيل',
       movementCategory: 'rework',
       cellKey,
+      lengthCm: len,
+      widthCm: wid,
       sheetsCount: sheets,
       unitSheetPrice: unitPrice,
       totalSaleAmount: 0,
-      itemSummary: `خروج لإعادة التشغيل: سحب ${sheets} قطعة (${ctx.thkMm}مم ${ctx.directionLabel}) ⬅ ناتج سليم ${goodSheets} قطعة (${targetThkObj.mm}مم ${targetGradeObj.code}) + هالك ${scrapMetrics.totalVolumeM3} م³`,
+      itemSummary: `خروج لإعادة التشغيل: سحب ${sheets} قطعة مقاس (${dimLabel}) (${ctx.thkMm}مم ${ctx.directionLabel}) ⬅ ناتج سليم ${goodSheets} قطعة (${targetThkObj.mm}مم ${targetGradeObj.code}) + هالك ${scrapMetrics.totalVolumeM3} م³`,
       referenceCode: `REWORK-${ctx.thkMm}mm`,
-      quantitySummary: `${sheets} قطعة (${m.totalVolumeM3} م³)`,
+      quantitySummary: `${sheets} قطعة (${formatVeneerDimensions(len, wid, false)}) (${m.totalVolumeM3} م³)`,
       performedBy: currentUser.name,
       approvedBy: currentUser.name,
       updatedAt: now
     });
 
     closeModal();
-    saveState(`♻️ خروج كميات لإعادة التشغيل (${sheets} قطعة) بتاريخ ${opDate} من خلية (${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName})`);
+    saveState(`♻️ خروج كميات لإعادة التشغيل (${sheets} قطعة — مقاس ${dimLabel}) بتاريخ ${opDate} من خلية (${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName})`);
     return;
   }
 
@@ -7558,9 +8142,9 @@ function submitMatrixCellOperation(e) {
     }
     const diff = sheets - ctx.currentSheets;
     if (diff > 0) {
-      addSheetsToCellPallets(ctx.thkId, ctx.gradeId, woodId, diff, notes || 'تسوية رصيد / رصيد سابق', opDate, unitPrice);
+      addSheetsToCellPallets(ctx.thkId, ctx.gradeId, woodId, diff, notes || 'تسوية رصيد / رصيد سابق', opDate, unitPrice, len, wid);
     } else if (diff < 0) {
-      deductSheetsFromCellPallets(ctx.thkId, ctx.gradeId, woodId, Math.abs(diff), unitPrice);
+      deductSheetsFromCellPallets(ctx.thkId, ctx.gradeId, woodId, Math.abs(diff), unitPrice, len, wid);
     }
     state.warehouseMovements.unshift({
       id: uid('mov'),
@@ -7572,18 +8156,20 @@ function submitMatrixCellOperation(e) {
       directionLabel: 'تعديل رصيد مباشر',
       movementCategory: 'adjustment',
       cellKey,
+      lengthCm: len,
+      widthCm: wid,
       sheetsCount: Math.abs(diff),
       unitSheetPrice: unitPrice,
       totalSaleAmount: +(Math.abs(diff) * unitPrice).toFixed(2),
-      itemSummary: `تعديل/إثبات رصيد خلية (${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName}) من ${ctx.currentSheets} قطعة إلى ${sheets} قطعة ${notes ? '— ' + notes : ''}`,
+      itemSummary: `تعديل/إثبات رصيد خلية (${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName}) مقاس (${dimLabel}) من ${ctx.currentSheets} قطعة إلى ${sheets} قطعة ${notes ? '— ' + notes : ''}`,
       referenceCode: `ADJ-${ctx.thkMm}mm-${ctx.direction}`,
-      quantitySummary: `${sheets} قطعة | ${m.totalVolumeM3} م³`,
+      quantitySummary: `${sheets} قطعة (${formatVeneerDimensions(len, wid, false)}) | ${m.totalVolumeM3} م³`,
       performedBy: currentUser.name,
       approvedBy: currentUser.name,
       updatedAt: now
     });
     closeModal();
-    saveState(`تعديل رصيد خلية (${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName}) بتاريخ ${opDate} إلى ${sheets} قطعة`);
+    saveState(`تعديل رصيد خلية (${ctx.thkMm} مم ${ctx.directionLabel} × ${ctx.gradeName}) مقاس (${dimLabel}) بتاريخ ${opDate} إلى ${sheets} قطعة`);
   }
 }
 
@@ -7608,6 +8194,9 @@ function approveSalesReturn(retId) {
   const unitPrice = Number(ret.unitPrice || getCellUnitPrice(ret.thkId, ret.gradeId) || 0);
   const totalReturnAmount = +(Number(ret.sheetsCount || 0) * unitPrice).toFixed(2);
   const cellKey = getCellPriceKey(ret.thkId, ret.gradeId);
+  const retLen = Number(ret.lengthCm || 250);
+  const retWid = Number(ret.widthCm || 125);
+  const dimLabel = formatVeneerDimensions(retLen, retWid, true);
 
   // 1) Add returned quantity back into the warehouse stock cell!
   addSheetsToCellPallets(
@@ -7617,7 +8206,9 @@ function approveSalesReturn(retId) {
     Number(ret.sheetsCount || 0),
     `مرتجع مبيعات معتمد (${ret.returnNumber}) — العميل: ${ret.clientName || ''}`,
     opDate,
-    unitPrice
+    unitPrice,
+    retLen,
+    retWid
   );
 
   // 2) Record official warehouse movement (RET-...)
@@ -7632,12 +8223,14 @@ function approveSalesReturn(retId) {
     directionLabel: 'دخول مرتجع مبيعات معتمد',
     movementCategory: 'sales_return_in',
     cellKey,
+    lengthCm: retLen,
+    widthCm: retWid,
     sheetsCount: Number(ret.sheetsCount || 0),
     unitSheetPrice: unitPrice,
     totalSaleAmount: totalReturnAmount,
-    itemSummary: `دخول مرتجع مبيعات معتمد (${ret.returnNumber}) من العميل (${ret.clientName || 'عميل'}) — تخانة ${ret.thkMm} مم (${ret.directionLabel || ''}) × ${ret.gradeName || ''} — بموافقة: ${currentUser.name}`,
+    itemSummary: `دخول مرتجع مبيعات معتمد (${ret.returnNumber}) من العميل (${ret.clientName || 'عميل'}) — مقاس (${dimLabel}) تخانة ${ret.thkMm} مم (${ret.directionLabel || ''}) × ${ret.gradeName || ''} — بموافقة: ${currentUser.name}`,
     referenceCode: ret.returnNumber,
-    quantitySummary: `${ret.sheetsCount} قطعة | ${ret.volumeM3} م³`,
+    quantitySummary: `${ret.sheetsCount} قطعة (${formatVeneerDimensions(retLen, retWid, false)}) | ${ret.volumeM3} م³`,
     performedBy: ret.requestedBy || currentUser.name,
     approvedBy: currentUser.name,
     updatedAt: now
@@ -8218,8 +8811,8 @@ function printPalletTag(palletId) {
         <tr>
           <td style="border:1px solid #000;padding:10px;font-weight:700;background:#f1f5f9;">نوع الخشب:</td>
           <td style="border:1px solid #000;padding:10px;font-weight:800;font-size:18px;">${p.woodTypeName}</td>
-          <td style="border:1px solid #000;padding:10px;font-weight:700;background:#f1f5f9;">المقاس الطبيعي:</td>
-          <td style="border:1px solid #000;padding:10px;font-weight:800;font-size:18px;">${p.lengthCm} × ${p.widthCm} سم</td>
+          <td style="border:1px solid #000;padding:10px;font-weight:700;background:#f1f5f9;">المقاس (العرض × الطول):</td>
+          <td style="border:1px solid #000;padding:10px;font-weight:800;font-size:18px;">${formatVeneerDimensions(p.lengthCm, p.widthCm, true)}</td>
         </tr>
         <tr>
           <td style="border:1px solid #000;padding:10px;font-weight:700;background:#f1f5f9;">التخانة (مم):</td>
@@ -8353,7 +8946,7 @@ function printClientOrderStatement(orderId) {
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #000;padding-bottom:12px;margin-bottom:16px;">
         <div>
           <h1 style="margin:0;font-size:22px;">${state.factoryInfo.name}</h1>
-          <p style="margin:4px 0 0;font-size:14px;">بيان طلبية وأمر تجهيز قشرة خشبية للعميل (250×125 سم)</p>
+          <p style="margin:4px 0 0;font-size:14px;">بيان طلبية وأمر تجهيز قشرة خشبية للعميل (المقاس المعتمد 125×250 سم أو مقاس خاص)</p>
         </div>
         ${getPrintTopLeftLogoHtml(`
           <div><strong>رقم الطلبية:</strong> ${ord.orderNumber}</div>
@@ -8373,7 +8966,8 @@ function printClientOrderStatement(orderId) {
             <th style="border:1px solid #000;padding:7px;">التخانة (مم)</th>
             <th style="border:1px solid #000;padding:7px;">الاتجاه (قص / سدا)</th>
             <th style="border:1px solid #000;padding:7px;">درجة الجودة</th>
-            <th style="border:1px solid #000;padding:7px;">الكمية (قطعة 250×125)</th>
+            <th style="border:1px solid #000;padding:7px;">المقاس (العرض × الطول)</th>
+            <th style="border:1px solid #000;padding:7px;">الكمية (قطعة)</th>
             <th style="border:1px solid #000;padding:7px;">الحجم (م³)</th>
             ${showPrices ? `
               <th style="border:1px solid #000;padding:7px;">سعر القطعة</th>
@@ -8388,6 +8982,7 @@ function printClientOrderStatement(orderId) {
               <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.thicknessMm} مم</td>
               <td style="border:1px solid #000;padding:7px;">${it.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص'}</td>
               <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.gradeName}</td>
+              <td style="border:1px solid #000;padding:7px;font-weight:700;">${formatVeneerDimensions(it.lengthCm, it.widthCm, true)}</td>
               <td style="border:1px solid #000;padding:7px;font-weight:700;">${fmtNum(it.sheetsCount, 0)} قطعة</td>
               <td style="border:1px solid #000;padding:7px;">${fmtNum(it.volumeM3, 4)} م³</td>
               ${showPrices ? `
@@ -8478,7 +9073,8 @@ function printVehicleDispatchVoucher(orderId) {
             <th style="border:1px solid #000;padding:7px;">#</th>
             <th style="border:1px solid #000;padding:7px;">التخانة والاتجاه (قص / سدا)</th>
             <th style="border:1px solid #000;padding:7px;">درجة الجودة</th>
-            <th style="border:1px solid #000;padding:7px;">الكمية المحملة (قطعة 250×125)</th>
+            <th style="border:1px solid #000;padding:7px;">المقاس (العرض × الطول)</th>
+            <th style="border:1px solid #000;padding:7px;">الكمية المحملة (قطعة)</th>
             <th style="border:1px solid #000;padding:7px;">المساحة (م²)</th>
             <th style="border:1px solid #000;padding:7px;">الحجم (م³)</th>
           </tr>
@@ -8489,6 +9085,7 @@ function printVehicleDispatchVoucher(orderId) {
               <td style="border:1px solid #000;padding:7px;text-align:center;">${idx + 1}</td>
               <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.thicknessMm} مم (${it.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص'})</td>
               <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.gradeName}</td>
+              <td style="border:1px solid #000;padding:7px;font-weight:700;">${formatVeneerDimensions(it.lengthCm, it.widthCm, true)}</td>
               <td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtNum(it.sheetsCount, 0)} قطعة</td>
               <td style="border:1px solid #000;padding:7px;">${fmtNum(it.areaM2, 2)} م²</td>
               <td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtNum(it.volumeM3, 4)} م³</td>
@@ -8558,7 +9155,7 @@ function printClientFullStatement(clientId) {
             <tr>
               <td style="border:1px solid #000;padding:6px;">${o.orderNumber}</td>
               <td style="border:1px solid #000;padding:6px;">${o.date}</td>
-              <td style="border:1px solid #000;padding:6px;">${(o.items || []).map(i => `${i.thicknessMm}مم (${i.direction === 'sada' ? 'سدا' : 'قص'}) ${i.gradeName}: ${i.sheetsCount} ق`).join(' + ')}</td>
+              <td style="border:1px solid #000;padding:6px;">${(o.items || []).map(i => `${i.thicknessMm}مم (${i.direction === 'sada' ? 'سدا' : 'قص'}) ${i.gradeName} [${formatVeneerDimensions(i.lengthCm, i.widthCm, false)}]: ${i.sheetsCount} ق`).join(' + ')}</td>
               <td style="border:1px solid #000;padding:6px;">${fmtMoney(o.discountAmount || 0)}</td>
               <td style="border:1px solid #000;padding:6px;font-weight:700;">${fmtMoney(o.netTotalAmount || 0)}</td>
             </tr>
@@ -8639,7 +9236,9 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
   const thicknesses = state.catalog?.thicknesses || [];
   const grades = state.catalog?.grades || [];
   const inStockPallets = (state.pallets || []).filter(p =>
-    p.status === 'in_stock' && (veneerFilterWood === 'all' || p.woodTypeId === veneerFilterWood)
+    p.status === 'in_stock' &&
+    (veneerFilterWood === 'all' || p.woodTypeId === veneerFilterWood) &&
+    matchesPalletDimensionFilter(p, veneerFilterDimension)
   );
 
   let grandSheets = 0;
@@ -8655,8 +9254,10 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
     const cellsHtml = grades.map(g => {
       const matching = inStockPallets.filter(p => matchPalletToThicknessRow(p, t) && matchPalletToGrade(p, g.id));
       const sheets = matching.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
-      const m = calculateVeneerMetrics(250, 125, t.mm, sheets);
-      const m3 = m.totalVolumeM3;
+      const m3 = +(matching.reduce((s, p) => {
+        if (Number(p.volumeM3) > 0) return s + Number(p.volumeM3);
+        return s + calculateVeneerMetrics(p.lengthCm || 250, p.widthCm || 125, t.mm, p.sheetsCount).totalVolumeM3;
+      }, 0)).toFixed(4);
       rowSheets += sheets;
       rowM3 += m3;
       colTotals[g.id].sheets += sheets;
@@ -8863,6 +9464,7 @@ function printPalletsInventoryPdf() {
           <th>#</th>
           <th>كود البالتة</th>
           <th>نوع الخشب</th>
+          <th>المقاس (العرض×الطول)</th>
           <th>التخانة والاتجاه</th>
           <th>درجة الجودة</th>
           <th>عدد الأفرخ</th>
@@ -8878,6 +9480,7 @@ function printPalletsInventoryPdf() {
             <td>${i + 1}</td>
             <td><strong>${p.palletCode}</strong></td>
             <td>${p.woodTypeName}</td>
+            <td><strong>${formatVeneerDimensions(p.lengthCm, p.widthCm, true)}</strong></td>
             <td><strong>${p.thicknessMm} مم (${p.direction === 'sada' ? 'سدا' : 'قص'})</strong></td>
             <td><strong>${p.gradeCode || p.gradeName}</strong></td>
             <td><strong>${fmtNum(p.sheetsCount, 0)} قطعة</strong></td>
@@ -8903,6 +9506,7 @@ function printSalesReturnsReportPdf() {
           <th>رقم المرتجع</th>
           <th>التاريخ</th>
           <th>العميل</th>
+          <th>المقاس (سم)</th>
           <th>التخانة والاتجاه</th>
           <th>الجودة</th>
           <th>الكمية (قطعة)</th>
@@ -8917,6 +9521,7 @@ function printSalesReturnsReportPdf() {
             <td><strong>${r.returnNumber}</strong></td>
             <td>${r.date}</td>
             <td><strong>${r.clientName || '-'}</strong></td>
+            <td><strong>${formatVeneerDimensions(r.lengthCm, r.widthCm, false)}</strong></td>
             <td>${r.thkMm} مم (${r.direction === 'sada' ? 'سدا' : 'قص'})</td>
             <td>${r.gradeCode || r.gradeName}</td>
             <td><strong>${fmtNum(r.sheetsCount, 0)} قطعة</strong></td>
@@ -9087,7 +9692,7 @@ function printAllProductionOrdersReportPdf() {
             <td>${o.date || fmtDate(o.createdAt)}</td>
             <td><strong>${o.clientName}</strong> (${o.clientCode || 'CL'})</td>
             <td style="text-align:right;">
-              ${(o.items || []).map(it => `${it.thicknessMm}مم (${it.direction === 'sada' ? 'سدا' : 'قص'}) × ${it.gradeName}: <strong>${it.sheetsCount} قطعة</strong>${showPrices ? ' × ' + fmtNum(it.unitPrice, 2) + ' ج' : ''}`).join('<br/>')}
+              ${(o.items || []).map(it => `${it.thicknessMm}مم (${it.direction === 'sada' ? 'سدا' : 'قص'}) × ${it.gradeName} [${formatVeneerDimensions(it.lengthCm, it.widthCm, false)}]: <strong>${it.sheetsCount} قطعة</strong>${showPrices ? ' × ' + fmtNum(it.unitPrice, 2) + ' ج' : ''}`).join('<br/>')}
             </td>
             <td><strong>${fmtNum(o.totalSheetsCount || 0, 0)} قطعة</strong><br/>(${fmtNum(o.totalVolumeM3 || 0, 4)} م³)</td>
             ${showPrices ? `<td><strong>${fmtMoney(o.netTotalAmount || 0)}</strong></td>` : ''}
@@ -9409,7 +10014,9 @@ function deleteOrderWithStockRestore(orderId) {
           sh,
           `إرجاع رصيد لحذف الطلبية ${ord.orderNumber}`,
           todayStr(),
-          Number(it.unitPrice || 0)
+          Number(it.unitPrice || 0),
+          Number(it.lengthCm || 250),
+          Number(it.widthCm || 125)
         );
       }
     }
@@ -9456,7 +10063,7 @@ function deleteOrderWithStockRestore(orderId) {
   state.productionOrders = (state.productionOrders || []).filter(o => o.id !== ord.id);
 
   closeModal();
-  saveState(`🗑️ قام ${currentUser.name} بحذف بيان الطلبية (${ord.orderNumber}) للعميل (${ord.clientName})${isCompleted ? ' وإرجاع كامل أرصدتها إلى المخزن تلقائياً' : ''}`);
+  saveState(`🗑️ قام ${currentUser.name} بحذف بيان الطلبية (${ord.orderNumber}) للعميل (${ord.clientName})${isCompletedOrDeducted ? ' وإرجاع كامل أرصدتها إلى المخزن تلقائياً' : ''}`);
 }
 
 // 2) Edit & Delete Warehouse Movements with Automatic Stock Adjustment / Restoration
@@ -9537,27 +10144,29 @@ function submitEditWarehouseMovementModal(e, movId) {
     const diff = newSheets - oldSheets;
 
     if (diff !== 0 && thkId && gradeId) {
+      const movLen = Number(mov.lengthCm || 250);
+      const movWid = Number(mov.widthCm || 125);
       if (mov.direction === 'out') {
         if (diff > 0) {
           // Exited more -> deduct additional sheets from warehouse
-          deductSheetsFromCellPallets(thkId, gradeId, 'wt-general', diff, newPrice);
+          deductSheetsFromCellPallets(thkId, gradeId, 'wt-general', diff, newPrice, movLen, movWid);
         } else {
           // Exited less -> return difference back to warehouse
-          addSheetsToCellPallets(thkId, gradeId, 'wt-general', Math.abs(diff), `إرجاع فرق تعديل حركة ${mov.voucherNumber}`, mov.date, newPrice);
+          addSheetsToCellPallets(thkId, gradeId, 'wt-general', Math.abs(diff), `إرجاع فرق تعديل حركة ${mov.voucherNumber}`, mov.date, newPrice, movLen, movWid);
         }
       } else {
         if (diff > 0) {
           // Entered more -> add difference to warehouse
-          addSheetsToCellPallets(thkId, gradeId, 'wt-general', diff, `زيادة تعديل حركة ${mov.voucherNumber}`, mov.date, newPrice);
+          addSheetsToCellPallets(thkId, gradeId, 'wt-general', diff, `زيادة تعديل حركة ${mov.voucherNumber}`, mov.date, newPrice, movLen, movWid);
         } else {
           // Entered less -> deduct difference from warehouse
-          deductSheetsFromCellPallets(thkId, gradeId, 'wt-general', Math.abs(diff), newPrice);
+          deductSheetsFromCellPallets(thkId, gradeId, 'wt-general', Math.abs(diff), newPrice, movLen, movWid);
         }
       }
     }
 
     const tObj = (state.catalog?.thicknesses || []).find(t => t.id === thkId);
-    const m = calculateVeneerMetrics(250, 125, tObj ? tObj.mm : 1.5, newSheets);
+    const m = calculateVeneerMetrics(mov.lengthCm || 250, mov.widthCm || 125, tObj ? tObj.mm : 1.5, newSheets);
     mov.sheetsCount = newSheets;
     mov.unitSheetPrice = newPrice;
     mov.totalSaleAmount = +(newSheets * newPrice).toFixed(2);
@@ -9636,7 +10245,15 @@ function openEditPalletModal(palletId) {
               </select>
             </div>
             <div class="form-group">
-              <label>الكمية بالقطع (250×125)</label>
+              <label>العرض (سم) — المعتمد 125</label>
+              <input id="eplt-wid" type="number" step="0.5" min="10" class="form-control" value="${p.widthCm || 125}" required style="font-weight:800;" />
+            </div>
+            <div class="form-group">
+              <label>الطول (سم) — المعتمد 250</label>
+              <input id="eplt-len" type="number" step="0.5" min="10" class="form-control" value="${p.lengthCm || 250}" required style="font-weight:800;" />
+            </div>
+            <div class="form-group">
+              <label>الكمية بالقطع</label>
               <input id="eplt-sheets" type="number" min="0" class="form-control" value="${p.sheetsCount || 0}" required style="font-weight:800;" />
             </div>
             <div class="form-group">
@@ -9668,13 +10285,19 @@ function submitEditPalletModal(e, palletId) {
   const grdId = document.getElementById('eplt-grd')?.value || p.gradeId;
   const tObj = (state.catalog?.thicknesses || []).find(t => t.id === thkId);
   const gObj = (state.catalog?.grades || []).find(g => g.id === grdId);
+  const wid = Math.max(10, Number(document.getElementById('eplt-wid')?.value || p.widthCm || 125));
+  const len = Math.max(10, Number(document.getElementById('eplt-len')?.value || p.lengthCm || 250));
   const sheets = Math.max(0, Number(document.getElementById('eplt-sheets')?.value || 0));
   const unitPrice = Math.max(0, Number(document.getElementById('eplt-price')?.value || 0));
-  const m = calculateVeneerMetrics(250, 125, tObj ? tObj.mm : p.thicknessMm, sheets);
+  const m = calculateVeneerMetrics(len, wid, tObj ? tObj.mm : p.thicknessMm, sheets);
+  ensureCustomDimensionInCatalog(len, wid, `تعديل بالتة ${p.palletCode}`);
 
   p.palletCode = (document.getElementById('eplt-code')?.value || p.palletCode).trim();
   p.entryDate = document.getElementById('eplt-date')?.value || p.entryDate;
   p.createdAt = p.entryDate;
+  p.lengthCm = len;
+  p.widthCm = wid;
+  p.isCustomDimension = !isStandardVeneerDimension(len, wid);
   p.thicknessId = thkId;
   p.thicknessMm = tObj ? Number(tObj.mm) : p.thicknessMm;
   p.direction = tObj ? (tObj.direction || 'qas') : p.direction;
