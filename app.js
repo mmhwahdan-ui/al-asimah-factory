@@ -3124,19 +3124,19 @@ function canUserSeeOrderInPrep(user, order) {
 function getOrderStageBadge(order) {
   const st = order.stage || order.status || 'pending_executive';
   if (st === 'pending_executive') {
-    return `<span class="badge badge-warning">1️⃣ بانتظار موافقة المدير التنفيذي أو مدير المشروعات (مخفي عن المخزن والمدير الإداري)</span>`;
+    return `<span class="badge badge-warning">1️⃣ قيد موافقة التنفيذي/المشروعات</span>`;
   }
   if (st === 'pending_warehouse_prep') {
-    return `<span class="badge badge-info">2️⃣ معتمد تنفيذياً (${order.executiveApprovedBy || ''}) — ظاهر لأمين المخزن والمدير الإداري للتجهيز والموافقة</span>`;
+    return `<span class="badge badge-info">2️⃣ قيد التجهيز بالمخزن (${order.executiveApprovedBy || 'معتمد'})</span>`;
   }
   if (st === 'pending_accountant_release') {
-    return `<span class="badge" style="background:#7c3aed;color:#fff;">3️⃣ تم التجهيز بموافقة (${order.warehousePrepApprovedBy || ''}) — محول للمحاسب في اعتماد أذون الصرف</span>`;
+    return `<span class="badge" style="background:#7c3aed;color:#fff;">3️⃣ جاهز (${order.warehousePrepApprovedBy || 'المخزن'}) ⬅ بانتظار المحاسب</span>`;
   }
   if (st === 'ready_for_car_dispatch') {
-    return `<span class="badge badge-danger" style="font-size:0.85rem;">4️⃣ معتمد مالياً للصرف (${order.accountantReleaseBy || ''}) — 🚚 أمر فوري لأمين المخزن والمدير الإداري بصرف الطلبية وتحميل السيارة</span>`;
+    return `<span class="badge badge-danger">4️⃣ معتمد للصرف (${order.accountantReleaseBy || 'المحاسب'}) ⬅ 🚚 تحميل السيارة</span>`;
   }
   if (st === 'completed') {
-    return `<span class="badge badge-success">✅ تم صرف الطلبية وتحميل السيارة (${order.carDispatchVoucher?.carPlateNumber || 'مكتمل'})</span>`;
+    return `<span class="badge badge-success">✅ تم الصرف (${order.carDispatchVoucher?.carPlateNumber || 'مكتمل'})</span>`;
   }
   return `<span class="badge badge-info">${st}</span>`;
 }
@@ -3209,11 +3209,11 @@ function renderProduction() {
             <thead>
               <tr>
                 <th>رقم الطلبية والتاريخ</th>
-                <th>العميل وكود العميل</th>
-                <th>بنود الطلبية (التخانات [قص/سدا] × الجودات × القطع)</th>
-                ${canSeeFinancialPrices() ? '<th>الإجمالي والخصم والصافي</th>' : ''}
-                <th>المرحلة وحالة الاعتماد</th>
-                <th>البيان والاعتمادات والإجراءات</th>
+                <th>العميل</th>
+                <th>بنود الطلبية (تخانة × جودة × كمية)</th>
+                ${canSeeFinancialPrices() ? '<th>الصافي المالي</th>' : ''}
+                <th>المرحلة والحالة</th>
+                <th>البيان والإجراءات</th>
               </tr>
             </thead>
             <tbody>
@@ -3236,79 +3236,79 @@ function renderProduction() {
                   <tr style="${st === 'ready_for_car_dispatch' ? 'background:rgba(220,38,38,0.06);' : ''}">
                     <td>
                       <strong>${ord.orderNumber}</strong><br/>
-                      <small style="color:var(--text-muted);">📅 ${ord.date || fmtDate(ord.createdAt)}</small><br/>
-                      <small style="color:var(--text-muted);">بواسطة: ${ord.requestedBy || ord.supervisor || 'المحاسب'}</small>
+                      <small style="color:var(--text-muted);font-size:0.7rem;">📅 ${ord.date || fmtDate(ord.createdAt)}</small><br/>
+                      <small style="color:var(--text-muted);font-size:0.68rem;">بواسطة: ${ord.requestedBy || ord.supervisor || 'المحاسب'}</small>
                     </td>
                     <td>
-                      <span class="badge badge-info" style="margin-bottom:4px;">${ord.clientCode || 'CL-GEN'}</span><br/>
-                      <strong style="font-size:0.95rem;">${ord.clientName || 'عميل عام'}</strong>
-                      ${ord.clientPhone ? `<br/><small style="color:var(--text-muted);">📞 ${ord.clientPhone}</small>` : ''}
+                      <span class="badge badge-info" style="margin-bottom:2px;">${ord.clientCode || 'CL-GEN'}</span><br/>
+                      <strong style="font-size:0.82rem;">${ord.clientName || 'عميل عام'}</strong>
+                      ${ord.clientPhone ? `<br/><small style="color:var(--text-muted);font-size:0.68rem;">📞 ${ord.clientPhone}</small>` : ''}
                     </td>
                     <td>
-                      <div style="display:flex;flex-direction:column;gap:4px;">
+                      <div style="display:flex;flex-direction:column;gap:3px;">
                         ${items.map((it, idx) => `
-                          <div style="font-size:0.82rem;background:var(--bg-elevated);padding:5px 8px;border-radius:6px;border-right:3px solid ${it.direction === 'sada' ? '#0284c7' : '#d97706'};">
-                            <strong>${idx + 1}.</strong> تخانة <strong>${it.thicknessMm} مم (${it.direction === 'sada' ? 'سدا' : 'قص'})</strong> × جودة <strong>${it.gradeName}</strong>
-                            — <strong>${fmtNum(it.sheetsCount, 0)} قطعة</strong>
-                            ${canSeeFinancialPrices() ? `× ${fmtNum(it.unitPrice, 2)} ج = <strong>${fmtMoney(it.totalItemAmount)}</strong>` : `(${fmtNum(it.volumeM3 || 0, 4)} م³)`}
+                          <div style="font-size:0.74rem;background:var(--bg-elevated);padding:3px 6px;border-radius:5px;border-right:3px solid ${it.direction === 'sada' ? '#0284c7' : '#d97706'};">
+                            <strong>${idx + 1}.</strong> <strong>${it.thicknessMm} مم (${it.direction === 'sada' ? 'سدا' : 'قص'})</strong> × <strong>${it.gradeName}</strong>
+                            — <strong>${fmtNum(it.sheetsCount, 0)} ق</strong>
+                            ${canSeeFinancialPrices() ? `× ${fmtNum(it.unitPrice, 2)} ج = <strong>${fmtMoney(it.totalItemAmount)}</strong>` : `(${fmtNum(it.volumeM3 || 0, 3)} م³)`}
                           </div>
                         `).join('')}
                       </div>
-                      <small style="color:var(--text-muted);display:block;margin-top:4px;">
-                        إجمالي القطع: <strong>${fmtNum(ord.totalSheetsCount || items.reduce((s, i) => s + Number(i.sheetsCount || 0), 0), 0)} قطعة</strong> | الحجم: <strong>${fmtNum(ord.totalVolumeM3 || 0, 4)} م³</strong>
+                      <small style="color:var(--text-muted);display:block;margin-top:2px;font-size:0.7rem;">
+                        الإجمالي: <strong>${fmtNum(ord.totalSheetsCount || items.reduce((s, i) => s + Number(i.sheetsCount || 0), 0), 0)} قطعة</strong> (${fmtNum(ord.totalVolumeM3 || 0, 3)} م³)
                       </small>
                     </td>
                     ${canSeeFinancialPrices() ? `
                     <td>
-                      <div style="font-size:0.82rem;color:var(--text-muted);">قبل الخصم: ${fmtMoney(subtotal)}</div>
-                      ${discountAmt > 0 ? `<div style="font-size:0.82rem;color:var(--danger);font-weight:700;">خصم: -${fmtMoney(discountAmt)} ${ord.discountType === 'percent' ? '(' + ord.discountValue + '%)' : ''}</div>` : ''}
-                      <div style="font-size:1rem;font-weight:900;color:var(--primary);margin-top:2px;">الصافي: ${fmtMoney(netTotal)}</div>
+                      <div style="font-size:0.72rem;color:var(--text-muted);">إجمالي: ${fmtMoney(subtotal)}</div>
+                      ${discountAmt > 0 ? `<div style="font-size:0.72rem;color:var(--danger);font-weight:700;">خصم: -${fmtMoney(discountAmt)}</div>` : ''}
+                      <div style="font-size:0.86rem;font-weight:900;color:var(--primary);">الصافي: ${fmtMoney(netTotal)}</div>
                     </td>
                     ` : ''}
                     <td>
                       ${getOrderStageBadge(ord)}
-                      ${ord.notes ? `<div style="font-size:0.76rem;color:var(--text-muted);margin-top:4px;">📝 ${ord.notes}</div>` : ''}
+                      ${ord.notes ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">📝 ${ord.notes}</div>` : ''}
                     </td>
                     <td>
-                      <div style="display:flex;flex-direction:column;gap:6px;">
+                      <div style="display:flex;flex-direction:column;gap:4px;">
                         <button class="btn btn-sm btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="openClientOrderStatementModal('${ord.id}')">
-                          ${canSeeFinancialPrices() ? '📄 بيان العميل (تعديل الأسعار / خصم / طباعة)' : '📄 بيان كميات الطلبية للتجهيز (بدون أسعار)'}
+                          ${canSeeFinancialPrices() ? '📄 بيان العميل / تعديل وطباعة' : '📄 بيان الكميات للتجهيز'}
                         </button>
 
                         ${st === 'pending_executive' && isExec ? `
                           <button class="btn btn-sm btn-primary" onclick="approveOrderExecutive('${ord.id}')">
-                            ✅ موافقة المدير التنفيذي/المشروعات (إظهار للمدير الإداري وأمين المخزن)
+                            ✅ موافقة الإدارة (إرسال للمخزن)
                           </button>
                         ` : ''}
 
                         ${st === 'pending_warehouse_prep' && isWarehouseOrAdmin ? `
                           <button class="btn btn-sm btn-success" onclick="approveOrderWarehousePrep('${ord.id}')">
-                            ✅ موافقة المدير الإداري / أمين المخزن (تحويل للمحاسب في أذون الصرف)
+                            ✅ موافقة التجهيز والخروج بالمخزن
                           </button>
                         ` : ''}
 
                         ${st === 'pending_accountant_release' && isAccountantOrExec ? `
                           <button class="btn btn-sm btn-accent" onclick="openAccountantReleaseModal('${ord.id}')">
-                            💳 عمل حسابات العميل واعتماد إذن الصرف
+                            💳 حسابات العميل واعتماد الصرف
                           </button>
                         ` : ''}
 
                         ${st === 'ready_for_car_dispatch' && isWarehouseOrAdmin ? `
                           <button class="btn btn-sm btn-danger" onclick="openVehicleDispatchVoucherModal('${ord.id}')">
-                            🚚 صرف الطلبية وعمل إذن صرف للسيارة المحملة
+                            🚚 صرف الطلبية وإذن السيارة
                           </button>
                         ` : ''}
 
                         ${st === 'completed' && ord.carDispatchVoucher ? `
                           <button class="btn btn-sm btn-success" onclick="printVehicleDispatchVoucher('${ord.id}')">
-                            🖨️ طباعة إذن صرف السيارة (${ord.carDispatchVoucher.carPlateNumber})
+                            🖨️ طباعة إذن السيارة (${ord.carDispatchVoucher.carPlateNumber})
                           </button>
                         ` : ''}
 
                         ${isExec ? `
-                          <div style="display:flex;gap:4px;margin-top:2px;">
-                            <button class="btn btn-sm btn-outline" style="flex:1;padding:3px 6px;font-size:0.74rem;" onclick="openClientOrderStatementModal('${ord.id}')">✏️ تعديل البيان والأرصدة</button>
-                            <button class="btn btn-sm btn-danger" style="flex:1;padding:3px 6px;font-size:0.74rem;" onclick="deleteOrderWithStockRestore('${ord.id}')">🗑️ حذف وإرجاع الرصيد</button>
+                          <div style="display:flex;gap:3px;">
+                            <button class="btn btn-sm btn-outline" style="flex:1;padding:2px 5px;font-size:0.68rem;" onclick="openClientOrderStatementModal('${ord.id}')">✏️ تعديل</button>
+                            <button class="btn btn-sm btn-danger" style="flex:1;padding:2px 5px;font-size:0.68rem;" onclick="deleteOrderWithStockRestore('${ord.id}')">🗑️ حذف</button>
                           </div>
                         ` : ''}
                       </div>
@@ -3405,13 +3405,13 @@ function renderApprovals() {
           <table>
             <thead>
               <tr>
-                <th>رقم الطلبية / الإذن</th>
-                <th>العميل وكوده</th>
-                <th>ملخص الأصناف والكميات</th>
-                ${canSeeFinancialPrices() ? '<th>صافي القيمة والحساب المالي</th>' : ''}
-                <th>بيانات السيارة والبالتات المحملة</th>
-                <th>الحالة الحالية</th>
-                <th>الإجراء المطلوب</th>
+                <th>رقم الطلبية</th>
+                <th>العميل</th>
+                <th>الأصناف والكميات</th>
+                ${canSeeFinancialPrices() ? '<th>الحساب المالي</th>' : ''}
+                <th>السيارة والبالتات</th>
+                <th>الحالة</th>
+                <th>الإجراء</th>
               </tr>
             </thead>
             <tbody>
@@ -3424,15 +3424,15 @@ function renderApprovals() {
                   <tr style="${st === 'ready_for_car_dispatch' ? 'background:rgba(220,38,38,0.06);' : st === 'pending_accountant_release' ? 'background:rgba(124,58,237,0.05);' : ''}">
                     <td>
                       <strong>${ord.orderNumber}</strong><br/>
-                      <small style="color:var(--text-muted);">📅 ${ord.date}</small>
+                      <small style="color:var(--text-muted);font-size:0.68rem;">📅 ${ord.date}</small>
                     </td>
                     <td>
                       <span class="badge badge-info">${ord.clientCode || 'CL'}</span><br/>
-                      <strong>${ord.clientName}</strong>
+                      <strong style="font-size:0.8rem;">${ord.clientName}</strong>
                     </td>
                     <td>
-                      <strong>${items.length} بنود</strong> (${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة | ${fmtNum(ord.totalVolumeM3 || 0, 4)} م³)<br/>
-                      <small style="color:var(--text-muted);">
+                      <strong>${items.length} بنود</strong> (${fmtNum(ord.totalSheetsCount || 0, 0)} ق | ${fmtNum(ord.totalVolumeM3 || 0, 3)} م³)<br/>
+                      <small style="color:var(--text-muted);font-size:0.7rem;">
                         ${items.map(i => `${i.thicknessMm}مم (${i.direction === 'sada' ? 'سدا' : 'قص'}) ${i.gradeName}: ${i.sheetsCount} ق`).join(' + ')}
                       </small>
                     </td>
@@ -3440,46 +3440,46 @@ function renderApprovals() {
                     <td>
                       <div>الصافي: <strong style="color:var(--primary);">${fmtMoney(ord.netTotalAmount || 0)}</strong></div>
                       ${ord.financialSettlement ? `
-                        <small style="color:var(--success);font-weight:700;">المدفوع: ${fmtMoney(ord.financialSettlement.paidAmount)}</small><br/>
-                        <small style="color:var(--danger);font-weight:700;">المتبقي مديونية: ${fmtMoney(ord.financialSettlement.remainingDebt)}</small>
-                      ` : '<small style="color:var(--text-muted);">بانتظار عمل حسابات العميل</small>'}
+                        <small style="color:var(--success);font-weight:700;font-size:0.7rem;">مدفوع: ${fmtMoney(ord.financialSettlement.paidAmount)}</small><br/>
+                        <small style="color:var(--danger);font-weight:700;font-size:0.7rem;">متبقي: ${fmtMoney(ord.financialSettlement.remainingDebt)}</small>
+                      ` : '<small style="color:var(--text-muted);font-size:0.7rem;">بانتظار حسابات العميل</small>'}
                     </td>
                     ` : ''}
                     <td>
                       ${car ? `
-                        <div><strong>🚚 سيارة رقم: ${car.carPlateNumber}</strong></div>
-                        <small>السائق: ${car.driverName} (${car.driverPhone || '-'})</small><br/>
-                        <span class="badge badge-warning">🪵 بالتات مسلمة: ${car.palletsDeliveredCount}</span>
-                        ${car.palletsReceivedCount > 0 ? `<span class="badge badge-success">مستلمة: ${car.palletsReceivedCount}</span>` : ''}
-                      ` : '<span style="color:var(--text-muted);">لم يتم تحميل السيارة بعد</span>'}
+                        <div><strong>🚚 ${car.carPlateNumber}</strong></div>
+                        <small style="font-size:0.7rem;">${car.driverName}</small><br/>
+                        <span class="badge badge-warning">🪵 مسلم: ${car.palletsDeliveredCount}</span>
+                        ${car.palletsReceivedCount > 0 ? `<span class="badge badge-success">مستلم: ${car.palletsReceivedCount}</span>` : ''}
+                      ` : '<span style="color:var(--text-muted);font-size:0.72rem;">لم تحمل بعد</span>'}
                     </td>
                     <td>${getOrderStageBadge(ord)}</td>
                     <td>
-                      <div style="display:flex;flex-direction:column;gap:6px;">
+                      <div style="display:flex;flex-direction:column;gap:4px;">
                         <button class="btn btn-sm btn-outline" onclick="openClientOrderStatementModal('${ord.id}')">${canSeeFinancialPrices() ? '📄 بيان العميل' : '📄 بيان الكميات'}</button>
 
                         ${st === 'pending_accountant_release' && isAccountantOrExec ? `
                           <button class="btn btn-sm btn-primary" style="background:#7c3aed;" onclick="openAccountantReleaseModal('${ord.id}')">
-                            💳 عمل حسابات العميل واعتماد إذن الصرف
+                            💳 اعتماد الصرف
                           </button>
                         ` : ''}
 
                         ${st === 'ready_for_car_dispatch' && isWarehouseOrAdmin ? `
                           <button class="btn btn-sm btn-danger" onclick="openVehicleDispatchVoucherModal('${ord.id}')">
-                            🚚 صرف الطلبية وعمل إذن صرف للسيارة
+                            🚚 إذن صرف السيارة
                           </button>
                         ` : ''}
 
                         ${car ? `
                           <button class="btn btn-sm btn-success" onclick="printVehicleDispatchVoucher('${ord.id}')">
-                            🖨️ طباعة إذن صرف السيارة
+                            🖨️ طباعة إذن السيارة
                           </button>
                         ` : ''}
 
                         ${isExec ? `
-                          <div style="display:flex;gap:4px;margin-top:2px;">
-                            <button class="btn btn-sm btn-outline" style="flex:1;padding:3px 6px;font-size:0.74rem;" onclick="openClientOrderStatementModal('${ord.id}')">✏️ تعديل</button>
-                            <button class="btn btn-sm btn-danger" style="flex:1;padding:3px 6px;font-size:0.74rem;" onclick="deleteOrderWithStockRestore('${ord.id}')">🗑️ حذف وإرجاع الرصيد</button>
+                          <div style="display:flex;gap:3px;">
+                            <button class="btn btn-sm btn-outline" style="flex:1;padding:2px 5px;font-size:0.68rem;" onclick="openClientOrderStatementModal('${ord.id}')">✏️ تعديل</button>
+                            <button class="btn btn-sm btn-danger" style="flex:1;padding:2px 5px;font-size:0.68rem;" onclick="deleteOrderWithStockRestore('${ord.id}')">🗑️ حذف</button>
                           </div>
                         ` : ''}
                       </div>
@@ -3587,20 +3587,20 @@ function renderAccounting() {
         <table>
           <thead>
             <tr>
-              <th>كود العميل</th>
-              <th>اسم العميل والاتصال</th>
-              <th>عدد الطلبيات الفائتة والحالية</th>
-              <th>إجمالي المسحوبات</th>
-              <th>إجمالي المدفوعات</th>
-              <th>بيان المديونية / المستحقات</th>
-              <th>حساب البالتات (مسلم له / مستلم منه / طرفه)</th>
-              <th>إجراءات العميل والتحقق</th>
+              <th>الكود</th>
+              <th>العميل</th>
+              <th>الطلبيات</th>
+              <th>المسحوبات</th>
+              <th>المدفوعات</th>
+              <th>صافي المديونية</th>
+              <th>البالتات</th>
+              <th>إجراءات العميل</th>
             </tr>
           </thead>
           <tbody>
             ${filteredClients.length === 0 ? `
               <tr>
-                <td colspan="8" style="text-align:center;padding:28px;color:var(--text-muted);">
+                <td colspan="8" style="text-align:center;padding:20px;color:var(--text-muted);">
                   لا يوجد عملاء مسجلون حالياً بهذا البحث. اضغط على <strong>"➕ إضافة عميل جديد بالكود"</strong> لإضافة عميل.
                 </td>
               </tr>
@@ -3611,59 +3611,59 @@ function renderAccounting() {
               return `
                 <tr>
                   <td>
-                    <span class="badge badge-info" style="font-size:0.88rem;padding:5px 10px;">${pt.code || 'CL-001'}</span>
+                    <span class="badge badge-info">${pt.code || 'CL-001'}</span>
                   </td>
                   <td>
-                    <strong style="font-size:0.96rem;">${pt.name}</strong><br/>
-                    <small style="color:var(--text-muted);">${pt.phone || '-'} | ${pt.city || '-'}</small>
+                    <strong style="font-size:0.82rem;">${pt.name}</strong><br/>
+                    <small style="color:var(--text-muted);font-size:0.68rem;">${pt.phone || '-'} | ${pt.city || '-'}</small>
                   </td>
                   <td>
                     <strong>${m.orders.length} طلبية</strong><br/>
-                    <button class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.74rem;margin-top:3px;" onclick="openClientFullHistoryModal('${pt.id}', 'orders')">
-                      👁️ فحص الطلبيات (${m.orders.length})
+                    <button class="btn btn-sm btn-outline" style="padding:1px 6px;font-size:0.68rem;margin-top:2px;" onclick="openClientFullHistoryModal('${pt.id}', 'orders')">
+                      👁️ فحص (${m.orders.length})
                     </button>
                   </td>
                   <td><strong>${fmtMoney(m.totalDebit)}</strong></td>
                   <td style="color:var(--success);font-weight:700;">${fmtMoney(m.totalCredit)}</td>
                   <td>
                     ${isDebtor ? `
-                      <span class="badge badge-danger" style="font-size:0.85rem;padding:5px 10px;">
-                        مدين (عليه للمصنع): ${fmtMoney(m.netDebt)}
+                      <span class="badge badge-danger">
+                        عليه: ${fmtMoney(m.netDebt)}
                       </span>
                     ` : isCreditor ? `
-                      <span class="badge badge-success" style="font-size:0.85rem;padding:5px 10px;">
-                        دائن (له مستحقات): ${fmtMoney(Math.abs(m.netDebt))}
+                      <span class="badge badge-success">
+                        له: ${fmtMoney(Math.abs(m.netDebt))}
                       </span>
                     ` : `
-                      <span class="badge" style="background:#64748b;color:#fff;">خالص (0 ج.م)</span>
+                      <span class="badge" style="background:#64748b;color:#fff;">خالص (0)</span>
                     `}
                   </td>
                   <td>
-                    <div style="font-size:0.82rem;line-height:1.6;">
-                      <span>📤 مسلم له: <strong>${m.palletsDelivered}</strong></span> |
-                      <span>📥 مستلم منه: <strong style="color:var(--success);">${m.palletsReceived}</strong></span><br/>
+                    <div style="font-size:0.72rem;line-height:1.4;">
+                      <span>مسلم: <strong>${m.palletsDelivered}</strong></span> |
+                      <span>مستلم: <strong style="color:var(--success);">${m.palletsReceived}</strong></span><br/>
                       <span class="badge ${m.netPalletsAtClient > 0 ? 'badge-warning' : 'badge-success'}">
-                        🪵 متبقي طرف العميل: ${m.netPalletsAtClient} بالتة
+                        🪵 طرفه: ${m.netPalletsAtClient}
                       </span>
                     </div>
                   </td>
                   <td>
-                    <div style="display:flex;flex-wrap:wrap;gap:5px;">
+                    <div style="display:flex;flex-wrap:wrap;gap:3px;">
                       <button class="btn btn-sm btn-primary" onclick="openClientFullHistoryModal('${pt.id}', 'all')">
-                        📂 كشف الحساب والطلبيات الفائتة
+                        📂 كشف الحساب
                       </button>
                       <button class="btn btn-sm btn-success" onclick="openClientPaymentModal('${pt.id}')">
-                        💵 تحصيل دفعة / تسوية
+                        💵 تحصيل
                       </button>
                       <button class="btn btn-sm btn-accent" onclick="openClientPalletMovementModal('${pt.id}')">
-                        🪵 تسليم / استلام بالتات
+                        🪵 بالتات
                       </button>
                       <button class="btn btn-sm btn-outline" onclick="printClientFullStatement('${pt.id}')">
-                        🖨️ طباعة بيان للعميل
+                        🖨️ طباعة
                       </button>
                       ${isFullAdmin(currentUser) ? `
-                        <button class="btn btn-sm btn-outline" onclick="openEditPartnerModal('${pt.id}')" title="تعديل بيانات العميل">✏️ تعديل</button>
-                        <button class="btn btn-sm btn-danger" onclick="deletePartnerRecord('${pt.id}')" title="حذف العميل">🗑️ حذف</button>
+                        <button class="btn btn-sm btn-outline" onclick="openEditPartnerModal('${pt.id}')" title="تعديل">✏️</button>
+                        <button class="btn btn-sm btn-danger" onclick="deletePartnerRecord('${pt.id}')" title="حذف">🗑️</button>
                       ` : ''}
                     </div>
                   </td>
@@ -4568,14 +4568,14 @@ function renderDraftOrderItemsTable() {
     <table>
       <thead>
         <tr>
-          <th>#</th>
-          <th>التخانة والاتجاه (قص / سدا)</th>
+          <th style="width:28px;">#</th>
+          <th>التخانة والاتجاه</th>
           <th>درجة الجودة</th>
-          <th>الرصيد المتاح بالمخزن</th>
-          <th>الكمية المطلوبة (قطعة 250×125)</th>
-          <th>💰 سعر القطعة بالبيان (يوضع تلقائياً من جدول الأسعار وقابل للتعديل)</th>
+          <th>المتاح</th>
+          <th>الكمية (قطعة)</th>
+          <th>💰 سعر القطعة (ج.م)</th>
           <th>إجمالي البند</th>
-          <th>حذف</th>
+          <th style="width:36px;">حذف</th>
         </tr>
       </thead>
       <tbody>
@@ -4588,66 +4588,66 @@ function renderDraftOrderItemsTable() {
               <td><strong>${idx + 1}</strong></td>
               <td>
                 ${hasCatalogThk ? `
-                  <select class="form-control" onchange="onDraftItemThicknessSelect(${idx}, this.value)" style="font-weight:700;">
+                  <select class="form-control" onchange="onDraftItemThicknessSelect(${idx}, this.value)" style="font-weight:700;padding:4px 6px;font-size:0.76rem;">
                     ${sortedThk.map(t => {
                       const pForGrade = getCellUnitPrice(t.id, it.gradeId, t.mm, t.direction);
                       return `
                         <option value="${t.id}" ${t.id === it.thicknessId ? 'selected' : ''}>
-                          ${t.mm} مم — ${t.direction === 'sada' ? '📏 اتجاه سدا' : '✂️ اتجاه قص'}${pForGrade > 0 ? ' (سعر الجدول: ' + pForGrade + ' ج)' : ''}
+                          ${t.mm} مم (${t.direction === 'sada' ? 'سدا' : 'قص'})${pForGrade > 0 ? ' — ' + pForGrade + ' ج' : ''}
                         </option>
                       `;
                     }).join('')}
                   </select>
                 ` : `
                   <div style="display:flex;gap:4px;">
-                    <input type="number" step="0.1" class="form-control" style="width:80px;" value="${it.thicknessMm}" oninput="updateDraftItemNumeric(${idx}, 'thicknessMm', this.value)" placeholder="مم" />
-                    <select class="form-control" onchange="updateDraftItemNumeric(${idx}, 'direction', this.value)">
-                      <option value="qas" ${it.direction === 'qas' ? 'selected' : ''}>✂️ قص</option>
-                      <option value="sada" ${it.direction === 'sada' ? 'selected' : ''}>📏 سدا</option>
+                    <input type="number" step="0.1" class="form-control" style="width:65px;padding:4px;" value="${it.thicknessMm}" oninput="updateDraftItemNumeric(${idx}, 'thicknessMm', this.value)" placeholder="مم" />
+                    <select class="form-control" style="padding:4px;" onchange="updateDraftItemNumeric(${idx}, 'direction', this.value)">
+                      <option value="qas" ${it.direction === 'qas' ? 'selected' : ''}>قص</option>
+                      <option value="sada" ${it.direction === 'sada' ? 'selected' : ''}>سدا</option>
                     </select>
                   </div>
                 `}
               </td>
               <td>
                 ${hasCatalogGrades ? `
-                  <select class="form-control" onchange="onDraftItemGradeSelect(${idx}, this.value)" style="font-weight:700;">
+                  <select class="form-control" onchange="onDraftItemGradeSelect(${idx}, this.value)" style="font-weight:700;padding:4px 6px;font-size:0.76rem;">
                     ${state.catalog.grades.map(g => {
                       const pForCell = getCellUnitPrice(it.thicknessId, g.id, it.thicknessMm, it.direction);
                       return `
                         <option value="${g.id}" ${g.id === it.gradeId ? 'selected' : ''}>
-                          ${g.name} (${g.code})${pForCell > 0 ? ' — ' + pForCell + ' ج.م' : ''}
+                          ${g.code}${pForCell > 0 ? ' (' + pForCell + ' ج)' : ''}
                         </option>
                       `;
                     }).join('')}
                   </select>
                 ` : `
-                  <input class="form-control" value="${it.gradeName}" oninput="updateDraftItemNumeric(${idx}, 'gradeName', this.value)" placeholder="اسم الجودة" />
+                  <input class="form-control" value="${it.gradeName}" oninput="updateDraftItemNumeric(${idx}, 'gradeName', this.value)" placeholder="الجودة" />
                 `}
               </td>
               <td>
                 <span class="badge ${avail >= it.sheetsCount ? 'badge-success' : 'badge-warning'}">
-                  متاح: ${fmtNum(avail, 0)} قطعة
+                  ${fmtNum(avail, 0)} ق
                 </span>
               </td>
               <td>
-                <input type="number" min="1" class="form-control" style="width:110px;font-weight:800;" value="${it.sheetsCount}" oninput="updateDraftItemNumeric(${idx}, 'sheetsCount', this.value)" required />
+                <input type="number" min="1" class="form-control" style="width:82px;padding:4px 6px;font-weight:800;" value="${it.sheetsCount}" oninput="updateDraftItemNumeric(${idx}, 'sheetsCount', this.value)" required />
               </td>
               <td>
-                <div style="display:flex;flex-direction:column;gap:3px;">
-                  <input type="number" step="0.5" min="0" class="form-control" style="width:130px;font-weight:800;border-color:var(--accent);" value="${it.unitPrice}" oninput="updateDraftItemNumeric(${idx}, 'unitPrice', this.value)" required />
-                  <small style="font-size:0.74rem;color:var(--text-muted);">
-                    سعر الجدول: <strong style="color:var(--primary);">${fmtNum(tablePrice, 2)} ج.م</strong>
+                <div style="display:flex;flex-direction:column;gap:2px;">
+                  <input type="number" step="0.5" min="0" class="form-control" style="width:92px;padding:4px 6px;font-weight:800;border-color:var(--accent);" value="${it.unitPrice}" oninput="updateDraftItemNumeric(${idx}, 'unitPrice', this.value)" required />
+                  <small style="font-size:0.68rem;color:var(--text-muted);">
+                    الجدول: <strong style="color:var(--primary);">${fmtNum(tablePrice, 2)} ج</strong>
                     ${Number(it.unitPrice) !== Number(tablePrice) && tablePrice > 0 ? `
-                      <button type="button" class="btn btn-sm btn-outline" style="padding:1px 6px;font-size:0.68rem;margin-right:4px;" onclick="resetDraftItemToTablePrice(${idx})">🔄 استعادة (${tablePrice} ج)</button>
+                      <button type="button" class="btn btn-sm btn-outline" style="padding:0px 4px;font-size:0.64rem;" onclick="resetDraftItemToTablePrice(${idx})">🔄</button>
                     ` : ''}
                   </small>
                 </div>
               </td>
               <td>
-                <strong id="draft-item-total-${idx}" style="color:var(--primary);">${fmtMoney(itemTotal)}</strong>
+                <strong id="draft-item-total-${idx}" style="color:var(--primary);font-size:0.8rem;">${fmtMoney(itemTotal)}</strong>
               </td>
               <td>
-                <button type="button" class="btn btn-sm btn-danger" onclick="removeDraftOrderItemRow(${idx})">✕</button>
+                <button type="button" class="btn btn-sm btn-danger" style="padding:2px 6px;" onclick="removeDraftOrderItemRow(${idx})">✕</button>
               </td>
             </tr>
           `;
@@ -4863,16 +4863,16 @@ function openClientOrderStatementModal(orderId) {
             </div>
           ` : ''}
 
-          <div class="table-responsive" style="margin-bottom:14px;">
+          <div class="table-responsive" style="margin-bottom:10px;">
             <table>
               <thead>
                 <tr>
-                  <th>#</th>
-                  <th>التخانة والاتجاه (قص / سدا)</th>
-                  <th>درجة الجودة</th>
-                  <th>الكمية (عدد القطع 250×125)</th>
+                  <th style="width:28px;">#</th>
+                  <th>التخانة والاتجاه</th>
+                  <th>الجودة</th>
+                  <th>الكمية (قطعة)</th>
                   <th>الحجم (م³)</th>
-                  ${canSeeFinancialPrices() ? '<th>💰 سعر القطعة الواحدة (قابل للتعديل)</th><th>إجمالي البند</th>' : ''}
+                  ${canSeeFinancialPrices() ? '<th>💰 سعر القطعة</th><th>الإجمالي</th>' : ''}
                 </tr>
               </thead>
               <tbody>
@@ -4883,38 +4883,38 @@ function openClientOrderStatementModal(orderId) {
                     <td><strong>${idx + 1}</strong></td>
                     <td>
                       ${isExec ? `
-                        <select id="stmt-thk-${idx}" class="form-control" style="min-width:165px;font-weight:700;" onchange="recalcStatementModalLive('${ord.id}', ${idx})">
-                          ${thicknesses.map(t => `<option value="${t.id}" ${t.id === curThkId ? 'selected' : ''}>${t.mm} مم — ${t.direction === 'sada' ? '📏 سدا' : '✂️ قص'}</option>`).join('')}
+                        <select id="stmt-thk-${idx}" class="form-control" style="min-width:115px;padding:4px 6px;font-size:0.76rem;font-weight:700;" onchange="recalcStatementModalLive('${ord.id}', ${idx})">
+                          ${thicknesses.map(t => `<option value="${t.id}" ${t.id === curThkId ? 'selected' : ''}>${t.mm} مم (${t.direction === 'sada' ? 'سدا' : 'قص'})</option>`).join('')}
                         </select>
                       ` : `
                         <strong>${it.thicknessMm} مم</strong>
-                        <span class="badge" style="background:${it.direction === 'sada' ? '#0284c7' : '#d97706'};color:#fff;margin-right:4px;">
-                          ${it.direction === 'sada' ? '📏 سدا' : '✂️ قص'}
+                        <span class="badge" style="background:${it.direction === 'sada' ? '#0284c7' : '#d97706'};color:#fff;margin-right:3px;">
+                          ${it.direction === 'sada' ? 'سدا' : 'قص'}
                         </span>
                       `}
                     </td>
                     <td>
                       ${isExec ? `
-                        <select id="stmt-grd-${idx}" class="form-control" style="min-width:130px;font-weight:700;" onchange="recalcStatementModalLive('${ord.id}', ${idx})">
+                        <select id="stmt-grd-${idx}" class="form-control" style="min-width:95px;padding:4px 6px;font-size:0.76rem;font-weight:700;" onchange="recalcStatementModalLive('${ord.id}', ${idx})">
                           ${grades.map(g => `<option value="${g.id}" ${g.id === it.gradeId ? 'selected' : ''}>${g.code}</option>`).join('')}
                         </select>
                       ` : `<strong>${it.gradeName}</strong>`}
                     </td>
                     <td>
-                      <input id="stmt-sheets-${idx}" type="number" min="0" class="form-control" style="width:110px;font-weight:800;" value="${it.sheetsCount}" oninput="recalcStatementModalLive('${ord.id}')" ${canSeeFinancialPrices() ? '' : 'readonly'} required />
+                      <input id="stmt-sheets-${idx}" type="number" min="0" class="form-control" style="width:82px;padding:4px 6px;font-weight:800;" value="${it.sheetsCount}" oninput="recalcStatementModalLive('${ord.id}')" ${canSeeFinancialPrices() ? '' : 'readonly'} required />
                     </td>
-                    <td id="stmt-vol-${idx}">${fmtNum(it.volumeM3, 4)} م³</td>
+                    <td id="stmt-vol-${idx}" style="font-size:0.75rem;">${fmtNum(it.volumeM3, 3)} م³</td>
                     ${canSeeFinancialPrices() ? `
                     <td>
-                      <div style="display:flex;flex-direction:column;gap:3px;">
-                        <input id="stmt-price-${idx}" type="number" step="0.5" min="0" class="form-control" style="width:130px;font-weight:800;border-color:var(--primary);" value="${it.unitPrice}" oninput="recalcStatementModalLive('${ord.id}')" required />
-                        <small id="stmt-tbl-price-hint-${idx}" style="font-size:0.74rem;color:var(--text-muted);">
-                          سعر الجدول: <strong>${fmtNum(getCellUnitPrice(curThkId, it.gradeId, it.thicknessMm, it.direction), 2)} ج.م</strong>
+                      <div style="display:flex;flex-direction:column;gap:2px;">
+                        <input id="stmt-price-${idx}" type="number" step="0.5" min="0" class="form-control" style="width:92px;padding:4px 6px;font-weight:800;border-color:var(--primary);" value="${it.unitPrice}" oninput="recalcStatementModalLive('${ord.id}')" required />
+                        <small id="stmt-tbl-price-hint-${idx}" style="font-size:0.68rem;color:var(--text-muted);">
+                          الجدول: <strong>${fmtNum(getCellUnitPrice(curThkId, it.gradeId, it.thicknessMm, it.direction), 2)} ج</strong>
                         </small>
                       </div>
                     </td>
                     <td>
-                      <strong id="stmt-rowtotal-${idx}" style="color:var(--primary);">${fmtMoney(it.totalItemAmount)}</strong>
+                      <strong id="stmt-rowtotal-${idx}" style="color:var(--primary);font-size:0.8rem;">${fmtMoney(it.totalItemAmount)}</strong>
                     </td>
                     ` : `<input id="stmt-price-${idx}" type="hidden" value="${it.unitPrice}" />`}
                   </tr>
@@ -5977,14 +5977,14 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
                 <table>
                   <thead>
                     <tr>
-                      <th>رقم الطلبية</th>
+                      <th>الطلبية</th>
                       <th>التاريخ</th>
-                      <th>تفاصيل التخانات (قص/سدا) والجودات والقطع</th>
+                      <th>الأصناف (تخانة × جودة × كمية)</th>
                       <th>قبل الخصم</th>
                       <th>الخصم</th>
-                      <th>صافي البيان</th>
-                      <th>السيارة المحملة والبالتات</th>
-                      <th>الحالة والبيان</th>
+                      <th>الصافي</th>
+                      <th>السيارة</th>
+                      <th>البيان والإجراء</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -5996,20 +5996,20 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
                           <td><strong>${o.orderNumber}</strong></td>
                           <td>${o.date}</td>
                           <td>
-                            ${items.map(i => `<div style="font-size:0.8rem;">• ${i.thicknessMm}مم (${i.direction === 'sada' ? 'سدا' : 'قص'}) × ${i.gradeName}: <strong>${i.sheetsCount} قطعة</strong> × ${i.unitPrice} ج = ${fmtMoney(i.totalItemAmount)}</div>`).join('')}
+                            ${items.map(i => `<div style="font-size:0.73rem;">• ${i.thicknessMm}مم (${i.direction === 'sada' ? 'سدا' : 'قص'}) × ${i.gradeName}: <strong>${i.sheetsCount} ق</strong> × ${i.unitPrice} ج = ${fmtMoney(i.totalItemAmount)}</div>`).join('')}
                           </td>
                           <td>${fmtMoney(o.subtotalAmount || o.netTotalAmount || 0)}</td>
                           <td style="color:var(--danger);">-${fmtMoney(o.discountAmount || 0)}</td>
                           <td><strong style="color:var(--primary);">${fmtMoney(o.netTotalAmount || 0)}</strong></td>
                           <td>
-                            ${car ? `سيارة: <strong>${car.carPlateNumber}</strong><br/><small>بالتات مسلمة: ${car.palletsDeliveredCount}</small>` : '-'}
+                            ${car ? `<strong>${car.carPlateNumber}</strong><br/><small>بالتات: ${car.palletsDeliveredCount}</small>` : '-'}
                           </td>
                           <td>
-                            <div style="display:flex;flex-wrap:wrap;gap:4px;">
-                              <button class="btn btn-sm btn-outline" onclick="openClientOrderStatementModal('${o.id}')">📄 البيان / تعديل</button>
-                              ${car ? `<button class="btn btn-sm btn-success" onclick="printVehicleDispatchVoucher('${o.id}')">🖨️ إذن السيارة</button>` : ''}
+                            <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                              <button class="btn btn-sm btn-outline" onclick="openClientOrderStatementModal('${o.id}')">📄 البيان</button>
+                              ${car ? `<button class="btn btn-sm btn-success" onclick="printVehicleDispatchVoucher('${o.id}')">🖨️ السيارة</button>` : ''}
                               ${isFullAdmin(currentUser) ? `
-                                <button class="btn btn-sm btn-danger" onclick="deleteOrderWithStockRestore('${o.id}')">🗑️ حذف وإرجاع الرصيد</button>
+                                <button class="btn btn-sm btn-danger" onclick="deleteOrderWithStockRestore('${o.id}')">🗑️ حذف</button>
                               ` : ''}
                             </div>
                           </td>

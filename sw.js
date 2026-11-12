@@ -1,9 +1,9 @@
-const CACHE_NAME = 'al-asimah-factory-v16';
+const CACHE_NAME = 'al-asimah-factory-v17';
 const ASSETS = [
   './',
   './index.html',
-  './styles.css?v=16',
-  './app.js?v=16',
+  './styles.css?v=17',
+  './app.js?v=17',
   './manifest.webmanifest',
   './icons/logo.svg'
 ];
@@ -26,7 +26,7 @@ self.addEventListener('activate', (event) => {
         const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
         for (const client of clientList) {
           try {
-            client.postMessage({ type: 'FORCE_RELOAD_V16' });
+            client.postMessage({ type: 'FORCE_RELOAD_V17' });
             if (client.navigate) {
               await client.navigate(client.url);
             }
