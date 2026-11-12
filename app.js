@@ -1074,10 +1074,37 @@ async function loadData() {
   render();
 }
 
+// Track user touch/pointer/keyboard interactions so background polling NEVER destroys a DOM button mid-tap on mobile!
+window._lastUserInteractionAt = 0;
+window._isSavingState = false;
+window._pendingPollRenderTimer = null;
+
+function markUserInteraction() {
+  window._lastUserInteractionAt = Date.now();
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  ['touchstart', 'touchend', 'pointerdown', 'mousedown', 'keydown', 'input'].forEach(evtName => {
+    window.addEventListener(evtName, markUserInteraction, { passive: true });
+  });
+}
+
+function isSafeToAutoRenderFromPoll() {
+  if (window._isPrintingActive || window._isSavingState) return false;
+  const modalOpen = (document.getElementById('modal-root')?.innerHTML || '').trim() !== '';
+  if (modalOpen || sidebarOpen) return false;
+  const activeTag = document.activeElement?.tagName;
+  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') return false;
+  if (Date.now() - (window._lastUserInteractionAt || 0) < 3500) return false;
+  return true;
+}
+
 // Live Polling (every 2.5s) so any order preparation, approval, warehouse update, or chat triggers immediate long sound alert for authorized users
 setInterval(async () => {
+  if (window._isSavingState || window._isPrintingActive) return;
   try {
     const fresh = await fetchRemoteState();
+    if (window._isSavingState) return;
     if (fresh && fresh.users) {
       const mergedFresh = state && state.users ? smartMergeClientState(state, fresh) : fresh;
       const oldJson = JSON.stringify(state);
@@ -1093,12 +1120,14 @@ setInterval(async () => {
           currentUser = state.users.find(u => u.id === currentUser.id) || currentUser;
           checkIncomingNotifications(prevLogs, state.auditLogs || [], prevChats, state.chatMessages || [], prevOrders, state.productionOrders || [], prevReturns, state.salesReturns || []);
         }
-        const modalOpen = document.getElementById('modal-root')?.innerHTML.trim() !== '';
-        const activeTag = document.activeElement?.tagName;
-        if (!window._isPrintingActive && !modalOpen && activeTag !== 'INPUT' && activeTag !== 'TEXTAREA' && activeTag !== 'SELECT') {
+        if (isSafeToAutoRenderFromPoll()) {
           render();
         } else if (!window._isPrintingActive) {
           renderLiveBannerDOM();
+          if (window._pendingPollRenderTimer) clearTimeout(window._pendingPollRenderTimer);
+          window._pendingPollRenderTimer = setTimeout(() => {
+            if (isSafeToAutoRenderFromPoll()) render();
+          }, 3600);
         }
       }
       isOnline = true;
@@ -1112,54 +1141,59 @@ setInterval(async () => {
 
 async function saveState(logMessage = '', hiddenFromRoles = []) {
   if (!state) return;
-  if (logMessage) addAuditLog(logMessage, null, null, 'all', hiddenFromRoles);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  if (currentUser) {
-    currentUser = state.users.find(u => u.id === currentUser.id) || currentUser;
-  }
-  render();
-  let synced = false;
-  const isLocalHost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname.startsWith('192.168.');
+  window._isSavingState = true;
+  try {
+    if (logMessage) addAuditLog(logMessage, null, null, 'all', hiddenFromRoles);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (currentUser) {
+      currentUser = state.users.find(u => u.id === currentUser.id) || currentUser;
+    }
+    render();
+    let synced = false;
+    const isLocalHost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname.startsWith('192.168.');
 
-  if (isLocalHost) {
+    if (isLocalHost) {
+      try {
+        const res = await fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(state)
+        });
+        if (res.ok) {
+          const merged = await res.json();
+          state = merged;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+          synced = true;
+        }
+      } catch (_) {}
+    }
+
     try {
-      const res = await fetch('/api/sync', {
-        method: 'POST',
+      // Also sync directly with Firebase Cloud Database so Factory & Administration devices anywhere stay 100% in sync
+      try {
+        const curFbRes = await fetch(FIREBASE_CLOUD_URL, { cache: 'no-store' });
+        if (curFbRes.ok) {
+          const curFb = await curFbRes.json();
+          if (curFb && curFb.users) {
+            state = smartMergeClientState(curFb, state);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+          }
+        }
+      } catch (_) {}
+
+      const fbRes = await fetch(FIREBASE_CLOUD_URL, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(state)
       });
-      if (res.ok) {
-        const merged = await res.json();
-        state = merged;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-        synced = true;
-      }
+      if (fbRes.ok) synced = true;
     } catch (_) {}
+
+    isOnline = synced;
+    updateSyncIndicator();
+  } finally {
+    window._isSavingState = false;
   }
-
-  try {
-    // Also sync directly with Firebase Cloud Database so Factory & Administration devices anywhere stay 100% in sync
-    try {
-      const curFbRes = await fetch(FIREBASE_CLOUD_URL, { cache: 'no-store' });
-      if (curFbRes.ok) {
-        const curFb = await curFbRes.json();
-        if (curFb && curFb.users) {
-          state = smartMergeClientState(curFb, state);
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-        }
-      }
-    } catch (_) {}
-
-    const fbRes = await fetch(FIREBASE_CLOUD_URL, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(state)
-    });
-    if (fbRes.ok) synced = true;
-  } catch (_) {}
-
-  isOnline = synced;
-  updateSyncIndicator();
 }
 
 function updateSyncIndicator() {
@@ -1310,26 +1344,64 @@ function quickSwitchUser(userId) {
   const user = state.users.find(u => u.id === userId);
   if (!user) return;
   if (currentUser && user.id === currentUser.id) return;
-  if (!isFullAdmin(currentUser)) {
-    const enteredPin = prompt(`🔒 أدخل الباسورد / كود الدخول الخاص بحساب (${user.name}):`);
-    if (enteredPin === null) {
-      render();
-      return;
-    }
-    if (enteredPin.trim() !== user.pin) {
-      alert('⛔ الباسورد غير صحيح!');
-      render();
-      return;
-    }
+  if (isFullAdmin(currentUser)) {
+    currentUser = user;
+    sidebarOpen = false;
+    localStorage.setItem(SESSION_USER_KEY, user.id);
+    render();
+    return;
+  }
+  openQuickSwitchUserModal(user.id);
+  render();
+}
+
+function openQuickSwitchUserModal(targetUserId) {
+  const user = (state?.users || []).find(u => u.id === targetUserId);
+  if (!user) return;
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:440px;text-align:center;">
+        <div class="card-header">
+          <div class="card-title">🔒 تبديل الحساب إلى (${user.name})</div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+        <form onsubmit="submitQuickSwitchUserModal(event, '${user.id}')">
+          <div class="form-group" style="margin-bottom:14px;">
+            <label style="font-size:0.86rem;font-weight:800;margin-bottom:6px;">أدخل الباسورد / كود الدخول (PIN) الخاص بحساب (${user.name}):</label>
+            <input id="quick-switch-pin-input" type="password" inputmode="numeric" class="form-control" style="text-align:center;font-size:1.15rem;letter-spacing:3px;font-weight:800;padding:12px;" placeholder="••••" required autofocus />
+          </div>
+          <div style="display:flex;justify-content:center;gap:10px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-primary" style="padding:10px 22px;">✅ دخول كـ (${user.name})</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function submitQuickSwitchUserModal(e, targetUserId) {
+  e.preventDefault();
+  const user = (state?.users || []).find(u => u.id === targetUserId);
+  if (!user) return;
+  const enteredPin = (document.getElementById('quick-switch-pin-input')?.value || '').trim();
+  if (enteredPin !== String(user.pin || '').trim()) {
+    alert('⛔ الباسورد غير صحيح!');
+    return;
   }
   currentUser = user;
+  sidebarOpen = false;
   localStorage.setItem(SESSION_USER_KEY, user.id);
+  closeModal();
   render();
 }
 
 function logout() {
   localStorage.removeItem(SESSION_USER_KEY);
   currentUser = null;
+  sidebarOpen = false;
   render();
 }
 
@@ -1338,6 +1410,11 @@ function setTab(tabName) {
   activeTab = tabName;
   sidebarOpen = false;
   render();
+  try {
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  } catch (_) {}
 }
 
 const DEFAULT_FACTORY_LOGO_DATA_URL = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgMCAgMDAgMDAwMDBAcFBAQEBAkGBwUHCgkLCwoJCgoMDREODAwQDAoKDhQPEBESExMTCw4UFhQSFhESExL/2wBDAQMDAwQEBAgFBQgSDAoMEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhL/wAARCAEEAMUDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD9U6KKKACiiigAoorlPiV8UvC3wh8Lz+IPiJrFpo2lwceZM2WlftHGgy0jnsqgmk3bcaV9EdXSV+a3xW/4Kj+JfEWqSaT+z/4WWzidisOoarAbu7nGeGS2Q7UH+8W9wK8kvPiN+1J40lN1feL/ABRp/mHcI11KHTVB9BHHtIH1FebiM2wtD45pHo4fKcVW+GJ+wlFfjJqniv8AaZ0yEvN4y+IF3EoyxsvELTn/AL5V935CuCl/aK+L32k2958TPHdvKj7JBca1cRmI553jOQB9KmlnGHqq9N39Gi6mUYim7T09bn7sfnRX4zQ/8NB39lHd2fxG129trhBJFLB4wldZVPRlIPNV7W1+POqJJ5fj/Xi0Z/eRt4tuFZT7jNcz4iwK3mvvR0Lh7GtXUX9zP2hor8WrzQfjxaxGW58ceICi/eZfFly233OD0qaHw38dbiFZIPHusvGwyrr4vuSD+tT/AKy4H+dfeg/1dx38r+5n7QUV+LE2ifHCzlWK58e65D5h+V28XXQQnvznFbGmX/7SPgcm58O+OPEt1tYN5MXiL7WHI/6Zz5DfTFOPEeBbtzr70EuHsalfkf3M/Y6lr8y/hf8A8FOPG/gnV49I/aD8NLqtsjbZryztvsN/EM8sYTiOUAf3dmfU1+gvwu+LXhT4zeFYPEPw51i21fTZflcplZLeTHMcsZw0bj+6wHr05r2KOIp1leDPJrYepRdpo6+iiitzAKKKKACiiigAooooAKKKKACiiigDgfjh8Z9A+Avw71Lxd4ykb7NZgJbWsZHm31w2fLgjB/iYjr0ABY8A1+S+ta346/bK+IN14p8f30llolpKYoY4smCwj6/ZrVDwXxjc5+rZ4Wu+/bW+KF9+0l+0lF4H8N3LDw74QuZNPt2X5kM6/wDH5dEdDt2mNfZP9o1062tr4N0Gw0nw3bKgjUW9jb9ST1Z29Tklie5NfE8TZ7LDr2NL4n/V/wDI+y4cyWNb99V2X9f8OU9D0fQvh3ax6Z4R0xVupV/1MPzTzH+9NKeenrx6AVfW01a8+e+vhYq3IgsowSPq7Zz+FEUVt4ZsXnuGae6nYGR+rzyHoq98f/rqE2N5qR361cPArci0t5CoUejN1J/SvziU5TlzSd2+rP0GEIwjyxVkT/2PeMCbTWr9ZO3mhJR+IwDXGfELwfZeLrYw+PLKOO4xttNe09P3sJ7Bh/Gvqh/DB5rpJPDumqwUeZazE/K63BVs+wJ5qe2mls5hpfiAi5guQVhuJF+9/sN7+/0rWlUnRkpwev3E1acKsXCaujwHwH4u1T4IeMH8N+LpRJoN46szxnfEgf7l3Cf7hx8w9jn5lr6K1bSPtm24sHEF9EMxzKeJB2BPcEd/6V5F8cPBIuvDNy8a+ZNoam6s3I+Zrcn99H+H3/qh/vGun/Z/8WP4m+HsEF3IJLvQpTZOznJaMAGIn1+U7f8AgFermMY4nDRxsNJbS/zPLwTlhsQ8LJ3jvH07HcaPqg1G3ImUw3cHyzQ9Np9QPSq93C2gyNeWIJs3Obu3Xouf41Hb3H+RHrSjTNStNThBVXcQ3OP4gehP4A/kK3JMNuWQK4wQwPfP9K8FtKz6M9gikiiv7XDBJredQ3PQjsRWPbvJod+lncsZLC5OLeRusbf3D7f59an0HdZXF7pkhLLaNvgJ6lG5x/n1NWtY09dS06aEnLFS0ZP8LDpj+X40XtK3QZneMNB0vxFpf2TxRYRX9h0bfxJb/wC3G33lI7kfrXjui694z/Y5+JFn4p+Hd9LeaJeuEkimb9xqMQ5NtcqOA4GSsg+o/iWvbtHul1LSYmn/AHhZTHNnqSODn+f41kyaHaeJdE1XwxrwMlsV8vf1ZFPKOvoysAQa9fKc1rYKpv7vVfqjyszyuljKbTXvd/8AM/Rn4O/FnQ/jd8PdJ8X+Dpi9jqcfzwuR5lrMvEkMgHR0bIPrwRwRXa1+YH/BNX4nah8O/jX4g+FXiKY/ZNe854Iyflj1C2B3MvoJIVJ9/LSv0+XpX7Hhq6rU1NdT8lxNF0ajgxaKKK3MAooooAKKKKACiiigArivjT48X4Y/CXxf4qYgPoWj3F1DnoZVQ+WPxcqPxrta+aP+CiustpH7J/iqNGZTqdzZWZwOoa5jJH5KaipLlg2XTjzTSPzy/Zf0N7iTX/El+fNu5HWzWZuSzt+9mfPuSn617PYr9v1q9u3XK2mLWAdgerkfyrjf2dLNLX4W2EmBuury5mbHf95tH6IK7Pwr82lBhjM1xI75781+J5xWdTGVZPo7fdofsWVUlTwkF3V/vIbcHVPEVzcSENDpY8qAY4Eh+8317flXmPx2+LN34TaLw/4Vcw6teRiS4ulG5raNjhFQY/1jYznsMY5PHp3hNTJps75+aS6kJI9eK+dfEMf2/wDaWuIrz5lGqqse7/ZgBjH5gVvk9CnUxEpTV1BXsRmtapClGEHZyaV+xkwfBvxBrMbXmsahbQ3svzmO7d5pM/7b84P54rd+Gfi7WtJ19vBPiqSWZTIUtPOk3va3Cgsqq5+9G6g4HYlSO9emX9xZ6UyHWNQsbESbjGbq4WPcF+9jJGcZGceteZeH4R8QPjYdW8Oo8uk6PLFLLdlSquIowqn6u44HXbz2r16eLniqNRV4rkSbTts+ljz6uEp4SrTdBvnbSavuutz33U4V1rQ/9IXJnt3WT0IeMhv6mvG/2TrgpdeJbckshtbSXGf4g0i5/I16p4y1yPwv4E1e/d1RrWwdIwf4pXXYgHvuYV53+ynozWek6/qcn+ruJ4bSJj/F5almI/GRa8zDrlyvEN7NpL1udmK97MaKW6T+49h8V4/sC5LZJUoVx2O4VqQ5aGIsfmMabsnvgdayPETG7+yaegJkupgW/wBlF6n/AD6VrblUDoAv8WeAK8Fr3UeuZQA/4S2Xy+P9DG/B6cjH9K2VxuBIOMjv/SsTQy19cXmosMC5fZEG/uL0P06flV7VL5dPsZ5ckMq4jGPvMen+P4USWqQGf4XH+h3QXhPtcgHPAHFOjXy/Fj4/5a2Q3DtkEf4Va0OzNhpcEZGHYb2HU7jyRVbT8XWvX90vMUCrbxn1I5OPyqm9WM8vs7p/CH7bHgLUtPG2S51rSpHGcZ81vIcfiufzr9j6/HXwvYv8Qv24vBemaaDKNO1yxSVo+dq2o8+Y+ny7WH4V+xNfsfDqksDDm7L8j8jz9xeNny93+YtFFFe6eKFFFFABRRRQAUUUUAFfK/8AwUstZLn9lXVniBIttX0+WT2XzgufzYV9UV4T+3J4fPiT9lP4h28cfmS2umrex+xglSUn/vlDWVZXpyXkaUXapF+Z8IfABhL8KND6YRp0bPbE75/nXU+F2CWMkTDJtrqRSM8gZyK89/Zn1IXXw5mtSQWsNSlUj0DhXH/oRrvrRv7P8RXdvgBL5RPH3+buP5/lX4hmUXHF1o+d/wCvvP2XL5c2FptdkL4f/wBFuNRsj96G4Lgf7Lf/AKh+deF/tHeGLrw/4q07xno+FSdoknZefJuYseWx9mUAfVSO4r3LV86XqVvqUYPksPKusc8Ho3v6fgKk8VaXFrugzwPDFdxSIS0LrvWVCORjvxgj6CngMW8NiFV3T0Y8bhfrNFwvZ7r1POPDPjLw18StKiS/g0yS5XDT6ZfKjtHJ3ZA33h6Mv48101xq2jeEdL/0iTTNF0+H5ljVUgTOOoUdT9ASa8m1r9n2w1SMXXhPVPsS5+e0vkMoib0WRfmx3GQT71xV78FfENrdCLfpc7/wN9qKhvYFlHNe1HCYGtL3a7Uf5X/X+Z5rxWOox96hzS7o3PHXja/+Mmv2PhvwXbzNYrNuiEgKm4ccGeQfwRqCcZ6ZJPJAH0N4P8PW/gfwvY6NppMyWUZ3yYAM0jHLv7bmJ/DA7V8y6X8PvHvh5pToc/8AZ73ACy/ZdTWIyAcgEg5xmr66P8UVYIdb1ENJ3bXCM/r+ldGNwtGtTjRpVoxgvxfdnNhK9enUlWq0ZSnLy2XkfT1hautxJdXXzXUwA+XkRoOiD+p71FfCXVGNpZ5jgY/6RN7d0X1Pr2r5tj8P/Fbaf+J7qAUdjrx6/nUUei/E+R2iXX9QEifwNrjAjHoM15n9j09/rET0P7Srf8+JH1MsS28IihjKRoNqrjoB0qkLKW+vEnv1KxQHMEJ/V2Hr7V81/wDCL/FNjg6/ej66+/8AjUXw70H4k/Ez4lQeA9B8TXtt4huGnjij1DWpYI3kiUuyBxnLFVYgY5xWtDh/20rUqyb8jCtnTox5qtFpeZ9Q3v2plENjExlkGPMKnbGP73ufYVw/xD+JWm/CnRWtbV47rXXjP2OzLZKsf+W0wH3VB555bgDuRqr/AME//wBpCY4n8Raaqnru8VXB/klevfA3/gl1p2i6pBrXx71uLxLNHIJf7F0/etrI/X9/M2HlHqoCg98jivXwfB1RVE6rul/Wp5OK4sp+zapKzMv/AIJjfs/6gt1qPxh8aRSq+pQyWvh7z1+eZZGzcXf0YjYp7jeehGf0LrLu9R0fwjpcX2+503RdNtYxHH50qW0MSKAAoyQoAGAB2rM8GfE7wn8RZNSTwH4i0nxB/ZEqxXzaddLOsDsCVVmUkZIBPWv0OjSjSgoI+CrVZVZuTOnooorUyCiiigAooooAKKKKACsnxZ4fg8W+FtY0O+x9n1jT57ObIz8ssZQ/o1a1JQwPxR/Z/vLjwT4o8WeFdaRormzkxLG3VZbaUwy/owP/AAGvdtcs3uYI7mz/AOPqzbzI8fxjuPf6f41yP7bHgs/Aj9rpfFcUJ/sHxgRqrKv8RceVex/XJ8z/ALaCuq0u8FrMunzyhwVDWNx2niPK4PrjFfkfFGDdDGc66/p/wLH6rw3ilWwnL1X6/wDBuXLa6tta04sqiWGZSsiH+E9wf6fhWRY3cvh27Gnaq/8Aoz82t0emP7p9P6fSrGoafPpV09/pKh42P+lWo6N/tL/n9KuxyWXiDT8YSaFvvKeGQ/0NfNaLbZn0Bh69octncPf6Km7eM3Fr2ceq/wA/5VzUyw6tG2wbj/HG3DIf8966/wAm/wDDq4j36hpy87f44R/h+n0qO50fT/EUf2myby5x/wAtIxhlP+0P8/Wt6dTl3+8DgZBeaTxIr3Vt1Bx86fU96tIIdQt/lPmRsRtKnlT/AENbzQz6fcLb6yoAbiK6UfK/sfQ/596qaj4XktpDc6SAko5eLHEo+nrXR7VMVjEjvJLOYW18wZZOIZ+zex96s3VgLxR8xSZD+7kXgr/9arq2cGs2J+U7W4YfxRtVezmTT4Lpdamjgj09PMluJW2qI/7xJ/D65FVzX23BtRV3sR6bdNcb4Lpdt1Bw3+0Oxrzrxlq03w0+NXhXxjo7qt7p91a38kasNweCQbgwHI3R4HPXmqvir4pXviPWIrD4b210srkwpdRxkz3Of7i4+Qe55x/droPCX7NdxeYvPH2oSQyTHfJaWrB5Se4klOefpn619HgMN9QksTiJ8t/s7tn5xxPxfgY03h6fvPv/AJd/wR9U/Ef/AIKvaVbNJa/CXwXealIWxHfa5cC3jPuIY9zt+LLXh+v/ALWf7SnxcDjR7298P2En3V0XT109R/22kzJ+TV03h34feHPCoX+wdHs4JR/y3aPzJT7l2ya3orhLqNZYZFmjf7rq24HtwfwrtxPF05fwoaef/A/zPyqrnc38ET5f+Inw28ZR6De+JfiVrzanNE8Y8u61CW9lkZ2C/ebgYJz36V96/wDBKfwz/ZvwS8S6yybTrXiR0Tj7yQQxrn6bmf8AI18lftN60tn4P0/TtyhtQvPNcdxHEuc/Tcy1+kf7GXgdvh/+zL4D024j8q6udNGoXI7+ZcsZjn3AkA/Cve4fxNbFUfbVd3e39feenldWpWhzzPaqKKK+iPVCiiigAooooAKKKKACiiigD5o/b8+BMnxo+Bt3daHbG48SeDWbVNNVFy88YXFxAB3LxjIHdkSvg/4D+Krbxx4K/sLVJCdQ0BVEEgPztbn/AFbjPPyn5D/wD1r9h6/J/wDbL+Buofsv/Gi38ffD+02+EfEl08sMSjEVrcvkz2b46RuNzp6cgfcFfOcRZX9cw94/Etv6/A+h4fzP6pXSlszfj1W40iRLbXAWj6R3i85/3/f9fr1qW60ch/t2hyLBcMu7aMeXMD69v6fzpvh3xFpvjbw/bajpJFxYXy/NHJyY2H3o39GU8H8COCKrSRzeGpPOsy0+m7syRHrF7j2/yfWvyRxlGTi1aSP1OMoyipR1TNHTNYF4/kXEb217FkvC3fHce3tUOpaO8cxvtE/dXiffjH3Jh3BHTP8An3p+oWcOtWsc9pIEnQBre4Xj8Pp/LmpNH1Jr23dLtTFd2zbJoz3Pr9DUecRkFvJb+ItOZZE+V/kljzzG3+eQap6XvhuJdMvm3y2wDROf+WkZ6H8P89Ksagv9k6vDer8ttesIbnHQMT8r/X/D3o8SR/ZBa6jGvz2ku2T3jbgg/wCe9Un06MDG1j7N4bv5NSupY7fTZo2a7dvuxFeS3/1vc14JrOraz8c/F66b4btzb6fEd0ccnAjjB5mnI6t6DtnA5ya6X9oLxdPrmvWng3QSZ/Lmja5WPrNcPjy4h7KGDH3Yf3a9b+G/gO1+HvhuKwgEb3suJL64UczS/X+6vQD8e9fU4SMcvwscTUV6s/hXZd/6/wAz8l454olGTwlB6Lfzf+S/MTwD8N9I+Hth5Wkx+deyri5v5VHmTew/ur/sj8c101xcRWdvJPdyxwQQqXklkYKqKOpJPQVm+JvFOmeD9KfUPEFytvbrwi9Xlb+6i9WavFY5fEn7QmrFG8zRvBlpN+8VW5lx2J/jk/8AHV+vXmo4ari3KvWlaC3k/wAl3Z+UwpTrN1Juy6s7GHxVd/FzV7jTPC5mtPCdk+zU9T5SS+/6Ywnqqnu3XHpkZ9MggjtYY4baNIoYUCRxouFRQMAAegFVtH0ey8P6Zb6do1ulrZ2q7Y4k7epJ7knknvWT4/8AGEPgbwre6rMUM6Lss4mP+tnb7ij+Z9gawqy9vUjSoxtHZL9X5/kZy/eSUKa06Hlet6BJ8ef2k/DPgbTWaS2e+h0+Zk+YLHnzLt/+AorDP+zX7N2lrFY2sNvZxrFBBGscUa9EVRgAe2AK/PD/AIJc/Bee+1LxB8WPEkTPnzNM0WSQf6yRjuu5x+O2MH/roK/RWv1fLcMsPh4010PtcHRVGiooKKKK7zqCiiigAooooAKKKKACkzXzP+1v+294b/ZogGkafBH4j8cXcPmQaSk22OzQj5ZblxyoPUIPmYeg+avy9+LH7XXxX+Ml1M3izxfqdvYStldL0qVrK0Qf3diEFx7uWPvXBicxpUXy7s+tyPg3MM0gqqtCm+r6+i/4ZH7e6r488NaFIY9c8RaFp0g6rdajFER+DMK47x5N8MPjf4N1Pwh4k8Q+GNZ0vWIfKkit9YgaRG6pJGQxKyKwDKexAr8EH/eSF5Pndjks3JP40nlr/dX8q895zf7GnqfXx8Mopf7y7/4f+CfUnj7wL4x/Yp+J0uma0r6t4W1hzJZ3afLDq0A6Oh6R3CKQCv8ANSDXr3h7xHpvjDR49Q0C5S7s5wQT0ZTjlHXqrDPIP6ivnT4F/tF23hPRbrwB8aNNn8Y/C3W5A1zYNJm60iboLuycnKOvUqCA3PTJz2PjD4MeJvghZJ8RvgXryeOvhlqPK61Yp5giQH/UahAOY3XIG/Awf7h4r5/NMmpZhF1qGk1/Wv8Amck4YzIaqoYn3qb2ktv+A/L7j1KxU6Pqcljz9lucy22f4T3X/Pp707VFGm6taahGCI5m8i4HqD0P+fSvPvD/AMbNC8bWdql00ei65byK6W9xKDHOe/lSdDn+62D9eteka9EbjRZwwYN5YkXPXjkV8NiMPWoVOWrGzPeoYilXjzU5XRZ1i1+2aVdRYxmNivsV5B/SsjX9chtfAd9qt9zFDp5mfd0LAdPqWAH41r2U5uLGF2HEkIz+I5rxz4060dP+EtlYIxD6pqIhP/XOMmQ/hkJV5fhniMTCl3a+7r+BhmWK+q4OpW/lX49PxOf/AGe/Dk3iTxdf+KtZPmtYsxVm533UuSW/4CpP/fQr1b4kfFTTPh3Z7ZgL3VZVzBYxvg47PIf4V/U9q8p0f4jw/C/4XaXp+h+VdeItY33cg+8tqshIRm9X2quF/E++z8MfgpcahdjxJ8TA9zc3L+fHY3B3M7HnfP8A0T8/SvrsbRpyryxGKdqcdIrq7fofzXirVK0q9d6dO7Mjwn4B174y6wPEfxAnnh0nP7mMZQzLn/VxL/BH/tdT2z1r6B0/T7XSbGGz0y3itbW3UJFDEuFQe1WB0AAAAGAAOgrA8XePNE8D2pm8Q3qRSEZjtY/nml/3UHP4nA968XE4utjZqEI6LaKPPq1qleSilp0SNm8vbfTrSa61CaO3trdC8ssjYVFHUk14VoegeIf2wPjNpnhPwUktvpMLFmuXT5bG1BAlu5R/eI4Ve5Kr3NJoem+Pv2vPG0Xhj4d6bLFpcMivcF2ItrJP+e13KBjOOVQZJPCgnmv1K/Zs/Zt8Ofs2+Cf7H8OZvdUvisusaxNGBLfTAccfwxrkhUBwBnqSSfsMgyF0P31b4vy/4J72WZa6b9pU3O+8BeB9J+G3g3R/C/hO3+y6Todmlrax9TtUcsx7sxyxPckmt+sLxV400XwZDZy+Jb+KxS/uVtoC/wDE7fToB3PQd621YMoIII9a+ujOHM4J6o9xSjey3Q6ikrF8VeM9E8F6eLzxRqVtp8DEhPMb5pCOyqOWP0FOc4wjzSdkhykoq72NuivFpv2svBMcxSOPXJkBx5i2YAPuAWB/Su18BfFvw38SJJ4vC93PJcWsYkmgmt3jZFJwCcjHX0NcdHM8HWnyU6ib7XMKeLoVJcsZps7Siiiu46Ary39pb43Wf7P/AMHdd8Y3iJPd2kYg0u1fOLm8k+WFDjnbn5m/2VavUT0r8y/+Ct/xGkuPEvgnwHazj7NZWkms3sSnrLIxihz9FSX/AL7rmxlb2NGU1ue3w5lizHMqWHl8Ld36LV/fsfBPifxLqnjLxFqOu+KL2fUdW1a5e5vLqZstLIxyT7DsB0AAA4FZlFFfHN3d2f0nCEYRUYqyQUVoaH4f1PxNqcOneG9Ov9W1C4OIbSxt3nlkx1wigk/lWh4u+H3ijwBcw2/jrw7rnh6a4UtCmp2ElsZQOu3eBu69qfLK17aEOvSU1TclzPpfX7jn69G+Cvx/8afAPX21L4f6mYre6+XUNLul82y1BMYKzRHg8cbhhh2Nec0U4TlCV4uzJxGGo4im6VaKlF9Gfb/g/wAEfBr9uDUpbLwHaz/CH4pSW0lzLpMcP2nR9S2AF2iUY2HnJVdpABO18E1zHjD9n39ob9nqOeFtJv8AXvD8Sti40tTqtpsHGdmPNiGP9la8F+AXjqb4Z/GvwT4ltZDENL1u2acjvAzhJl+hjZx+NfvV4n12Hwt4a1bWrwbrfSLGe8lAOMpEhcjP0Wvaw2HpZhTcasbv+uh+KcV4J5DjIvCyahJXWu1t1fsfjPo/7TElhD9i8R+HlE0K7P8ARbkxOD/tRyDI6+tcd8TviFZ+NrDQrbS4Ly3j0tJ2nW424MkhXldpORhe9e2R/wDBQy/8UR4+L3wo+G/jUOSfOuLHyZwp6DcwcZAOMgChv2nv2fbz97qP7NGmC4flxb6wEjz7AIAPyr16fhxiMLiFWpU9V2f/AAT4bF8dU8ZhJUJ1LX7rs/Q8L+G/irwx4MvDqniLS9Q1bUopAbNVMYit8fx/Mcl/0H1rv779qkOSmkeH08w8L9pvs8/7qrk/nXbf8Nb/AAW00L/wj/7M3hQMhypvb5JMEfWE11um/tY/EZvDra38H/2b/C+i6QiF11ay8Lz3KKOpYPGiAjPOeRxWtbgGtWqe0xEFfzlp+Z8lOvl1WXM5OT8kzyrQY/j18aHWH4f+FNbjtZiB59npptoVB9bmbAA+jCusl/ZR8IfCDGt/th/Ee0s7t/3i+FPDtwb3VLs9dryHlfqBj/bFecePv23PjT8RIpINW8a3umWcgKta6LGtguPQtGA5H1avD7ieS6uJJ7qSSaeVi0ksjFncnuzHkn619PlfAFGhZ1Gku0f8zjqZ3h6Kthqevdn1npX7fVz4B8aeG7b4O+FNO8E/C7QL3ddeH7aNZLjVYW+WSS4mPLS7SWXBOGC5Zq/WTRdas/EWj2OqaPOtzYalbR3NrMnSSKRQyMPYgg1/PLX7B/8ABOD4gSeNv2ZdLsr6cS3fhK+n0lstlvKUiSHPoBHIqj/drt4jyihh8PTqUY2S0Z1ZDmVWtWnTqyvfVHM/tS+JJ9Y+JkmmSMfsmh2yRRJ23yKHdvqcqP8AgNehfsu/Fi51hG8Ia/K009nAZdNnc5ZolwGiJ7lcgj2yO1cd+1Z4LuNK8aReI4kZrDWokjkkA4jnjXG0ntuUAj6GsH9mu3K/E6LU55BBY6JYXF1eTscJHHsK5Y+mW/Q1+ERr4nD59K/2pWf+H/gIcalanmT83+H/AAx9W/En4gWHw38L3GraofMcfu7W2DYa5mP3UHt3J7AE18MeLvF+q+Odcn1bxHcG4uZThVH3IE7Ig7KP16nmuj+MvxOn+J3ix7qNpE0ixLRabA3GEzzIR/ebAPsMCuD/ADJPAA71ycQZxLGVvZ03+7jt5vv/AJHPmePeIqcsX7q/HzLui6PeeItWtNM0aBri+vpRFBGvdj3PoAMknsAa+7PhZ8NrH4ZeF4dOsQkt3JiS/utvzXEuOT/ujoB2H1NcF+zj8G28G6b/AMJB4kg265qMeIYXHNnAecH0duCfQYHrXtw4r6bhvJvq1P29Ve/LbyX+bPYynAexh7Sa95/ghaKKK+qPZEr8Vf8Agoprsmt/tceMkkIKaXHZWUWOyrbRsf8Ax52r9qjX4XftqStN+1Z8TGfqNbZfwWNAP0FeTnD/AHKXmfoXhvTUs0qSfSD/ADR4nRRRXzR+3H6d/wDBI/wLYw+CfG3jGa3ifU7vVU0uG4ZQWjgiiSRlU9QGeUE+uxfSvoP9u/wLp/jj9lvxyupW8cs+h6edVsZSuWgmgIfcp7ZUOp9mNeTf8Emv+Te/EH/Y23H/AKTW9fQf7V3/ACbR8T/+xVv/AP0S1fV4eK+pJeR+AZxiKn+tEp31VSP4NH4L0UUV8ofv4MxQblOGXkH0NfuZ+0prk2n/ALH/AI2v97CaXwc6Fh1zLCEP/odfhlJ9w/Sv3J/aN0iXXP2N/GNpaqzSf8IYZVC9T5cKyH9ENfS8NW+sa7Xj+Z+ReLH+70bb2n+SPxMHGPalpOvI6Glr+gz+UTsvgvoGn+KvjB4H0XxEqvpeq+IrG1vUY4DxPOispPoQcfjX74W1rDZ20VvZxRwQQII4oolCpGqjAVQOAAABgV/PFZ3c+n3cF3YytBdWsqzQSr1jkQhlYe4IB/Cv3B/Zb/aC0z9on4Vafr9nJFHrdoi2uvWCsN1rdhfmOP7j43oe4OOoOPieL6FR+zqr4Vp6M+t4ZrU1z038T1Py4/bz8K6d4P8A2qvGtnoFtHZ2l01rfNDGu1RLPAjyEAdMuWb6k14BX6PftefsK/Ev43/HjWvF/gqTw0ukaha2cUQvtQeKXdFCqNlRGwAyOOa8a/4defGf/nt4M/8ABtJ/8Zr1suzfBxwlONSquZJX+483HZXipYmo4U3Zt2Pkav0b/wCCR+sM2m/EvSWPyRXOn3aj0LpMjf8Aotfyrx3/AIdefGf/AJ7eDP8AwbSf/Ga+pv2Df2U/Hv7N/iLxhc/EJ9Dez16ztY7f+zrxpm8yJ5CdwKLgYfrXLnuZYOvgJwhUTlpb70dOT4DFUcZGc4NLX8j3D9ozXk0Dwpp5vbKHUtNvtQFvf2UvAniKMTtbqjggMrDoQK8Y/wCEL/trwU2kfBW/tL+21Sfz9YjvrtLbUH2n91bshwpjQc5B+ZjmvUP2sv8AkRtK/wCwqv8A6Levlb+IHuOh7iv554hxvsswlCcbppeTV97Pz6/8Fn7plfBWCzzKI1JNwqJyXMu19mdmP2fvG8ZzqWn2OmQD71xe6lDHGo9SQxP6VveB9P8ADHgnxjodvb3Ft4t1+51CGFrlYyLHTwXAJjzzLJ1wx+UdeteYSM0v+uZ5Mf32J/nW/wDDv/koHhr/ALC1v/6MFeHh8TQjWh7GnZ3Wrd+vRWS/M3wXhZl2AjOvWqOo4ptK1le34n3svfinUg70tfr5+dhRRRQAjdK/Cr9s/wD5Oq+Jv/Yek/8AQFr91W6V+FX7Z/8AydV8Tf8AsPSf+gLXkZz/AAY+p+jeGv8AyMav+D9UeL0UUV82ftR+sv8AwSa/5N78Qf8AY2XH/pNb19B/tXf8m0fE/wD7FW//APRLV8+f8Emv+Te/EH/Y2XH/AKTW9fWPxQ8DxfEz4d+JPCV5dy2EHiPTJ7CS6iQO8KyoVLAHgkZ6V9bhU5YOKXY/nfPqkafEVWctlNP8Ufz00V+nQ/4JCeGf+ij+IP8AwVw//FUf8OhPDP8A0UfxB/4K4f8A4qvD/svE9vxP1b/X3I/+fj/8Bf8AkfmJJ9w/Sv6GtL0i31/4d2emakpez1LRY7a4UHBaOSEKw/Imvh9v+CQnhnBH/Cx/EHP/AFC4f/iq++tJsRpel2dkrmRbO3SEOwwWCKFyR+FerlmFq0HJz0vY+B45z/AZrGisNJvl5r3TW9u/ofgL8SPAl98MPH3iDwnrSMl54f1CW0bd/Gqt8jj1DIVYH0YVzlfpD/wU4/Zrm1W3i+Lng+1aWewhS18TQxKSzQLxFdYH9z7j/wCztPRTX5vV+45Vj44zCxqLfr6n855lg5YXESg9unoFegfA/wCOHij9n/x1beJ/AdyFlUCK+sZifI1CDOTFKo7dww5U8j38/oruq0oVYOE1dM5KdSVOSnB2aP3Y/Z//AGhPC/7RPgiLX/Bk/lzxbY9U0uZh9o06cjlHHdTglXHDDkc5A9PBr8D/AIO/GPxP8DPG9p4o8AXv2a8g+S4t5MmC+hzloZl/iU/mpwQQRX7Kfs4ftJ+GP2kPBi6v4Xk+yapaBU1fRpnBmsJSO/8AejOCVccEehBA/NM6ySeBlzw1pv8ADyf+Z97lWbQxceSek1+Poeu0UlLXgHtHh/7WX/IjaV/2FV/9FvXyvX1R+1l/yI2lf9hVf/Rb18r1+XcV/wDIyfoj9u4E/wCRPH/FIK6D4d/8lA8Nf9ha3/8ARgrn66D4d/8AJQPDX/YWt/8A0YK8LC/7xT9V+Z9Rjv8Adan+F/kfe470tIO9LX7cfzSFFFFACN0r8Kv2z/8Ak6r4m/8AYek/9AWv3VbpX4Vftn/8nVfE3/sPSf8AoC15Gc/wY+p+jeGv/Ixq/wCD9UeL0UUV82ftR+sv/BJr/k3vxB/2Nlx/6TW9fbNfE3/BJr/k3vxB/wBjZcf+k1vX2wWxX2GB/wB3h6H83cU/8jnEf4mFFGaMius8AKWkzQDmgCK6tYL61mtr2GK4t7iNo5oZUDpIjDDKyngggkEGvyX/AG3P2KLr4G6lceMPhzbTXXw/vpt00Kgs+hyMeEbuYCThX/h4VuxP63VW1LTbTWdPubDVraC8sryJobi3njDxzRsMMrKeCCCQQa9HLMyq4Gtzw1T3Xc4cfgKeMp8st+jP54KK+uP22f2Jrv4F6hP4u+HNvPefD+8lzLEMvJokjHhHPUwEnCuenCt2LfI9fqWDxtHF0VVpO6f4H53isLUw1R06i1Cuu+FPxW8SfBfxvYeKvAV81nqdk2GViTFdREjdDMo+9G2OR1HBGCAa5Git6lONSLhNXTMYTlCSlF2aP3S/Zx/aE8P/ALRnw8t/EXhoi2vISIdW0uSQNLp9zjJRvVD1VujD0IIHq1fhf+zL8fdU/Z1+Kdh4k09pZtInK22vWCk4u7Mt82B/z0T76H1GOjGv3C0XWrLxFo9jqmizpdWGpW8dzazxnKyxOoZGHsQQa/L87yp4Gt7vwS2/yP0LKcxWMo+98S3/AMzx39rL/kRtK/7Cq/8Aot6+V6+qP2sv+RG0r/sKr/6LevlevxTiv/kZP0R/QnAn/Inj/ikFdB8O/wDkoHhr/sLW/wD6MFc/XQfDv/koHhr/ALC1v/6MFeFhf94p+q/M+ox3+61P8L/I+9x3paQd6Wv24/mkKKKKAEbpX4Vftn/8nVfE3/sPSf8AoC1+6rdK/Cr9s/8A5Oq+Jv8A2HpP/QFryM5/gx9T9G8Nf+RjV/wfqjxeiiivmz9qP1l/4JNf8m9+IP8AsbLj/wBJrevpH9pDXdR8L/AL4g6v4dvJ9P1TTfDt5cWd1A2HglWJirqexBGa+bv+CTX/ACb34g/7Gy4/9JrevoP9q7/k2j4n/wDYq3//AKJavrcM/wDY16H8850lLiSont7Rfmj8ev8Ahsb43/8ART/Fn/gWP8KP+Gxvjf8A9FP8Wf8AgWP8K8cor5j6xW/mf3n7p/Y+X/8APiH/AICv8j2KT9sf43iN/wDi5/iz7p/5fB/hX7cfDe+uNS+Hvhe81CZ7i6u9FtJp5n5aSRoULMfckk1/PHJ/q3/3T/Kv2x+OGqXui/sI6pfaPd3Vhe23gizaC5tZmiliby4eVdSCD7g172Rc9eq4OW7S+8/L/EvDYbB0aM6NNR+K9kleyR9HZozX4D/8Lk+IH/Q9+NP/AAf3X/xdH/C5PiB/0PnjT/wf3X/xdfpH+p9X/n6vuPwj/Win/wA+395+92paba6zp9zYatbQXlleQtDcW88YeOaNhhkZTwQQSCDX5K/tufsXXHwF1KTxZ8P4Zrr4fajOA0eS76LKx4ic9TCx4Rz04VudpbxHwh8X/Hs3i7QY5vHPjKSOTVbVXR9euSGUzICCC/IIr90fEXh3TfFmg6hoviOzg1DStUt3try1mXKTROMMpH0Nc8qeIyHEQfPzKW69P1N4yo5zRkuXlcdmfz00V6J+0H8I7n4GfGDxJ4NuS8lvpl1v0+Z+s9pIN8Dk+uwgH/aVq87r9ApVY1acakNnqfFVacqc3CW6Cv1n/wCCY/xTl8bfAefw1qUry3vga/NnGXOT9klBkgH0U+Yg9kFfkxX3T/wSZ1uS3+KXjrSPMIhvtBhuvL7M0M4UH8BMfzrxOJaEamXyfWNn/XyPWyGs6eNiuj0Ps/8Aay/5EbSv+wqv/ot6+V6+qP2sv+RG0r/sKr/6Levlev5g4r/5GT9Ef1fwJ/yJ4/4pBXQfDv8A5KB4a/7C1v8A+jBXP10Hw7/5KB4a/wCwtb/+jBXhYX/eKfqvzPqMd/utT/C/yPvcd6WkHelr9uP5pCiiigBDX4Vftof8nVfE3/sPSf8AoC1+6pr8Nf24tPk039rL4kxTDBk1VZl+kkEbj9GryM5/gx9T9F8NX/wpVV/c/VHhlFFFfNn7WfrL/wAEmv8Ak3vxB/2Nlx/6TW9fQf7V3/JtHxP/AOxVv/8A0S1fMH/BI/xRa3Pwr8a+H/Nj+26dr63rRZ+byp4ERWx6boXFe/ftweL7Pwj+yv8AEK41CZIm1HSm022VjzJNcERKqjucMT9FJ7V9Xh5L6kn5H8/ZzSn/AKzyjbV1I/i0fhxRRRXyh/QI2T/Vv/un+VftR+0F/wAmB61/2I1n/wCi4a/FiT/Vt/umv3C+Mugy6h+xH4h03Zumi+H4JX/aitFb+aV9Lw07YlPzj+Z+R+LC/wBloryn+SPxUopFOQD60tf0GfygbHgz/kc/D3/YXtP/AEclf0IV/PFo+o/2Pq9hqG0v9gu4rjaP4vLcNj9K/oN8P67aeJtB07WNIlWex1S0iuraRTkPHIoZTx7EV8NxjF81GXTX9D7DheS5ai66H5l/8FYvDsNj8VvBeswwqkuq6DLbzyD/AJaGCbK59wJsflXw3X3h/wAFaNctrr4heANJhkja60/R7q4nVXyUWaVAmR2z5LEV8H19Bw+5f2bSv5/mzxM6t9eqW/rQK+xv+CWCu37RmqlA2xfCtzvx0H7+3xn8a+Oa+5f+CTOmNN8WvHGoeWxS08OxQb8cKZbhWAz6kRH8qvPZcuX1fT9ScnV8dT9T7T/ay/5EfSv+wqv/AKLevlevqj9rL/kRtK/7Cq/+i3r5Xr+V+K/+Rk/RH9bcCf8AInj/AIpBXQfDv/koHhr/ALC1v/6MFc/XQfDv/koHhr/sLW//AKMFeFhf94p+q/M+ox3+61P8L/I+9x3paQd6Wv24/mkKKKKAENfkZ/wVO+H0nhn9oS08SRoBZ+MdHilDhcAz2/7mQH1OwQn/AIFX65188ftxfs6yftDfBe5stBiV/FPh6U6joeeDM6qRJb57eYmQO24ITwK48fQdag0t1qfScJ5pHLs1p1Zu0X7r9H1+Tsz8SaKlubeazuJYLyKWCeCRo5YpVKvG6nDKwPIIIIIqKvkT+i07q6Ot+GfxW8WfBzxMniD4a61daHqqxmJpYQrLNGSCUkRgVdSQDhgeQD1FdD8ZP2lPiN8fDZr8UfEc2p2unsXtbOKCO2t43IwX8uMAF8ZG45IBIGM15jRVqrNR5E9OxyywGFliFiJU06i+1ZX+8KKKWszrOl+GPhCb4gfEfwv4ZtEMkmvaxa2WAM4WSVVY/QKST7Cv6Ade8PW2u+F9R0KT91aahYS2LbRnbG8ZTgewNfmR/wAEt/2fbjxJ46uvil4gtWXR/DQktdFMkfFzfOu2SRc9RGhIz/ekGOVNfqavSvpsopSp0+fZs/DvETMoYrMI4eDuqas/V7/hY/nl1zQ7nwzrWo6PqSsl3pF5NZ3CsMEPE5Rsj6qapV9hf8FKPgPc/D74vN450q2I8O+OW8yaRF+W31BVAlRvTzABIPU+Z6V8e1+74DFxxWHhVj1X49T+b8bh5YevKnLoFezfDH9sL4t/B/wynh7wL4skt9Ghz9mtLuyhu1tckkiIyKSq5JO3OOeleM0VrWw9GtHlqxUl5mVKtUpS5qcmn5G14y8a698QvEl5r/jfVbvWdZ1Bg1xeXT7nfAwoGOFUAABQAAOgrFoorWMYxioxVkiJSlJ3erCv0/8A+CUPgaXSfhj4u8V3SBR4i1eO1tj3aK1Q5P08yVx/wE1+afhnw3qfjLxFpmg+GbWS91bWLqO1sreMcySu2FHsO5PYAntX7u/BP4Y2nwb+Ffhrwdpe149DsUimlUY8+c/NNL/wKRnb8a+V4rxahhlQW8n+C/4J9Fw5hXKu6r2j+bOH/ay/5EbSv+wqv/ot6+V6+qP2sv8AkR9K/wCwqv8A6Levlev5s4r/AORk/RH9S8Cf8ieP+KQV0Hw7/wCSgeGv+wtb/wDowVz9dB8O/wDkoHhr/sLW/wD6MFeFhf8AeKfqvzPqMd/utT/C/wAj73HelpB3pa/bj+aQooooAKQ0teSfHT9qz4W/s3x2v/C3vFdpo93frvtdPjhkubqZM43iGJWYJnI3EBcgjPFAHg/7ZX/BPuy+NV5c+MvhS9no3jaVS9/aTfJa6wQOGJH+rm4xvxhv4sH5q/Lv4gfDLxX8Ktak0n4jeH9U8P36MQI72AosnvG/3XX3UkV+3/wN/al+F37SFtcv8IvFdlrNzZLvurBo3trqBc43NDIqvtzgbgCvIGaxvFH7SXwT1n4vL8FPGGs6RqfjC5mSA6HfaW9xC0rxeasZkaMw7yhHBbOSB1OK8zFZZTrPmjoz7jIeOcZl1NUKsfaU1td6r0fbyZ+GVFfr1+0b8O/2RPgUmk33xw8KaD4eXxDLMli1lp92BK0QUyfLa8LgOvUDrXLfBLT/ANhr4y+KY9A+F9h4Z1TXnVmg0/UEv4ZLgKMt5a3JAkIAJIXJwCcYFef/AGNV/mR9gvEvAcutGd/l/mflpZWdxqV3Fa6bbz3d1M22KC3jMjyH0VVBJNfYv7NX/BNvxr8TNQstX+MEF14L8KBhI9tMNuo3y9diRn/Ug92cZHZT1H2J4b/ao/Za+FuheJNS8H3GheHLDwhq0OjaxNp3haeB4LuXzgkZKQ7nz9mm+YZHydeRk/4ej/s1f9FBk/8ABDf/APxmuuhlEIu9R3Pn818RcVXg6eEp+zv1bu/l0X4n0v4R8I6R4D8N6d4f8I2Fvpej6TbrBZ2kC4WJB+pJOSSeSSSck1sV4/8AGf8Aa2+FX7PtxoUHxa8Ux6JN4khafTo/sc9wZIlKguwjRti5YctjPPocdj8Svix4W+Efw+vvG/jzVFsPDGnRxSXF9HC9wAsrqkZCxhmYFnUcA9c166VtEfnMpSlJyk7tk3xL+Gnh/wCLngzUvC3jywTUdH1OPbLGTh42HKyRt1V1OCGHQivyh/aE/wCCf/xC+Dl9c33hGzuvG3hNSzRXunwl7q3T0ngX5sgfxoCp6/L0r9Z/APjzRPid4N0jxV4KvDf6Frtqt1YXJheIyxN0ba4DDp0IBrR12a4tNE1CfTWtku4bWV7drltsQkCEqXPZcgZPpmvVy3N8RgZfu9YvdPY8zH5ZRxkff0a6n888itDM8MytHNGcPG6lWU+hB5BpK/TnQ/EmrfFHxN8O7P47P+yt4gj1CW8g8aC31K2uLwOXdbNbImUsWP7oMOTknFe7Xf7CvwIvJC8nw50hGbk+TcXEQ/JZAK+pp8X0WvfptPys/wDI+dnwxWv7k18z8UK6PwF8OfFHxR1qPSfh5oOp+IL+RgPLsoC6x+8j/dRfdiBX7L6R+xP8DdDnWay+G3h55FOR9qWS5H5Ssw/SvXND8N6T4YsFsfDWmafpNkn3bextkgjX6KgAqK/F8OX9zTd/P/gF0eGJc372enkfLH7Fv7Dtv8AceLfiBJa6n47uYDHCsB3waRGw+ZI2P35GHDP6ZVeCS31zSdK8p/aG/aW8Ifsy+H9F1n4krq7Wevaqml2n9m2onfz2RnG4FlwuEPPP0r43FYutiqrq1Xds+pw2Gp4emqdNWSMb9rL/AJEfSv8AsKr/AOi3r5Xr798VeDdG8bWMVp4osUvreCXzY42dlCvgjPykdia5j/hQPgD/AKFy3/7/AEv/AMVXwudcO4nHYt1qcklZb3/yP0rhvi/B5ZgVh6sJNpt6Wtr8z4proPh3/wAlA8Nf9ha3/wDRgr6L+K3g34U/Bv4d67408XeG3bRvDtqbq8Fm0kkuwED5VLgE5I7ivMPC/wAcvgFceMPhJY6H4d1uHVvipbDUvC8jWrbYwjuAZj5p2HdG3ADDpXnUOEcZCrGbnHRp9f8AI9jE8f5fVozgqc7tNdOq9T67XvS0gGKWv0M/JAooooASvyn+Fdh4Q8af8FVfi1b/ALTKabe6haSXEfhKy8QbWtnZGiFsqpJ8jMLX5kU8HLMBuwa/Vmvnz9pL9hX4U/tS6hbar8RNMvrPxBawiBdZ0e5FtcvEOiSZVkkAzxuUkdAQKAMyPUP2e/2e7r4t+P8A4eWvguy8S+HdHS58WW+iSxiWJFVmhh8tDtiMrgAhQNzbS2SBX42al8Q/DOr+EL74qXPiu7j/AGg5/iINdit1tZ/Kjsh84Ikx5YcTkMBnhEA71+tmlf8ABLb4I6L8OtT8I6bb+JoI9clhbVNXXVF+3XkUTb0gZzHsWHzAjlVRctGhJO0V7TF+y/8ADGL4Zr4EXwdoZ0QaL/Y+82ERuTB5PlbjNt3ebjnf13fN1oA/On/gpp8XdN+MvwW/Zm+IOj24urTXri7vZLKP5yJQtqJrfvkrIrx/UVd0fw14l/aq/bC+EPi74a/APWPg34d8A6hBea9ql7pY05bxIp1l2NiONXbahjUKGY+a2cKOPqpv+CZ3wmk8B+GPCFxf+N5tG8H6zc6vpKSawheCacReYmfK/wBWTArbQBhmc5+avrL+dAH5mf8ABMbwpofjT4mftOaf4w0XStc0/wD4S23mFpqVnHdRBxcahtbY4I3AE4OM8ms79gf4b+EPEX7ZH7Tum+IvCvhrU9M0nWp1sLO90qCaGzUX9woESMpVBtAGFA4A9K+4vgP+yr4L/Z18QeNdZ+H7609349vUvNW/tC8WZRIryuPLARdozO/XPb0rI8H/ALGPgXwH4h+KOueF77xTZ6p8XI7lNduF1Fd0HnvI7tbHy/3bAyvgndjj0oA/KP8AaK+Mfw1/aV/aC+Mmv/FDxHPpml6J4el0b4ZxW9pNNHNc27/uXJjBCxOyzMd2B/pA/u17rF8ef+F1f8EffGFhqlx53iDwENO0PUNzZdoY722NrIfYw7Uz3aJ6+9/gn+x78LfgP4L/AOEa8J+G7PUrU3cl093rlvDe3Mkj4BzIUHACqAAABj1JNcN/w7n+E8Nn8SrDTX8U6bpXxWeN9d02z1JI7dGjuxdRmBPL/d7ZAQByAjsvQ8AG9+wfq1gv7IvwktmvbMXJ8OQL5Pnrvzk8YznPtXB/8FXL7X7D9jPxKfCr3UcU+o2UOsPbkgiyaXDgkc7S/lKexDEHgmk+G/8AwSx+C/wr8feH/GHhifxo2reGtQiv7IXOrRvEZY2DLvURAlcjkZFfW+q6TZa9pt1p2t2drqGn3sTQ3VrdQrLFPGwwyOjAhlIOCCMUAfiv8bLr9njw/wCIP2Wl/Z3m8Prd2up2F54s1CCQ+ciiW0wb12PyyBlnYqcbeeAMV+jn7ZH7Xx/Z38HeHP8AhXemaf4x8Z+N9Xj0vQLA3Y8gyNjMkhRskZZFCgjJccgA1o+OP2A/gT448D3HhZ/h9ouh2M94t4LnQ4VsrqOZQVDLKoyRtZhsbK89OBjwbxZ/wRx+GUekfaPhL4o8Y+FvFllNHc6Zql3dpeRwSowZS0aojdQCCrAggHnoQDtfgn+178SdP/aKT4LftZ+F/C3h3xJqujnVdF1TQLtjazoA7FHEjtziOUBgw5jIwcg1wX7b37dfjT9nn9pbwP4f+Gk+n+JND1HQTNfeHYY4ZJLy+lknit1M2C8YLiE7VIJCn+9mrcf/AAS5vPjB4svPFf7ZHxR1nx/rz2kVnY/2Lbx6alvDGSRk7CD1Y4VFGWYksTWt/wAOc/gJnP2jx7kf9RqL/wCM0AcN49+E/wC0/D8Nda+KOvftHx6X440mxk1YeC9HEa6bCkSGRrXIfY7hVI5jcEjBZgd1eY/tjfH6X9oj9hL4EePfECW9pqdz45jg1gRjbEtzbxXMcrqP4VbYHA7Bsdq+h/8Ahzj8A/8An48e/wDg6i/+M163D+wT8Jv+GfYfg5qNhq2peErXUX1K0kur7/TLW6YsTJHKqrg4ZlxjBDEEHNAGx+1FdeNvG3wP1K2/Zi8aeHtH8XXZiktL+TUIlWW3zmRYpSGVXZcbX4x/eXrX5K6F8RPHCXNpoHg/4kfHX/hpI+IjplxpM/iWK60eXax3yGUvtKgAjDFl4Jztr73X/gjl8AgwJm8eEen9tR4/9E10mqf8Eov2eNS8LWWjQ+G9X0+WzkaT+1bXWJftk5bGRIz7kYcDA2ADnGMnIBY/a01i/wBJ/wCCfPjSy+KHijQtZ8XHwrHBqd5ZNHDFdXjOgIjjB7scDAGcZwM4Hx38OVK/GX9goMCD/wAIq55HYzXGK+nbP/gjx8ALa6jlm/4Te7SNgzQTa2oSQDsSkStj6EH3r3jW/wBkf4f6z8SPhz40jtdQ0y/+Fdktl4bsdPuFis4YFBCo0ZUlgAccMOgoA9pooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigD/2Q==';
@@ -1505,6 +1582,7 @@ function render() {
   const pendingApprovalsCount =
     (state.productionOrders || []).filter(o => {
       const st = o.stage || o.status;
+      if (st === 'pending_warehouse_prep' && isWarehouseOrAdmin) return true;
       return st === 'pending_accountant_release' || st === 'ready_for_car_dispatch';
     }).length +
     (state.approvalRequests || []).filter(r => r.stage === 'pending_financial' || r.stage === 'pending_warehouse').length +
@@ -1519,6 +1597,7 @@ function render() {
 
   appEl.innerHTML = `
     <div class="app-layout">
+      ${sidebarOpen ? `<div class="sidebar-backdrop" onclick="sidebarOpen=false; render();"></div>` : ''}
       <!-- Sidebar -->
       <aside class="sidebar ${sidebarOpen ? 'open' : ''}">
         <div class="sidebar-brand" style="cursor:pointer;" onclick="openFactoryLogoModal()" title="اضغط لرفع أو تغيير لوجو الشركة">
@@ -2226,12 +2305,18 @@ function renderDashboard() {
             <div style="font-weight:900;font-size:1.08rem;color:#b45309;">
               📦 تنبيه فوري للمدير الإداري وأمين المخزن: يوجد (${prepOrdersForWarehouse.length}) أمر تجهيز طلبية معتمد وجاهز للتجهيز الآن!
             </div>
-            <div style="font-size:0.9rem;margin-top:4px;">
-              ${prepOrdersForWarehouse.map(o => `<strong>${o.orderNumber}</strong> للعميل <strong>${o.clientName}</strong> (${fmtNum(o.totalSheetsCount || 0, 0)} قطعة)`).join(' — ')}
+            <div style="font-size:0.9rem;margin-top:6px;display:flex;flex-direction:column;gap:6px;">
+              ${prepOrdersForWarehouse.map(o => `
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                  <span>• <strong>${o.orderNumber}</strong> للعميل <strong>${o.clientName}</strong> (${fmtNum(o.totalSheetsCount || 0, 0)} قطعة)</span>
+                  <button type="button" class="btn btn-sm btn-outline" onclick="openClientOrderStatementModal('${o.id}')">📄 عرض الكميات</button>
+                  <button type="button" class="btn btn-sm btn-success" onclick="approveOrderWarehousePrep('${o.id}')">✅ موافقة التجهيز والخروج الآن</button>
+                </div>
+              `).join('')}
             </div>
           </div>
-          <button class="btn btn-primary" onclick="setTab('production')">
-            📋 فتح أوامر تجهيز الطلبيات والموافقة الآن
+          <button type="button" class="btn btn-primary" onclick="setTab('production')">
+            📋 فتح جميع أوامر تجهيز الطلبيات
           </button>
         </div>
       </div>
@@ -2244,12 +2329,17 @@ function renderDashboard() {
             <div style="font-weight:900;font-size:1.08rem;color:var(--danger);">
               🚚 أمر فوري بصرف الطلبية وتحميل السيارة: يوجد (${carDispatchOrdersForWarehouse.length}) طلبية معتمدة من الحسابات وجاهزة للتحميل!
             </div>
-            <div style="font-size:0.9rem;margin-top:4px;">
-              ${carDispatchOrdersForWarehouse.map(o => `<strong>${o.orderNumber}</strong> للعميل <strong>${o.clientName}</strong> (${fmtNum(o.totalSheetsCount || 0, 0)} قطعة)`).join(' — ')}
+            <div style="font-size:0.9rem;margin-top:6px;display:flex;flex-direction:column;gap:6px;">
+              ${carDispatchOrdersForWarehouse.map(o => `
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                  <span>• <strong>${o.orderNumber}</strong> للعميل <strong>${o.clientName}</strong> (${fmtNum(o.totalSheetsCount || 0, 0)} قطعة)</span>
+                  <button type="button" class="btn btn-sm btn-danger" onclick="openVehicleDispatchVoucherModal('${o.id}')">🚚 عمل إذن صرف السيارة الآن</button>
+                </div>
+              `).join('')}
             </div>
           </div>
-          <button class="btn btn-danger" onclick="setTab('approvals')">
-            🚚 فتح إذن صرف السيارة الآن
+          <button type="button" class="btn btn-danger" onclick="setTab('approvals')">
+            🚚 فتح أذون تحميل وصرف السيارات
           </button>
         </div>
       </div>
@@ -2339,38 +2429,38 @@ function renderDashboard() {
     <div class="card">
       <div class="card-header">
         <div class="card-title">📐 حاسبة القشرة الخشبية الفورية (تحويل البالتة والأفرخ إلى م² و م³)</div>
-        <span class="badge badge-info">المقاس الطبيعي: 250 سم × 125 سم = 3.125 م² للفرخ</span>
+        <span class="badge badge-info">المقاس المعتمد: 125 سم × 250 سم = 3.125 م² للفرخ (أو مقاس خاص)</span>
       </div>
       <div class="form-grid">
         <div class="form-group">
           <label>طول الفرخ (سم)</label>
-          <input type="number" class="form-control" value="${quickCalc.lengthCm}" oninput="quickCalc.lengthCm=this.value; render();" />
+          <input id="qc-len-input" type="number" step="0.5" class="form-control" value="${quickCalc.lengthCm}" oninput="quickCalc.lengthCm=this.value; updateQuickCalcPreview();" />
         </div>
         <div class="form-group">
           <label>عرض الفرخ (سم)</label>
-          <input type="number" class="form-control" value="${quickCalc.widthCm}" oninput="quickCalc.widthCm=this.value; render();" />
+          <input id="qc-wid-input" type="number" step="0.5" class="form-control" value="${quickCalc.widthCm}" oninput="quickCalc.widthCm=this.value; updateQuickCalcPreview();" />
         </div>
         <div class="form-group">
           <label>التخانة (مم)</label>
-          <input type="number" step="0.1" class="form-control" value="${quickCalc.thicknessMm}" oninput="quickCalc.thicknessMm=this.value; render();" />
+          <input id="qc-thk-input" type="number" step="0.05" class="form-control" value="${quickCalc.thicknessMm}" oninput="quickCalc.thicknessMm=this.value; updateQuickCalcPreview();" />
         </div>
         <div class="form-group">
           <label>عدد الأفرخ في البالتة</label>
-          <input type="number" class="form-control" value="${quickCalc.sheetsPerPallet}" oninput="quickCalc.sheetsPerPallet=this.value; render();" />
+          <input id="qc-sheets-input" type="number" class="form-control" value="${quickCalc.sheetsPerPallet}" oninput="quickCalc.sheetsPerPallet=this.value; updateQuickCalcPreview();" />
         </div>
         <div class="form-group">
           <label>عدد البالتات</label>
-          <input type="number" class="form-control" value="${quickCalc.palletsCount}" oninput="quickCalc.palletsCount=this.value; render();" />
+          <input id="qc-pallets-input" type="number" class="form-control" value="${quickCalc.palletsCount}" oninput="quickCalc.palletsCount=this.value; updateQuickCalcPreview();" />
         </div>
         ${canSeeFinancialPrices() ? `
         <div class="form-group">
           <label>سعر المتر المكعب (م³)</label>
-          <input type="number" class="form-control" value="${quickCalc.pricePerM3}" oninput="quickCalc.pricePerM3=this.value; render();" />
+          <input id="qc-price-input" type="number" class="form-control" value="${quickCalc.pricePerM3}" oninput="quickCalc.pricePerM3=this.value; updateQuickCalcPreview();" />
         </div>
         ` : ''}
       </div>
 
-      <div class="calc-preview-box">
+      <div id="qc-live-preview-box" class="calc-preview-box">
         <div class="calc-preview-item">
           <span>مساحة الفرخ الواحد</span>
           <strong>${fmtNum(qcMetrics.sheetAreaM2, 4)} م²</strong>
@@ -2397,11 +2487,11 @@ function renderDashboard() {
     </div>
 
     <!-- Two Columns: Active Client Preparation Orders & Warehouse Summary by Grade/Thickness -->
-    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(420px, 1fr));gap:20px;">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:16px;">
       <div class="card">
         <div class="card-header">
           <div class="card-title">⏳ أوامر تجهيز الطلبيات وأذون الصرف الجارية</div>
-          <button class="btn btn-sm btn-primary" onclick="setTab('production')">عرض أوامر التجهيز (${activeVisibleOrders.length})</button>
+          <button type="button" class="btn btn-sm btn-primary" onclick="setTab('production')">عرض أوامر التجهيز (${activeVisibleOrders.length})</button>
         </div>
         ${activeVisibleOrders.length === 0 ? `<p style="color:var(--text-muted);font-size:0.9rem;">لا توجد أوامر تجهيز طلبيات معلقة حالياً.</p>` : `
           <div class="table-responsive">
@@ -2412,23 +2502,38 @@ function renderDashboard() {
                   <th>العميل</th>
                   <th>إجمالي الكمية</th>
                   <th>المرحلة الحالية</th>
-                  <th>إجراء</th>
+                  <th>إجراء سريع</th>
                 </tr>
               </thead>
               <tbody>
-                ${activeVisibleOrders.map(o => `
+                ${activeVisibleOrders.map(o => {
+                  const st = o.stage || o.status || 'pending_executive';
+                  return `
                   <tr>
                     <td><strong>${o.orderNumber}</strong><br/><small>${o.date || ''}</small></td>
                     <td><strong>${o.clientName}</strong></td>
                     <td><strong>${fmtNum(o.totalSheetsCount || 0, 0)} قطعة</strong> (${fmtNum(o.totalVolumeM3 || 0, 3)} م³)</td>
                     <td>${getOrderStageBadge(o)}</td>
                     <td>
-                      <button class="btn btn-sm btn-primary" onclick="setTab('${(o.stage === 'pending_accountant_release' || o.stage === 'ready_for_car_dispatch') ? 'approvals' : 'production'}')">
-                        👁️ فتح
-                      </button>
+                      <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                        <button type="button" class="btn btn-sm btn-outline" onclick="openClientOrderStatementModal('${o.id}')">📄 البيان</button>
+                        ${st === 'pending_warehouse_prep' && isWarehouseOrAdmin ? `
+                          <button type="button" class="btn btn-sm btn-success" onclick="approveOrderWarehousePrep('${o.id}')">✅ موافقة التجهيز</button>
+                        ` : ''}
+                        ${st === 'ready_for_car_dispatch' && isWarehouseOrAdmin ? `
+                          <button type="button" class="btn btn-sm btn-danger" onclick="openVehicleDispatchVoucherModal('${o.id}')">🚚 إذن السيارة</button>
+                        ` : ''}
+                        ${st === 'pending_executive' && isExec ? `
+                          <button type="button" class="btn btn-sm btn-primary" onclick="approveOrderExecutive('${o.id}')">✅ موافقة</button>
+                        ` : ''}
+                        ${st === 'pending_accountant_release' && isAccountantRole ? `
+                          <button type="button" class="btn btn-sm btn-accent" onclick="openAccountantReleaseModal('${o.id}')">💳 اعتماد الصرف</button>
+                        ` : ''}
+                      </div>
                     </td>
                   </tr>
-                `).join('')}
+                `;
+                }).join('')}
               </tbody>
             </table>
           </div>
@@ -2469,6 +2574,44 @@ function renderDashboard() {
       </div>
     </div>
   `;
+}
+
+function updateQuickCalcPreview() {
+  const qcTotalSheets = Number(quickCalc.sheetsPerPallet || 0) * Number(quickCalc.palletsCount || 0);
+  const qcMetrics = calculateVeneerMetrics(
+    quickCalc.lengthCm,
+    quickCalc.widthCm,
+    quickCalc.thicknessMm,
+    qcTotalSheets
+  );
+  const qcTotalValue = qcMetrics.totalVolumeM3 * Number(quickCalc.pricePerM3 || 0);
+  const box = document.getElementById('qc-live-preview-box');
+  if (box) {
+    box.innerHTML = `
+      <div class="calc-preview-item">
+        <span>مساحة الفرخ الواحد</span>
+        <strong>${fmtNum(qcMetrics.sheetAreaM2, 4)} م²</strong>
+      </div>
+      <div class="calc-preview-item">
+        <span>إجمالي عدد الأفرخ</span>
+        <strong>${fmtNum(qcTotalSheets, 0)} فرخ</strong>
+      </div>
+      <div class="calc-preview-item">
+        <span>إجمالي المساحة (م²)</span>
+        <strong>${fmtNum(qcMetrics.totalAreaM2, 2)} م²</strong>
+      </div>
+      <div class="calc-preview-item">
+        <span>إجمالي الحجم الفعلي (م³)</span>
+        <strong>${fmtNum(qcMetrics.totalVolumeM3, 4)} م³</strong>
+      </div>
+      ${canSeeFinancialPrices() ? `
+      <div class="calc-preview-item">
+        <span>القيمة الإجمالية التقديرية</span>
+        <strong>${fmtMoney(qcTotalValue)}</strong>
+      </div>
+      ` : ''}
+    `;
+  }
 }
 
 // ============================================================================
@@ -2789,12 +2932,12 @@ function renderFinishedVeneerWarehouse() {
                       ` : `
                         <div style="color:var(--text-muted);font-size:0.74rem;font-weight:600;">0</div>
                       `}
-                      <div class="cell-action-hint" onclick="event.stopPropagation();">
-                        <button class="cell-mini-btn" title="إضافة كميات إنتاج" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'in')">+إنتاج</button>
-                        <button class="cell-mini-btn" style="background:rgba(124,58,237,0.14);color:#6d28d9;border-color:#8b5cf6;" title="إضافة مرتجع مبيعات" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'sales_return')">مرتجع</button>
+                      <div class="cell-action-hint">
+                        <button type="button" class="cell-mini-btn" title="إضافة كميات إنتاج" onclick="event.stopPropagation(); openMatrixCellModal('${t.id}', '${g.id}', 'in')">+إنتاج</button>
+                        <button type="button" class="cell-mini-btn" style="background:rgba(124,58,237,0.14);color:#6d28d9;border-color:#8b5cf6;" title="إضافة مرتجع مبيعات" onclick="event.stopPropagation(); openMatrixCellModal('${t.id}', '${g.id}', 'sales_return')">مرتجع</button>
                         ${hasStock ? `
-                          <button class="cell-mini-btn" style="background:rgba(16,185,129,0.15);color:#059669;border-color:#10b981;" title="خروج الكميات حسب المبيعات" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'out')">بيع</button>
-                          <button class="cell-mini-btn" title="خروج الكميات لإعادة التشغيل" onclick="openMatrixCellModal('${t.id}', '${g.id}', 'rework')">تشغيل</button>
+                          <button type="button" class="cell-mini-btn" style="background:rgba(16,185,129,0.15);color:#059669;border-color:#10b981;" title="خروج الكميات حسب المبيعات" onclick="event.stopPropagation(); openMatrixCellModal('${t.id}', '${g.id}', 'out')">بيع</button>
+                          <button type="button" class="cell-mini-btn" title="خروج الكميات لإعادة التشغيل" onclick="event.stopPropagation(); openMatrixCellModal('${t.id}', '${g.id}', 'rework')">تشغيل</button>
                         ` : ''}
                       </div>
                     </td>
@@ -3817,17 +3960,37 @@ function renderApprovals() {
   const isWarehouseOrAdmin = currentUser.roleKey === 'admin_manager' || currentUser.roleKey === 'warehouse_keeper' || isExec;
   const isAccountantOrExec = ['accountant', 'accounts_manager', 'accounting_manager', 'ceo', 'projects_manager'].includes(currentUser.roleKey);
 
-  // Orders that reached Stage 3 (pending_accountant_release), Stage 4 (ready_for_car_dispatch), or Completed
+  // Orders that reached Stage 2 (pending_warehouse_prep for warehouse/admin), Stage 3 (pending_accountant_release), Stage 4 (ready_for_car_dispatch), or Completed
   const releaseOrders = (state.productionOrders || []).filter(o => {
     const st = o.stage || o.status;
+    if (st === 'pending_warehouse_prep' && isWarehouseOrAdmin) return true;
     return st === 'pending_accountant_release' || st === 'ready_for_car_dispatch' || st === 'completed';
   });
 
-  const readyForCarOrders = releaseOrders.filter(o => o.stage === 'ready_for_car_dispatch');
-  const waitingAccountantOrders = releaseOrders.filter(o => o.stage === 'pending_accountant_release');
+  const pendingPrepOrders = releaseOrders.filter(o => (o.stage || o.status) === 'pending_warehouse_prep');
+  const readyForCarOrders = releaseOrders.filter(o => (o.stage || o.status) === 'ready_for_car_dispatch');
+  const waitingAccountantOrders = releaseOrders.filter(o => (o.stage || o.status) === 'pending_accountant_release');
 
   return `
     ${renderSalesReturnsSection()}
+
+    ${pendingPrepOrders.length > 0 && isWarehouseOrAdmin ? `
+      <div class="card" style="background:rgba(217,119,6,0.12);border:2px solid #d97706;padding:16px 20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <div style="font-weight:900;font-size:1.05rem;color:#b45309;">
+              📦 بانتظار موافقة التجهيز والخروج من المخزن: يوجد (${pendingPrepOrders.length}) طلبية جاهزة لموافقة أمين المخزن أو المدير الإداري!
+            </div>
+            <small style="color:var(--text-main);">
+              بمجرد الضغط على موافقة التجهيز سيتم خصم الكميات من جدول كميات القشرة فوراً وتحويل الطلبية للمحاسب لاعتماد إذن الصرف.
+            </small>
+          </div>
+          <button type="button" class="btn btn-success" onclick="approveOrderWarehousePrep('${pendingPrepOrders[0].id}')">
+            ✅ موافقة التجهيز والخروج بالمخزن الآن (${pendingPrepOrders[0].orderNumber})
+          </button>
+        </div>
+      </div>
+    ` : ''}
 
     ${readyForCarOrders.length > 0 && isWarehouseOrAdmin ? `
       <div class="card" style="background:rgba(220,38,38,0.08);border:2px solid var(--danger);padding:16px 20px;">
@@ -3941,22 +4104,28 @@ function renderApprovals() {
                     <td>${getOrderStageBadge(ord)}</td>
                     <td>
                       <div style="display:flex;flex-direction:column;gap:4px;">
-                        <button class="btn btn-sm btn-outline" onclick="openClientOrderStatementModal('${ord.id}')">${canSeeFinancialPrices() ? '📄 بيان العميل' : '📄 بيان الكميات'}</button>
+                        <button type="button" class="btn btn-sm btn-outline" onclick="openClientOrderStatementModal('${ord.id}')">${canSeeFinancialPrices() ? '📄 بيان العميل' : '📄 بيان الكميات'}</button>
+
+                        ${st === 'pending_warehouse_prep' && isWarehouseOrAdmin ? `
+                          <button type="button" class="btn btn-sm btn-success" onclick="approveOrderWarehousePrep('${ord.id}')">
+                            ✅ موافقة التجهيز والخروج بالمخزن
+                          </button>
+                        ` : ''}
 
                         ${st === 'pending_accountant_release' && isAccountantOrExec ? `
-                          <button class="btn btn-sm btn-primary" style="background:#7c3aed;" onclick="openAccountantReleaseModal('${ord.id}')">
+                          <button type="button" class="btn btn-sm btn-primary" style="background:#7c3aed;" onclick="openAccountantReleaseModal('${ord.id}')">
                             💳 اعتماد الصرف
                           </button>
                         ` : ''}
 
                         ${st === 'ready_for_car_dispatch' && isWarehouseOrAdmin ? `
-                          <button class="btn btn-sm btn-danger" onclick="openVehicleDispatchVoucherModal('${ord.id}')">
+                          <button type="button" class="btn btn-sm btn-danger" onclick="openVehicleDispatchVoucherModal('${ord.id}')">
                             🚚 إذن صرف السيارة
                           </button>
                         ` : ''}
 
                         ${car ? `
-                          <button class="btn btn-sm btn-success" onclick="printVehicleDispatchVoucher('${ord.id}')">
+                          <button type="button" class="btn btn-sm btn-success" onclick="printVehicleDispatchVoucher('${ord.id}')">
                             🖨️ طباعة إذن السيارة
                           </button>
                         ` : ''}
@@ -5494,6 +5663,8 @@ function openClientOrderStatementModal(orderId) {
   const modalRoot = document.getElementById('modal-root');
   const items = Array.isArray(ord.items) ? ord.items : [];
   const isExec = isFullAdmin(currentUser);
+  const isWarehouseOrAdmin = isExec || ['admin_manager', 'warehouse_keeper'].includes(currentUser?.role);
+  const canEditQuantities = isExec || canSeeFinancialPrices() || (isWarehouseOrAdmin && ord.stage === 'pending_warehouse_prep');
   const thicknesses = getSortedThicknesses();
   const grades = state.catalog?.grades || [];
 
@@ -5502,18 +5673,40 @@ function openClientOrderStatementModal(orderId) {
       <div class="modal-box" style="max-width:960px;">
         <div class="card-header">
           <div>
-            <div class="card-title">${canSeeFinancialPrices() ? `📄 بيان للعميل بالطلبية (${ord.orderNumber}) — تعديل البيان والمقاسات والتخانات والأسعار والخصم` : `📄 بيان كمياتومقاسات الطلبية للتجهيز بالمخزن (${ord.orderNumber}) — كميات فقط`}</div>
+            <div class="card-title">${canSeeFinancialPrices() ? `📄 بيان للعميل بالطلبية (${ord.orderNumber}) — تعديل البيان والمقاسات والتخانات والأسعار والخصم` : `📄 بيان كميات ومقاسات الطلبية للتجهيز بالمخزن (${ord.orderNumber}) — كميات فقط`}</div>
             <small style="color:var(--text-muted);">
               العميل: <strong>${ord.clientName} (${ord.clientCode || 'CL'})</strong> | التاريخ: <strong>${ord.date}</strong> | الحالة: ${getOrderStageBadge(ord)}
             </small>
           </div>
-          <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
         </div>
 
         ${ord.stage === 'completed' && isExec ? `
           <div style="background:rgba(2,132,199,0.1);border:2px solid #0284c7;padding:10px 14px;border-radius:10px;margin-bottom:12px;font-size:0.85rem;">
             🔄 <strong>صلاحية المدير التنفيذي / مدير المشروعات (تعديل مع إرجاع أرصدة المخازن تلقائياً):</strong><br/>
             هذه الطلبية تم صرفها بالفعل من المخزن. عند تعديل أي كمية أو مقاس أو تخانة أو جودة وحفظ التعديل، سيقوم النظام <strong>بإرجاع الأرصدة القديمة للمخزن تلقائياً وخصم الأرصدة الجديدة</strong> وتحديث فاتورة العميل وإذن الصرف فوراً!
+          </div>
+        ` : ''}
+
+        ${ord.stage === 'pending_warehouse_prep' && isWarehouseOrAdmin ? `
+          <div style="background:rgba(124,58,237,0.12);border:2px solid #7c3aed;padding:10px 14px;border-radius:10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+            <div style="font-size:0.84rem;">
+              📦 <strong>أمر تجهيز بالمخزن:</strong> يمكنك مراجعة الكميات والمقاسات أدناه والضغط مباشرة على زر <strong>موافقة التجهيز والخروج</strong> ليتم خصم الكمية من المخزن وتحويلها للمحاسب.
+            </div>
+            <button type="button" class="btn btn-sm btn-success" style="font-weight:800;" onclick="saveClientOrderStatementChanges(null, '${ord.id}', false, true)">
+              ✅ موافقة التجهيز والخروج من المخزن الآن
+            </button>
+          </div>
+        ` : ''}
+
+        ${ord.stage === 'ready_for_car_dispatch' && isWarehouseOrAdmin ? `
+          <div style="background:rgba(22,163,74,0.12);border:2px solid #16a34a;padding:10px 14px;border-radius:10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+            <div style="font-size:0.84rem;">
+              🚚 <strong>جاهز للتحميل وصرف السيارة:</strong> تمت مراجعة الحسابات — اضغط لفتح إذن صرف وتحميل السيارة الآن.
+            </div>
+            <button type="button" class="btn btn-sm btn-primary" style="font-weight:800;" onclick="closeModal(); openVehicleDispatchVoucherModal('${ord.id}')">
+              🚚 فتح إذن صرف وتحميل السيارة الآن
+            </button>
           </div>
         ` : ''}
 
@@ -5586,7 +5779,7 @@ function openClientOrderStatementModal(orderId) {
                       ` : `<strong>${it.gradeName}</strong>`}
                     </td>
                     <td>
-                      <input id="stmt-sheets-${idx}" type="number" min="0" class="form-control" style="width:82px;padding:4px 6px;font-weight:800;" value="${it.sheetsCount}" oninput="recalcStatementModalLive('${ord.id}')" ${canSeeFinancialPrices() ? '' : 'readonly'} required />
+                      <input id="stmt-sheets-${idx}" type="number" min="0" class="form-control" style="width:82px;padding:4px 6px;font-weight:800;" value="${it.sheetsCount}" oninput="recalcStatementModalLive('${ord.id}')" ${canEditQuantities ? '' : 'readonly'} required />
                     </td>
                     <td id="stmt-vol-${idx}" style="font-size:0.75rem;">${fmtNum(it.volumeM3, 3)} م³</td>
                     ${canSeeFinancialPrices() ? `
@@ -5646,10 +5839,22 @@ function openClientOrderStatementModal(orderId) {
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <button type="button" class="btn btn-outline" onclick="closeModal()">إغلاق</button>
-              <button type="submit" class="btn btn-primary">💾 حفظ التعديل وتحديث أرصدة المخازن والحسابات</button>
+              ${canEditQuantities ? `
+                <button type="submit" class="btn btn-primary">💾 حفظ التعديل وتحديث الأرصدة</button>
+              ` : ''}
               ${ord.stage === 'pending_executive' && isFullAdmin(currentUser) ? `
                 <button type="button" class="btn btn-success" onclick="saveClientOrderStatementChanges(null, '${ord.id}', true)">
                   ✅ حفظ وموافقة المدير التنفيذي/المشروعات (إرسال للمخزن والمدير الإداري)
+                </button>
+              ` : ''}
+              ${ord.stage === 'pending_warehouse_prep' && isWarehouseOrAdmin ? `
+                <button type="button" class="btn btn-success" onclick="saveClientOrderStatementChanges(null, '${ord.id}', false, true)">
+                  ✅ موافقة التجهيز والخروج من المخزن الآن (خصم من جدول الكميات وتحويل للمحاسب)
+                </button>
+              ` : ''}
+              ${ord.stage === 'ready_for_car_dispatch' && isWarehouseOrAdmin ? `
+                <button type="button" class="btn btn-primary" onclick="closeModal(); openVehicleDispatchVoucherModal('${ord.id}')">
+                  🚚 عمل إذن صرف للسيارة الآن
                 </button>
               ` : ''}
             </div>
@@ -5725,7 +5930,7 @@ function recalcStatementModalLive(orderId, changedRowIdx = null) {
   }
 }
 
-function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = false) {
+function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = false, alsoApproveWarehousePrep = false) {
   if (e) e.preventDefault();
   const ord = (state.productionOrders || []).find(o => o.id === orderId);
   if (!ord) return;
@@ -5906,6 +6111,12 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
     if (currentUser) markNotifIdsSeen([`ord_stage_${ord.id}_pending_warehouse_prep`]);
     closeModal();
     saveState(`✅ موافقة ${currentUser.name} على بيان الطلبية ${ord.orderNumber} للعميل (${ord.clientName}) بصافي ${fmtMoney(net)} — أصبحت ظاهرة الآن للمدير الإداري وأمين المخزن لتجهيزها`);
+    return;
+  }
+
+  if (alsoApproveWarehousePrep && (isFullAdmin(currentUser) || ['admin_manager', 'warehouse_keeper'].includes(currentUser?.role))) {
+    closeModal();
+    approveOrderWarehousePrep(ord.id);
     return;
   }
 
@@ -6347,15 +6558,50 @@ function submitVehicleDispatchVoucher(e, orderId) {
   }, 250);
 }
 
-// Raw Materials, Scrap & Spare Parts Quick Stock Actions
+// Raw Materials, Scrap & Spare Parts Quick Stock Actions (Mobile-Friendly HTML Modals)
 function adjustRawMaterialStock(rmId, dir) {
   const item = state.rawMaterials.find(r => r.id === rmId);
   if (!item) return;
-  const qtyStr = prompt(`أدخل الكمية بـ (${item.unit}) لعملية ${dir === 'in' ? 'التوريد والإضافة' : 'الصرف للتشغيل'} لصنف (${item.name}):`, '5');
-  if (!qtyStr) return;
-  const qty = Number(qtyStr);
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:460px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">${dir === 'in' ? '📥 توريد وإضافة خامات' : '📤 صرف خامات للتشغيل'}</div>
+            <small style="color:var(--text-muted);">الصنف: <strong>${item.name}</strong> | الرصيد الحالي: <strong>${item.quantity} ${item.unit}</strong></small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+        <form onsubmit="submitAdjustRawMaterialStock(event, '${item.id}', '${dir}')">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>الكمية بـ (${item.unit})</label>
+              <input id="rm-adj-qty" type="number" step="0.01" min="0.01" class="form-control" value="5" required autofocus />
+            </div>
+            <div class="form-group">
+              <label>تاريخ الحركة</label>
+              <input id="rm-adj-date" type="date" class="form-control" value="${todayStr()}" required />
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn ${dir === 'in' ? 'btn-success' : 'btn-primary'}">${dir === 'in' ? '📥 تأكيد التوريد' : '📤 تأكيد الصرف للتشغيل'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function submitAdjustRawMaterialStock(e, rmId, dir) {
+  if (e) e.preventDefault();
+  const item = state.rawMaterials.find(r => r.id === rmId);
+  if (!item) return;
+  const qty = Number(document.getElementById('rm-adj-qty')?.value || 0);
   if (isNaN(qty) || qty <= 0) return;
-  const opDate = prompt('تاريخ الحركة (YYYY-MM-DD) — يمكنك كتابة أي تاريخ سابق:', todayStr()) || todayStr();
+  const opDate = document.getElementById('rm-adj-date')?.value || todayStr();
 
   const now = new Date().toISOString();
   item.quantity = dir === 'in' ? +(Number(item.quantity) + qty).toFixed(3) : Math.max(0, +(Number(item.quantity) - qty).toFixed(3));
@@ -6377,16 +6623,66 @@ function adjustRawMaterialStock(rmId, dir) {
     updatedAt: now
   });
 
+  closeModal();
   saveState(`${dir === 'in' ? 'توريد' : 'صرف'} ${qty} ${item.unit} من ${item.name} بتاريخ ${opDate}`);
 }
 
 function openAddRawMaterialModal() {
-  const name = prompt('اسم الصنف الخام الجديد (مثال: جذوع خشب موسكي / غراء يوريا):');
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:520px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">➕ إضافة صنف خام جديد لمخزن الخامات</div>
+            <small style="color:var(--text-muted);">تسجيل خام أو مستلزم إنتاج جديد في المخزن</small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+        <form onsubmit="submitAddRawMaterialModal(event)">
+          <div class="form-grid">
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label>اسم الصنف الخام الجديد</label>
+              <input id="rm-new-name" class="form-control" placeholder="مثال: جذوع خشب موسكي / غراء يوريا" required autofocus />
+            </div>
+            <div class="form-group">
+              <label>وحدة القياس</label>
+              <input id="rm-new-unit" class="form-control" value="م³" placeholder="م³ / طن / شيكارة / بكرة" required />
+            </div>
+            <div class="form-group">
+              <label>الرصيد الافتتاحي</label>
+              <input id="rm-new-qty" type="number" step="0.01" min="0" class="form-control" value="15" required />
+            </div>
+            ${canSeeFinancialPrices() ? `
+              <div class="form-group">
+                <label>تكلفة الوحدة بالجنيه</label>
+                <input id="rm-new-cost" type="number" step="0.5" min="0" class="form-control" value="12000" />
+              </div>
+            ` : `<input id="rm-new-cost" type="hidden" value="0" />`}
+            <div class="form-group">
+              <label>تاريخ الإثبات</label>
+              <input id="rm-new-date" type="date" class="form-control" value="${todayStr()}" required />
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-primary">➕ حفظ الصنف الخام</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function submitAddRawMaterialModal(e) {
+  if (e) e.preventDefault();
+  const name = (document.getElementById('rm-new-name')?.value || '').trim();
   if (!name) return;
-  const unit = prompt('وحدة القياس (م³ / طن / شيكارة / بكرة):', 'م³') || 'م³';
-  const qty = Number(prompt('الرصيد الافتتاحي:', '15') || 0);
-  const cost = canSeeFinancialPrices() ? Number(prompt('تكلفة الوحدة بالجنيه:', '12000') || 0) : 0;
-  const opDate = prompt('تاريخ إثبات الرصيد الافتتاحي (YYYY-MM-DD):', todayStr()) || todayStr();
+  const unit = (document.getElementById('rm-new-unit')?.value || 'م³').trim() || 'م³';
+  const qty = Number(document.getElementById('rm-new-qty')?.value || 0);
+  const cost = canSeeFinancialPrices() ? Number(document.getElementById('rm-new-cost')?.value || 0) : 0;
+  const opDate = document.getElementById('rm-new-date')?.value || todayStr();
   const now = new Date().toISOString();
 
   state.rawMaterials.push({
@@ -6403,16 +6699,66 @@ function openAddRawMaterialModal() {
     entryDate: opDate,
     updatedAt: now
   });
+  closeModal();
   saveState(`إضافة صنف خام جديد: ${name} بتاريخ ${opDate}`);
 }
 
 function openAddScrapModal() {
-  const name = prompt('بيان الهالك / القصاقيص المضافة:');
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:520px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">➕ تسجيل هالك / قصاقيص جديدة</div>
+            <small style="color:var(--text-muted);">إضافة كمية لمخزن الهالك والقصاقيص</small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+        <form onsubmit="submitAddScrapModal(event)">
+          <div class="form-grid">
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label>بيان الهالك / القصاقيص</label>
+              <input id="sc-new-name" class="form-control" placeholder="مثال: قصاقيص قشرة حور / نشارة تقشير" required autofocus />
+            </div>
+            <div class="form-group">
+              <label>الوحدة</label>
+              <input id="sc-new-unit" class="form-control" value="م³" placeholder="م³ / طن / عدد" required />
+            </div>
+            <div class="form-group">
+              <label>الكمية</label>
+              <input id="sc-new-qty" type="number" step="0.01" min="0" class="form-control" value="1.5" required />
+            </div>
+            ${canSeeFinancialPrices() ? `
+              <div class="form-group">
+                <label>السعر التقديري للوحدة</label>
+                <input id="sc-new-price" type="number" step="0.5" min="0" class="form-control" value="6500" />
+              </div>
+            ` : `<input id="sc-new-price" type="hidden" value="0" />`}
+            <div class="form-group">
+              <label>تاريخ التسجيل</label>
+              <input id="sc-new-date" type="date" class="form-control" value="${todayStr()}" required />
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-primary">➕ حفظ بمخزن الهالك</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function submitAddScrapModal(e) {
+  if (e) e.preventDefault();
+  const name = (document.getElementById('sc-new-name')?.value || '').trim();
   if (!name) return;
-  const unit = prompt('الوحدة (م³ / طن / عدد):', 'م³') || 'م³';
-  const qty = Number(prompt('الكمية:', '1.5') || 0);
-  const price = canSeeFinancialPrices() ? Number(prompt('السعر التقديري للوحدة:', '6500') || 0) : 0;
-  const opDate = prompt('تاريخ التسجيل (YYYY-MM-DD):', todayStr()) || todayStr();
+  const unit = (document.getElementById('sc-new-unit')?.value || 'م³').trim() || 'م³';
+  const qty = Number(document.getElementById('sc-new-qty')?.value || 0);
+  const price = canSeeFinancialPrices() ? Number(document.getElementById('sc-new-price')?.value || 0) : 0;
+  const opDate = document.getElementById('sc-new-date')?.value || todayStr();
   const now = new Date().toISOString();
 
   state.scrapItems.push({
@@ -6427,25 +6773,103 @@ function openAddScrapModal() {
     notes: `إضافة بتاريخ ${opDate}`,
     updatedAt: now
   });
+  closeModal();
   saveState(`تسجيل إضافة هالك/قصاقيص: ${name} بتاريخ ${opDate}`);
 }
 
 function dispatchScrapItem(scId) {
   const item = state.scrapItems.find(s => s.id === scId);
   if (!item) return;
-  const qty = Number(prompt(`الكمية المطلوب صرفها أو بيعها من (${item.name}) بالـ ${item.unit}:`, '1') || 0);
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:440px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">📤 صرف / بيع من مخزن الهالك</div>
+            <small style="color:var(--text-muted);">الصنف: <strong>${item.name}</strong> | المتاح: <strong>${item.quantity} ${item.unit}</strong></small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+        <form onsubmit="submitDispatchScrapItem(event, '${item.id}')">
+          <div class="form-group">
+            <label>الكمية المطلوب صرفها بـ (${item.unit})</label>
+            <input id="sc-disp-qty" type="number" step="0.01" min="0.01" max="${item.quantity || 99999}" class="form-control" value="1" required autofocus />
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-primary">📤 تأكيد الصرف</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function submitDispatchScrapItem(e, scId) {
+  if (e) e.preventDefault();
+  const item = state.scrapItems.find(s => s.id === scId);
+  if (!item) return;
+  const qty = Number(document.getElementById('sc-disp-qty')?.value || 0);
   if (qty <= 0) return;
   item.quantity = Math.max(0, +(Number(item.quantity) - qty).toFixed(3));
   item.updatedAt = new Date().toISOString();
+  closeModal();
   saveState(`صرف/بيع ${qty} ${item.unit} من ${item.name}`);
 }
 
 function openAddSparePartModal() {
-  const name = prompt('اسم قطعة الغيار / المهمة (مثال: رولمان بلي للمجفف):');
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:520px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">➕ إضافة قطعة غيار جديدة</div>
+            <small style="color:var(--text-muted);">إضافة صنف جديد لمخزن قطع الغيار والمهمات</small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+        <form onsubmit="submitAddSparePartModal(event)">
+          <div class="form-grid">
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label>اسم قطعة الغيار / المهمة</label>
+              <input id="sp-new-name" class="form-control" placeholder="مثال: رولمان بلي للمجفف / سكينة مقصلة" required autofocus />
+            </div>
+            <div class="form-group">
+              <label>اسم الماكينة التابعة لها</label>
+              <input id="sp-new-machine" class="form-control" value="خط التقشير الأول" required />
+            </div>
+            <div class="form-group">
+              <label>الكمية المتاحة (قطعة)</label>
+              <input id="sp-new-qty" type="number" step="1" min="0" class="form-control" value="4" required />
+            </div>
+            ${canSeeFinancialPrices() ? `
+              <div class="form-group">
+                <label>تكلفة الوحدة بالجنيه</label>
+                <input id="sp-new-cost" type="number" step="0.5" min="0" class="form-control" value="2500" />
+              </div>
+            ` : `<input id="sp-new-cost" type="hidden" value="0" />`}
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-primary">➕ حفظ قطعة الغيار</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function submitAddSparePartModal(e) {
+  if (e) e.preventDefault();
+  const name = (document.getElementById('sp-new-name')?.value || '').trim();
   if (!name) return;
-  const machine = prompt('اسم الماكينة التابعة لها:', 'خط التقشير الأول') || 'عام';
-  const qty = Number(prompt('الكمية المتاحة:', '4') || 0);
-  const cost = canSeeFinancialPrices() ? Number(prompt('تكلفة الوحدة:', '2500') || 0) : 0;
+  const machine = (document.getElementById('sp-new-machine')?.value || 'عام').trim() || 'عام';
+  const qty = Number(document.getElementById('sp-new-qty')?.value || 0);
+  const cost = canSeeFinancialPrices() ? Number(document.getElementById('sp-new-cost')?.value || 0) : 0;
   const now = new Date().toISOString();
 
   state.spareParts.push({
@@ -6461,16 +6885,49 @@ function openAddSparePartModal() {
     location: 'مخزن قطع الغيار',
     updatedAt: now
   });
+  closeModal();
   saveState(`إضافة قطعة غيار جديدة: ${name}`);
 }
 
 function adjustSparePartStock(spId, dir) {
   const sp = state.spareParts.find(x => x.id === spId);
   if (!sp) return;
-  const qty = Number(prompt(`أدخل العدد لعملية ${dir === 'in' ? 'التوريد' : 'الصرف للصيانة'} (${sp.name}):`, '1') || 0);
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:440px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">${dir === 'in' ? '📥 توريد قطعة غيار' : '🔧 صرف قطعة غيار للصيانة'}</div>
+            <small style="color:var(--text-muted);">الصنف: <strong>${sp.name}</strong> | المتاح: <strong>${sp.quantity} قطعة</strong></small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+        <form onsubmit="submitAdjustSparePartStock(event, '${sp.id}', '${dir}')">
+          <div class="form-group">
+            <label>العدد المطلوب (${dir === 'in' ? 'توريد' : 'صرف للصيانة'})</label>
+            <input id="sp-adj-qty" type="number" step="1" min="1" class="form-control" value="1" required autofocus />
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn ${dir === 'in' ? 'btn-success' : 'btn-primary'}">${dir === 'in' ? '📥 تأكيد التوريد' : '🔧 تأكيد الصرف'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function submitAdjustSparePartStock(e, spId, dir) {
+  if (e) e.preventDefault();
+  const sp = state.spareParts.find(x => x.id === spId);
+  if (!sp) return;
+  const qty = Number(document.getElementById('sp-adj-qty')?.value || 0);
   if (qty <= 0) return;
   sp.quantity = dir === 'in' ? Number(sp.quantity) + qty : Math.max(0, Number(sp.quantity) - qty);
   sp.updatedAt = new Date().toISOString();
+  closeModal();
   saveState(`${dir === 'in' ? 'توريد' : 'صرف صيانة'} عدد ${qty} من ${sp.name}`);
 }
 
@@ -7059,11 +7516,52 @@ function submitClientPalletMovement(e, clientId) {
 
 // Dynamic Catalog & Users Permissions Actions
 function addWoodTypePrompt() {
-  const name = prompt('اسم نوع الخشب الجديد (مثال: خشب ماهوجني / خشب تيك):');
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:480px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🌲 إضافة نوع خشب جديد للكتالوج</div>
+            <small style="color:var(--text-muted);">يظهر في قوائم مخزن القشرة التامة وأوامر التشغيل</small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+        <form onsubmit="submitAddWoodTypeModal(event)">
+          <div class="form-grid">
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label>اسم نوع الخشب الجديد</label>
+              <input id="wt-new-name" class="form-control" placeholder="مثال: خشب ماهوجني / خشب تيك / حور" required autofocus />
+            </div>
+            <div class="form-group">
+              <label>كود مختصر (3 حروف)</label>
+              <input id="wt-new-code" class="form-control" value="MAH" required />
+            </div>
+            ${canSeeFinancialPrices() ? `
+              <div class="form-group">
+                <label>متوسط سعر المتر المكعب الخام</label>
+                <input id="wt-new-price" type="number" step="100" min="0" class="form-control" value="18000" />
+              </div>
+            ` : `<input id="wt-new-price" type="hidden" value="0" />`}
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-primary">➕ إضافة نوع الخشب</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function submitAddWoodTypeModal(e) {
+  if (e) e.preventDefault();
+  const name = (document.getElementById('wt-new-name')?.value || '').trim();
   if (!name) return;
-  const code = prompt('كود مختصر (3 حروف):', 'MAH') || 'WOD';
+  const code = (document.getElementById('wt-new-code')?.value || 'WOD').trim() || 'WOD';
   const price = canSeeFinancialPrices()
-    ? Number(prompt('متوسط سعر المتر المكعب الخام:', '18000') || 15000)
+    ? Number(document.getElementById('wt-new-price')?.value || 15000)
     : 0;
   state.catalog.woodTypes.push({
     id: uid('wt'),
@@ -7072,6 +7570,7 @@ function addWoodTypePrompt() {
     defaultLogPricePerM3: price,
     active: true
   });
+  closeModal();
   saveState(`إضافة نوع خشب جديد للكتالوج: ${name}`);
 }
 
@@ -7346,18 +7845,59 @@ function updateCellUnitPrice(thkId, gradeId, priceVal) {
 }
 
 function addGradePrompt() {
-  const code = prompt('رمز درجة الجودة الجديدة (مثال: A أو B أو C أو A+):', 'A');
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:480px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">➕ إضافة درجة جودة جديدة لجدول المخازن</div>
+            <small style="color:var(--text-muted);">تضاف كعمود مستقل في مصفوفة كميات القشرة وجدول الأسعار</small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+        <form onsubmit="submitAddGradeModal(event)">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>رمز درجة الجودة (مثال: A أو B أو C أو A+)</label>
+              <input id="gr-new-code" class="form-control" placeholder="مثال: A+" required autofocus oninput="const nm=document.getElementById('gr-new-name'); if(nm && !nm.dataset.edited) nm.value='جودة ('+this.value.trim()+')';" />
+            </div>
+            <div class="form-group">
+              <label>اسم درجة الجودة في الجدول</label>
+              <input id="gr-new-name" class="form-control" placeholder="مثال: جودة (A+)" oninput="this.dataset.edited='1'" required />
+            </div>
+            ${canSeeFinancialPrices() ? `
+              <div class="form-group" style="grid-column: 1 / -1;">
+                <label>سعر القطعة الواحدة الافتراضي بالجنيه (اختياري)</label>
+                <input id="gr-new-price" type="number" step="0.5" min="0" class="form-control" placeholder="مثال: 50 (أو اتركه 0 لتسعير كل خلية منفردة)" value="0" />
+              </div>
+            ` : `<input id="gr-new-price" type="hidden" value="0" />`}
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-primary">➕ إضافة درجة الجودة</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function submitAddGradeModal(e) {
+  if (e) e.preventDefault();
+  const code = (document.getElementById('gr-new-code')?.value || '').trim();
   if (!code) return;
-  const name = prompt('اسم درجة الجودة في الجدول:', `جودة (${code.trim()})`) || code.trim();
+  const name = (document.getElementById('gr-new-name')?.value || `جودة (${code})`).trim() || code;
   const defaultPiecePrice = canSeeFinancialPrices()
-    ? Number(prompt('سعر القطعة الواحدة الافتراضي لهذه الجودة بالجنيه (اختياري — يمكن تعديله داخل كل خلية):', '50') || 0)
+    ? Number(document.getElementById('gr-new-price')?.value || 0)
     : 0;
   const newGradeId = uid('gr');
 
   state.catalog.grades.push({
     id: newGradeId,
-    code: code.trim(),
-    name: name.trim(),
+    code,
+    name,
     color: '#0f766e',
     defaultPricePerM3: 20000,
     description: 'درجة جودة'
@@ -7370,6 +7910,7 @@ function addGradePrompt() {
     }
   }
 
+  closeModal();
   saveState(`إضافة درجة جودة جديدة للجدول: ${name}`);
 }
 

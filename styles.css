@@ -797,7 +797,25 @@ tr:hover td {
   box-shadow: var(--shadow-lg);
 }
 
-/* Mobile Responsive */
+/* Mobile Responsive & Touch Enhancements */
+button,
+.btn,
+.nav-item,
+.sub-tab,
+.matrix-cell,
+.cell-mini-btn,
+.user-pill,
+.chat-channel-btn {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(180, 83, 9, 0.18);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
 .mobile-menu-btn {
   display: none;
   background: transparent;
@@ -815,16 +833,47 @@ tr:hover td {
     right: 0;
     top: 0;
     bottom: 0;
+    z-index: 1050;
     transform: translateX(100%);
   }
   .sidebar.open {
     transform: translateX(0);
   }
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    z-index: 1040;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+  .sidebar-backdrop.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
   .mobile-menu-btn {
     display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 40px;
+    min-height: 38px;
   }
   .content-container {
-    padding: 14px;
+    padding: 10px;
+  }
+  .cell-mini-btn {
+    padding: 4px 7px;
+    font-size: 0.65rem;
+    min-height: 26px;
+  }
+  .btn-sm {
+    min-height: 32px;
+    padding: 5px 10px;
+  }
+  .sub-tab {
+    padding: 8px 12px;
   }
 }
 

@@ -15,14 +15,16 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./icons/logo.svg" />
   <link rel="apple-touch-icon" href="./icons/logo.svg" />
-  <link rel="stylesheet" href="./styles.css?v=23" />
+  <link rel="stylesheet" href="./styles.css?v=24" />
   <script>
     (function() {
-      var TARGET_VER = 'v23';
+      var TARGET_VER = 'v24';
       var rawState = localStorage.getItem('al_asimah_factory_v1_state') || '';
-      if (localStorage.getItem('al_asimah_app_ver') !== TARGET_VER || rawState.indexOf('\uFFFD') !== -1) {
-        localStorage.setItem('al_asimah_app_ver', TARGET_VER);
+      if (rawState.indexOf('\uFFFD') !== -1) {
         localStorage.removeItem('al_asimah_factory_v1_state');
+      }
+      if (localStorage.getItem('al_asimah_app_ver') !== TARGET_VER) {
+        localStorage.setItem('al_asimah_app_ver', TARGET_VER);
         if ('caches' in window) {
           caches.keys().then(function(names) {
             return Promise.all(names.map(function(n) { return caches.delete(n); }));
@@ -47,16 +49,16 @@
   <div id="modal-root"></div>
   <div id="print-area"></div>
 
-  <script src="./app.js?v=23"></script>
+  <script src="./app.js?v=24"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.addEventListener('message', (e) => {
-        if (e.data && e.data.type === 'FORCE_RELOAD_V23') {
+        if (e.data && e.data.type === 'FORCE_RELOAD_V24') {
           window.location.reload();
         }
       });
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js?v=23').then(reg => {
+        navigator.serviceWorker.register('./sw.js?v=24').then(reg => {
           reg.update();
         }).catch(() => {});
       });
