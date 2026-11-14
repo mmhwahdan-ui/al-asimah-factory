@@ -762,19 +762,44 @@ function mergeCleanStringsClient(existingObj, incomingObj) {
   return result;
 }
 
-function smartMergeListClient(a = [], b = [], deletedSet = new Set()) {
+function getRecordTimeMs(item) {
+  if (!item || typeof item !== 'object') return 0;
+  const raw = item.updatedAt || item.createdAt || item.timestamp || item.dispatchedAt || item.approvedAt || 0;
+  if (raw) {
+    const ms = new Date(raw).getTime();
+    if (!isNaN(ms) && ms > 0) return ms;
+  }
+  if (item.date && typeof item.date === 'string') {
+    const dMs = new Date(item.date + 'T23:59:59Z').getTime();
+    if (!isNaN(dMs) && dMs > 0) return dMs;
+  }
+  return 0;
+}
+
+function smartMergeListClient(a = [], b = [], deletedSet = new Set(), minResetTs = 0) {
   const map = new Map();
   for (const item of (Array.isArray(a) ? a : [])) {
-    if (item && item.id && !deletedSet.has(item.id)) map.set(item.id, item);
+    if (!item || !item.id || deletedSet.has(item.id)) continue;
+    const ts = getRecordTimeMs(item);
+    if (minResetTs > 0 && ts > 0 && ts < minResetTs) {
+      deletedSet.add(item.id);
+      continue;
+    }
+    map.set(item.id, item);
   }
   for (const item of (Array.isArray(b) ? b : [])) {
     if (!item || !item.id || deletedSet.has(item.id)) continue;
+    const ts = getRecordTimeMs(item);
+    if (minResetTs > 0 && ts > 0 && ts < minResetTs) {
+      deletedSet.add(item.id);
+      continue;
+    }
     const prev = map.get(item.id);
     if (!prev) {
       map.set(item.id, item);
     } else {
-      const tA = new Date(prev.updatedAt || prev.timestamp || prev.createdAt || 0).getTime() || 0;
-      const tB = new Date(item.updatedAt || item.timestamp || item.createdAt || 0).getTime() || 0;
+      const tA = getRecordTimeMs(prev);
+      const tB = ts;
       map.set(item.id, tB >= tA ? mergeCleanStringsClient(prev, item) : mergeCleanStringsClient(item, prev));
     }
   }
@@ -905,23 +930,31 @@ function smartMergeClientState(current, incoming) {
 
   const curReset = Number(current.lastResetAt || 0);
   const incReset = Number(incoming.lastResetAt || 0);
+  const minResetTs = Math.max(curReset, incReset);
+
+  const deletedIds = Array.from(new Set([...(current.deletedIds || []), ...(incoming.deletedIds || [])]));
+  const delSet = new Set(deletedIds);
 
   // If one state has a newer system reset timestamp (lastResetAt), discard the older pre-reset state completely!
-  if (incReset > curReset) {
-    return normalizeState({
+  if (incReset > curReset && curReset === 0) {
+    // Still filter incoming against minResetTs in case an old client tainted it
+    const listKeys = [
+      'pallets', 'rawMaterials', 'scrapItems', 'spareParts',
+      'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
+      'partners', 'palletMovements', 'financialTransactions', 'auditLogs', 'chatMessages'
+    ];
+    const cleanedIncoming = {
       ...incoming,
-      users: smartMergeListClient(current.users, incoming.users, new Set())
-    });
-  }
-  if (curReset > incReset) {
-    return normalizeState({
-      ...current,
-      users: smartMergeListClient(current.users, incoming.users, new Set())
-    });
+      lastResetAt: minResetTs,
+      users: smartMergeListClient(current.users, incoming.users, new Set(), 0)
+    };
+    for (const key of listKeys) {
+      cleanedIncoming[key] = smartMergeListClient([], incoming[key], delSet, minResetTs);
+    }
+    cleanedIncoming.deletedIds = Array.from(delSet).slice(-4000);
+    return normalizeState(cleanedIncoming);
   }
 
-  const deletedIds = Array.from(new Set([...(current.deletedIds || []), ...(incoming.deletedIds || [])])).slice(-3000);
-  const delSet = new Set(deletedIds);
   const listKeys = [
     'users', 'pallets', 'rawMaterials', 'scrapItems', 'spareParts',
     'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
@@ -931,22 +964,22 @@ function smartMergeClientState(current, incoming) {
   const merged = {
     ...current,
     ...incoming,
-    lastResetAt: curReset,
+    lastResetAt: minResetTs,
     factoryInfo: { ...(current.factoryInfo || {}), ...(incoming.factoryInfo || {}) },
     treasuryBalances: { ...(current.treasuryBalances || {}), ...(incoming.treasuryBalances || {}) },
     catalog: {
-      woodTypes: smartMergeListClient(current.catalog?.woodTypes, incoming.catalog?.woodTypes, delSet),
-      thicknesses: smartMergeListClient(current.catalog?.thicknesses, incoming.catalog?.thicknesses, delSet),
-      grades: smartMergeListClient(current.catalog?.grades, incoming.catalog?.grades, delSet),
-      dimensions: smartMergeListClient(current.catalog?.dimensions, incoming.catalog?.dimensions, delSet),
-      customDimensions: smartMergeListClient(current.catalog?.customDimensions, incoming.catalog?.customDimensions, delSet),
+      woodTypes: smartMergeListClient(current.catalog?.woodTypes, incoming.catalog?.woodTypes, delSet, 0),
+      thicknesses: smartMergeListClient(current.catalog?.thicknesses, incoming.catalog?.thicknesses, delSet, 0),
+      grades: smartMergeListClient(current.catalog?.grades, incoming.catalog?.grades, delSet, 0),
+      dimensions: smartMergeListClient(current.catalog?.dimensions, incoming.catalog?.dimensions, delSet, 0),
+      customDimensions: smartMergeListClient(current.catalog?.customDimensions, incoming.catalog?.customDimensions, delSet, 0),
       cellPrices: sanitizeCellPricesMap({ ...(current.catalog?.cellPrices || {}), ...(incoming.catalog?.cellPrices || {}) })
-    },
-    deletedIds
+    }
   };
   for (const key of listKeys) {
-    merged[key] = smartMergeListClient(current[key], incoming[key], delSet);
+    merged[key] = smartMergeListClient(current[key], incoming[key], delSet, key === 'users' ? 0 : minResetTs);
   }
+  merged.deletedIds = Array.from(delSet).slice(-4000);
   return normalizeState(merged);
 }
 
@@ -4973,7 +5006,25 @@ async function executeFactoryDataReset(mode = 'full') {
     const nowIso = new Date(resetTs + 100).toISOString();
     const def = getDefaultInitialState();
 
-    // Preserve users (with updated timestamp so they stay active) and custom factory logo
+    // Collect all existing record IDs into deletedIds so even older unrefreshed devices purge them
+    const oldDeletedSet = new Set(state?.deletedIds || []);
+    const purgeKeys = [
+      'pallets', 'rawMaterials', 'scrapItems', 'spareParts',
+      'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
+      'partners', 'palletMovements', 'financialTransactions', 'auditLogs', 'chatMessages'
+    ];
+    for (const pk of purgeKeys) {
+      for (const item of (state?.[pk] || [])) {
+        if (item?.id) oldDeletedSet.add(item.id);
+      }
+    }
+    if (mode === 'full' && state?.catalog) {
+      for (const ck of ['woodTypes', 'thicknesses', 'grades', 'customDimensions']) {
+        for (const item of (state.catalog[ck] || [])) {
+          if (item?.id) oldDeletedSet.add(item.id);
+        }
+      }
+    }
     const preservedUsers = (state?.users && state.users.length > 0 ? state.users : def.users).map(u => ({
       ...u,
       updatedAt: nowIso
@@ -5037,8 +5088,10 @@ async function executeFactoryDataReset(mode = 'full') {
         }
       ],
       chatMessages: [],
-      deletedIds: []
+      deletedIds: Array.from(oldDeletedSet).slice(-4000)
     });
+
+    // Preserve users (with updated timestamp so they stay active) and custom factory logo
 
     state = freshState;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
