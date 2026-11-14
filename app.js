@@ -2270,13 +2270,16 @@ function renderDashboard() {
   const totalActionableOrders = activeVisibleOrders.length + pendingReqs.length + pendingSalesReturns.length;
 
   // Quick calculator computation
+  const qcTotalSheets = Number(quickCalc.sheetsPerPallet || 0) * Number(quickCalc.palletsCount || 0);
   const qcMetrics = calculateVeneerMetrics(
-    quickCalc.lengthCm,
-    quickCalc.widthCm,
-    quickCalc.thicknessMm,
-    Number(quickCalc.sheetsPerPallet) * Number(quickCalc.palletsCount)
+    Number(quickCalc.lengthCm || 0),
+    Number(quickCalc.widthCm || 0),
+    Number(quickCalc.thicknessMm || 0),
+    qcTotalSheets
   );
-  const qcTotalSheets = Number(quickCalc.sheetsPerPallet) * Number(quickCalc.palletsCount);
+  const qcSingleSheetVolM3 = qcMetrics.sheetAreaM2 * (Number(quickCalc.thicknessMm || 0) / 1000);
+  const qcSheetsPerM3 = qcSingleSheetVolM3 > 0 ? (1 / qcSingleSheetVolM3) : 0;
+  const qcSheetPrice = qcSingleSheetVolM3 * Number(quickCalc.pricePerM3 || 0);
   const qcTotalValue = qcMetrics.totalVolumeM3 * Number(quickCalc.pricePerM3 || 0);
 
   return `
@@ -2496,19 +2499,33 @@ function renderDashboard() {
         </div>
         ${canSeeFinancialPrices() ? `
         <div class="form-group">
-          <label>سعر المتر المكعب (م³)</label>
-          <input id="qc-price-input" type="text" inputmode="decimal" dir="ltr" style="text-align:center;font-weight:800;font-size:1rem;" class="form-control" value="${quickCalc.pricePerM3}" oninput="onQuickCalcInput('pricePerM3', this.value)" onclick="this.select()" placeholder="22000" />
+          <label>سعر المتر المكعب (م³) بالجنيه</label>
+          <input id="qc-price-input" type="text" inputmode="decimal" dir="ltr" style="text-align:center;font-weight:800;font-size:1rem;border-color:var(--primary);" class="form-control" value="${quickCalc.pricePerM3}" oninput="onQuickCalcInput('pricePerM3', this.value)" onclick="this.select()" placeholder="22000" />
+        </div>
+        <div class="form-group">
+          <label>💰 سعر الفرخ الواحد (القطعة) بالجنيه</label>
+          <input id="qc-sheet-price-input" type="text" inputmode="decimal" dir="ltr" style="text-align:center;font-weight:900;font-size:1rem;border-color:#16a34a;color:#15803d;background:rgba(22,163,74,0.06);" class="form-control" value="${fmtNum(qcSheetPrice, 2)}" oninput="onQuickCalcSheetPriceInput(this.value)" onclick="this.select()" title="يتحدث تلقائياً عند إدخال سعر المتر المكعب (أو اكتب سعر الفرخ لحساب سعر المتر)" />
         </div>
         ` : ''}
       </div>
 
       <div id="qc-live-preview-box" class="calc-preview-box">
+        <div class="calc-preview-item" style="border:1.5px solid #0284c7;background:rgba(2,132,199,0.08);border-radius:10px;padding:8px 12px;">
+          <span style="color:#0369a1;font-weight:800;">📦 عدد الأفرخ في المتر المكعب (1 م³)</span>
+          <strong style="color:#0284c7;font-size:1.15rem;">${fmtNum(qcSheetsPerM3, 2)} فرخ <small style="font-size:0.78rem;color:var(--text-muted);">(≈ ${Math.round(qcSheetsPerM3)} فرخ)</small></strong>
+        </div>
+        ${canSeeFinancialPrices() ? `
+        <div class="calc-preview-item" style="border:1.5px solid #16a34a;background:rgba(22,163,74,0.08);border-radius:10px;padding:8px 12px;">
+          <span style="color:#15803d;font-weight:800;">💰 سعر الفرخ الواحد (من سعر الـ م³)</span>
+          <strong style="color:#16a34a;font-size:1.18rem;">${fmtMoney(qcSheetPrice)} <small style="font-size:0.75rem;color:var(--text-muted);">(${fmtNum(qcSheetPrice, 3)} ج.م/فرخ)</small></strong>
+        </div>
+        ` : ''}
         <div class="calc-preview-item">
-          <span>مساحة الفرخ الواحد</span>
-          <strong>${fmtNum(qcMetrics.sheetAreaM2, 4)} م²</strong>
+          <span>مساحة وحجم الفرخ الواحد</span>
+          <strong>${fmtNum(qcMetrics.sheetAreaM2, 4)} م² <small style="color:var(--text-muted);">(${fmtNum(qcSingleSheetVolM3, 6)} م³)</small></strong>
         </div>
         <div class="calc-preview-item">
-          <span>إجمالي عدد الأفرخ</span>
+          <span>إجمالي عدد الأفرخ للبالتات</span>
           <strong>${fmtNum(qcTotalSheets, 0)} فرخ</strong>
         </div>
         <div class="calc-preview-item">
@@ -2521,8 +2538,8 @@ function renderDashboard() {
         </div>
         ${canSeeFinancialPrices() ? `
         <div class="calc-preview-item">
-          <span>القيمة الإجمالية التقديرية</span>
-          <strong>${fmtMoney(qcTotalValue)}</strong>
+          <span>القيمة الإجمالية للبالتات (${fmtNum(qcTotalSheets, 0)} فرخ)</span>
+          <strong style="color:var(--primary);">${fmtMoney(qcTotalValue)}</strong>
         </div>
         ` : ''}
       </div>
@@ -2634,7 +2651,20 @@ function normalizeNumericInputString(raw) {
 function onQuickCalcInput(fieldKey, rawVal) {
   const cleaned = normalizeNumericInputString(rawVal);
   quickCalc[fieldKey] = cleaned === '' ? 0 : (Number(cleaned) || 0);
-  updateQuickCalcPreview();
+  updateQuickCalcPreview(true);
+}
+
+function onQuickCalcSheetPriceInput(rawVal) {
+  const cleaned = normalizeNumericInputString(rawVal);
+  const sheetPrice = cleaned === '' ? 0 : (Number(cleaned) || 0);
+  const sheetAreaM2 = (Number(quickCalc.lengthCm || 0) / 100) * (Number(quickCalc.widthCm || 0) / 100);
+  const singleSheetVolM3 = sheetAreaM2 * (Number(quickCalc.thicknessMm || 0) / 1000);
+  if (singleSheetVolM3 > 0) {
+    quickCalc.pricePerM3 = +(sheetPrice / singleSheetVolM3).toFixed(2);
+    const prEl = document.getElementById('qc-price-input');
+    if (prEl) prEl.value = quickCalc.pricePerM3;
+  }
+  updateQuickCalcPreview(false);
 }
 
 function setQuickCalcDims(lenCm, widCm) {
@@ -2644,14 +2674,14 @@ function setQuickCalcDims(lenCm, widCm) {
   const widEl = document.getElementById('qc-wid-input');
   if (lenEl) lenEl.value = quickCalc.lengthCm;
   if (widEl) widEl.value = quickCalc.widthCm;
-  updateQuickCalcPreview();
+  updateQuickCalcPreview(true);
 }
 
 function setQuickCalcThk(mm) {
   quickCalc.thicknessMm = Number(mm || 1.5);
   const thkEl = document.getElementById('qc-thk-input');
   if (thkEl) thkEl.value = quickCalc.thicknessMm;
-  updateQuickCalcPreview();
+  updateQuickCalcPreview(true);
 }
 
 function resetQuickCalcValues() {
@@ -2675,10 +2705,10 @@ function resetQuickCalcValues() {
   if (shEl) shEl.value = quickCalc.sheetsPerPallet;
   if (palEl) palEl.value = quickCalc.palletsCount;
   if (prEl) prEl.value = quickCalc.pricePerM3;
-  updateQuickCalcPreview();
+  updateQuickCalcPreview(true);
 }
 
-function updateQuickCalcPreview() {
+function updateQuickCalcPreview(syncSheetPriceInput = true) {
   const qcTotalSheets = Number(quickCalc.sheetsPerPallet || 0) * Number(quickCalc.palletsCount || 0);
   const qcMetrics = calculateVeneerMetrics(
     Number(quickCalc.lengthCm || 0),
@@ -2686,16 +2716,37 @@ function updateQuickCalcPreview() {
     Number(quickCalc.thicknessMm || 0),
     qcTotalSheets
   );
+  const qcSingleSheetVolM3 = qcMetrics.sheetAreaM2 * (Number(quickCalc.thicknessMm || 0) / 1000);
+  const qcSheetsPerM3 = qcSingleSheetVolM3 > 0 ? (1 / qcSingleSheetVolM3) : 0;
+  const qcSheetPrice = qcSingleSheetVolM3 * Number(quickCalc.pricePerM3 || 0);
   const qcTotalValue = qcMetrics.totalVolumeM3 * Number(quickCalc.pricePerM3 || 0);
+
+  if (syncSheetPriceInput) {
+    const shPrEl = document.getElementById('qc-sheet-price-input');
+    if (shPrEl && document.activeElement !== shPrEl) {
+      shPrEl.value = +qcSheetPrice.toFixed(2);
+    }
+  }
+
   const box = document.getElementById('qc-live-preview-box');
   if (box) {
     box.innerHTML = `
+      <div class="calc-preview-item" style="border:1.5px solid #0284c7;background:rgba(2,132,199,0.08);border-radius:10px;padding:8px 12px;">
+        <span style="color:#0369a1;font-weight:800;">📦 عدد الأفرخ في المتر المكعب (1 م³)</span>
+        <strong style="color:#0284c7;font-size:1.15rem;">${fmtNum(qcSheetsPerM3, 2)} فرخ <small style="font-size:0.78rem;color:var(--text-muted);">(≈ ${Math.round(qcSheetsPerM3)} فرخ)</small></strong>
+      </div>
+      ${canSeeFinancialPrices() ? `
+      <div class="calc-preview-item" style="border:1.5px solid #16a34a;background:rgba(22,163,74,0.08);border-radius:10px;padding:8px 12px;">
+        <span style="color:#15803d;font-weight:800;">💰 سعر الفرخ الواحد (من سعر الـ م³)</span>
+        <strong style="color:#16a34a;font-size:1.18rem;">${fmtMoney(qcSheetPrice)} <small style="font-size:0.75rem;color:var(--text-muted);">(${fmtNum(qcSheetPrice, 3)} ج.م/فرخ)</small></strong>
+      </div>
+      ` : ''}
       <div class="calc-preview-item">
-        <span>مساحة الفرخ الواحد</span>
-        <strong>${fmtNum(qcMetrics.sheetAreaM2, 4)} م²</strong>
+        <span>مساحة وحجم الفرخ الواحد</span>
+        <strong>${fmtNum(qcMetrics.sheetAreaM2, 4)} م² <small style="color:var(--text-muted);">(${fmtNum(qcSingleSheetVolM3, 6)} م³)</small></strong>
       </div>
       <div class="calc-preview-item">
-        <span>إجمالي عدد الأفرخ</span>
+        <span>إجمالي عدد الأفرخ للبالتات</span>
         <strong>${fmtNum(qcTotalSheets, 0)} فرخ</strong>
       </div>
       <div class="calc-preview-item">
@@ -2708,8 +2759,8 @@ function updateQuickCalcPreview() {
       </div>
       ${canSeeFinancialPrices() ? `
       <div class="calc-preview-item">
-        <span>القيمة الإجمالية التقديرية</span>
-        <strong>${fmtMoney(qcTotalValue)}</strong>
+        <span>القيمة الإجمالية للبالتات (${fmtNum(qcTotalSheets, 0)} فرخ)</span>
+        <strong style="color:var(--primary);">${fmtMoney(qcTotalValue)}</strong>
       </div>
       ` : ''}
     `;
