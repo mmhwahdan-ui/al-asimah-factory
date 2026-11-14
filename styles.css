@@ -812,6 +812,15 @@ button,
   -webkit-user-select: none;
 }
 
+input,
+select,
+textarea,
+.form-control {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  pointer-events: auto !important;
+}
+
 .sidebar-backdrop {
   display: none;
 }

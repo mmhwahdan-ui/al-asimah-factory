@@ -15,10 +15,10 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./icons/logo.svg" />
   <link rel="apple-touch-icon" href="./icons/logo.svg" />
-  <link rel="stylesheet" href="./styles.css?v=25" />
+  <link rel="stylesheet" href="./styles.css?v=26" />
   <script>
     (function() {
-      var TARGET_VER = 'v25';
+      var TARGET_VER = 'v26';
       var rawState = localStorage.getItem('al_asimah_factory_v1_state') || '';
       if (rawState.indexOf('\uFFFD') !== -1) {
         localStorage.removeItem('al_asimah_factory_v1_state');
@@ -49,16 +49,16 @@
   <div id="modal-root"></div>
   <div id="print-area"></div>
 
-  <script src="./app.js?v=25"></script>
+  <script src="./app.js?v=26"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.addEventListener('message', (e) => {
-        if (e.data && e.data.type === 'FORCE_RELOAD_V25') {
+        if (e.data && e.data.type === 'FORCE_RELOAD_V26') {
           window.location.reload();
         }
       });
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js?v=25').then(reg => {
+        navigator.serviceWorker.register('./sw.js?v=26').then(reg => {
           reg.update();
         }).catch(() => {});
       });

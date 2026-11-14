@@ -2448,35 +2448,56 @@ function renderDashboard() {
 
     <!-- Interactive Wood Veneer Calculator -->
     <div class="card">
-      <div class="card-header">
-        <div class="card-title">📐 حاسبة القشرة الخشبية الفورية (تحويل البالتة والأفرخ إلى م² و م³)</div>
-        <span class="badge badge-info">المقاس المعتمد: 125 سم × 250 سم = 3.125 م² للفرخ (أو مقاس خاص)</span>
+      <div class="card-header" style="flex-wrap:wrap;gap:8px;">
+        <div>
+          <div class="card-title">📐 حاسبة القشرة الخشبية الفورية (تحويل البالتة والأفرخ إلى م² و م³)</div>
+          <small style="color:var(--text-muted);">اكتب أي أرقام بحرية (بالعربي أو الإنجليزي والكسور العشرية) وسيتم الحساب تلقائياً وفوراً</small>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <span class="badge badge-info">المقاس المعتمد: 125 سم × 250 سم = 3.125 م² للفرخ</span>
+          <button type="button" class="btn btn-sm btn-outline" onclick="resetQuickCalcValues()">🔄 استعادة الافتراضي</button>
+        </div>
       </div>
+
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;font-size:0.78rem;">
+        <strong style="color:var(--text-muted);">اختيار سريع للمقاس:</strong>
+        ${getPresetVeneerDimensions().map(d => `
+          <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.74rem;" onclick="setQuickCalcDims(${d.lengthCm}, ${d.widthCm})">
+            ${d.widthCm}×${d.lengthCm} سم ${d.isStandard ? '(معتمد)' : ''}
+          </button>
+        `).join('')}
+        <span style="margin:0 6px;color:var(--border-color);">|</span>
+        <strong style="color:var(--text-muted);">تخانات سريعة:</strong>
+        ${[0.6, 1.0, 1.2, 1.5, 1.8, 2.0, 2.2, 2.5].map(mm => `
+          <button type="button" class="btn btn-sm btn-outline" style="padding:2px 7px;font-size:0.74rem;" onclick="setQuickCalcThk(${mm})">${mm} مم</button>
+        `).join('')}
+      </div>
+
       <div class="form-grid">
         <div class="form-group">
           <label>طول الفرخ (سم)</label>
-          <input id="qc-len-input" type="number" step="0.5" class="form-control" value="${quickCalc.lengthCm}" oninput="quickCalc.lengthCm=this.value; updateQuickCalcPreview();" />
+          <input id="qc-len-input" type="text" inputmode="decimal" dir="ltr" style="text-align:center;font-weight:800;font-size:1rem;" class="form-control" value="${quickCalc.lengthCm}" oninput="onQuickCalcInput('lengthCm', this.value)" onclick="this.select()" placeholder="250" />
         </div>
         <div class="form-group">
           <label>عرض الفرخ (سم)</label>
-          <input id="qc-wid-input" type="number" step="0.5" class="form-control" value="${quickCalc.widthCm}" oninput="quickCalc.widthCm=this.value; updateQuickCalcPreview();" />
+          <input id="qc-wid-input" type="text" inputmode="decimal" dir="ltr" style="text-align:center;font-weight:800;font-size:1rem;" class="form-control" value="${quickCalc.widthCm}" oninput="onQuickCalcInput('widthCm', this.value)" onclick="this.select()" placeholder="125" />
         </div>
         <div class="form-group">
           <label>التخانة (مم)</label>
-          <input id="qc-thk-input" type="number" step="0.05" class="form-control" value="${quickCalc.thicknessMm}" oninput="quickCalc.thicknessMm=this.value; updateQuickCalcPreview();" />
+          <input id="qc-thk-input" type="text" inputmode="decimal" dir="ltr" style="text-align:center;font-weight:800;font-size:1rem;" class="form-control" value="${quickCalc.thicknessMm}" oninput="onQuickCalcInput('thicknessMm', this.value)" onclick="this.select()" placeholder="1.5" />
         </div>
         <div class="form-group">
-          <label>عدد الأفرخ في البالتة</label>
-          <input id="qc-sheets-input" type="number" class="form-control" value="${quickCalc.sheetsPerPallet}" oninput="quickCalc.sheetsPerPallet=this.value; updateQuickCalcPreview();" />
+          <label>عدد الأفرخ في البالتة (أو إجمالي القطع)</label>
+          <input id="qc-sheets-input" type="text" inputmode="numeric" dir="ltr" style="text-align:center;font-weight:800;font-size:1rem;" class="form-control" value="${quickCalc.sheetsPerPallet}" oninput="onQuickCalcInput('sheetsPerPallet', this.value)" onclick="this.select()" placeholder="400" />
         </div>
         <div class="form-group">
           <label>عدد البالتات</label>
-          <input id="qc-pallets-input" type="number" class="form-control" value="${quickCalc.palletsCount}" oninput="quickCalc.palletsCount=this.value; updateQuickCalcPreview();" />
+          <input id="qc-pallets-input" type="text" inputmode="decimal" dir="ltr" style="text-align:center;font-weight:800;font-size:1rem;" class="form-control" value="${quickCalc.palletsCount}" oninput="onQuickCalcInput('palletsCount', this.value)" onclick="this.select()" placeholder="1" />
         </div>
         ${canSeeFinancialPrices() ? `
         <div class="form-group">
           <label>سعر المتر المكعب (م³)</label>
-          <input id="qc-price-input" type="number" class="form-control" value="${quickCalc.pricePerM3}" oninput="quickCalc.pricePerM3=this.value; updateQuickCalcPreview();" />
+          <input id="qc-price-input" type="text" inputmode="decimal" dir="ltr" style="text-align:center;font-weight:800;font-size:1rem;" class="form-control" value="${quickCalc.pricePerM3}" oninput="onQuickCalcInput('pricePerM3', this.value)" onclick="this.select()" placeholder="22000" />
         </div>
         ` : ''}
       </div>
@@ -2597,12 +2618,72 @@ function renderDashboard() {
   `;
 }
 
+function normalizeNumericInputString(raw) {
+  if (raw === null || raw === undefined) return '';
+  const arabicDigits = '٠١٢٣٤٥٦٧٨٩';
+  const easternDigits = '۰۱۲۳۴۵۶۷۸۹';
+  let str = String(raw);
+  for (let i = 0; i < 10; i++) {
+    str = str.split(arabicDigits[i]).join(String(i));
+    str = str.split(easternDigits[i]).join(String(i));
+  }
+  str = str.replace(/[٫،,]/g, '.');
+  return str.replace(/[^0-9.]/g, '');
+}
+
+function onQuickCalcInput(fieldKey, rawVal) {
+  const cleaned = normalizeNumericInputString(rawVal);
+  quickCalc[fieldKey] = cleaned === '' ? 0 : (Number(cleaned) || 0);
+  updateQuickCalcPreview();
+}
+
+function setQuickCalcDims(lenCm, widCm) {
+  quickCalc.lengthCm = Number(lenCm || 250);
+  quickCalc.widthCm = Number(widCm || 125);
+  const lenEl = document.getElementById('qc-len-input');
+  const widEl = document.getElementById('qc-wid-input');
+  if (lenEl) lenEl.value = quickCalc.lengthCm;
+  if (widEl) widEl.value = quickCalc.widthCm;
+  updateQuickCalcPreview();
+}
+
+function setQuickCalcThk(mm) {
+  quickCalc.thicknessMm = Number(mm || 1.5);
+  const thkEl = document.getElementById('qc-thk-input');
+  if (thkEl) thkEl.value = quickCalc.thicknessMm;
+  updateQuickCalcPreview();
+}
+
+function resetQuickCalcValues() {
+  quickCalc = {
+    lengthCm: 250,
+    widthCm: 125,
+    thicknessMm: 1.5,
+    sheetsPerPallet: 400,
+    palletsCount: 1,
+    pricePerM3: 22000
+  };
+  const lenEl = document.getElementById('qc-len-input');
+  const widEl = document.getElementById('qc-wid-input');
+  const thkEl = document.getElementById('qc-thk-input');
+  const shEl = document.getElementById('qc-sheets-input');
+  const palEl = document.getElementById('qc-pallets-input');
+  const prEl = document.getElementById('qc-price-input');
+  if (lenEl) lenEl.value = quickCalc.lengthCm;
+  if (widEl) widEl.value = quickCalc.widthCm;
+  if (thkEl) thkEl.value = quickCalc.thicknessMm;
+  if (shEl) shEl.value = quickCalc.sheetsPerPallet;
+  if (palEl) palEl.value = quickCalc.palletsCount;
+  if (prEl) prEl.value = quickCalc.pricePerM3;
+  updateQuickCalcPreview();
+}
+
 function updateQuickCalcPreview() {
   const qcTotalSheets = Number(quickCalc.sheetsPerPallet || 0) * Number(quickCalc.palletsCount || 0);
   const qcMetrics = calculateVeneerMetrics(
-    quickCalc.lengthCm,
-    quickCalc.widthCm,
-    quickCalc.thicknessMm,
+    Number(quickCalc.lengthCm || 0),
+    Number(quickCalc.widthCm || 0),
+    Number(quickCalc.thicknessMm || 0),
     qcTotalSheets
   );
   const qcTotalValue = qcMetrics.totalVolumeM3 * Number(quickCalc.pricePerM3 || 0);
