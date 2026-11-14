@@ -902,16 +902,36 @@ function normalizeState(s) {
 function smartMergeClientState(current, incoming) {
   if (!current || !current.users) return normalizeState(incoming);
   if (!incoming || !incoming.users) return normalizeState(current);
-  const deletedIds = Array.from(new Set([...(current.deletedIds || []), ...(incoming.deletedIds || [])]));
+
+  const curReset = Number(current.lastResetAt || 0);
+  const incReset = Number(incoming.lastResetAt || 0);
+
+  // If one state has a newer system reset timestamp (lastResetAt), discard the older pre-reset state completely!
+  if (incReset > curReset) {
+    return normalizeState({
+      ...incoming,
+      users: smartMergeListClient(current.users, incoming.users, new Set())
+    });
+  }
+  if (curReset > incReset) {
+    return normalizeState({
+      ...current,
+      users: smartMergeListClient(current.users, incoming.users, new Set())
+    });
+  }
+
+  const deletedIds = Array.from(new Set([...(current.deletedIds || []), ...(incoming.deletedIds || [])])).slice(-3000);
   const delSet = new Set(deletedIds);
   const listKeys = [
     'users', 'pallets', 'rawMaterials', 'scrapItems', 'spareParts',
     'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
     'partners', 'palletMovements', 'financialTransactions', 'auditLogs', 'chatMessages'
   ];
+
   const merged = {
     ...current,
     ...incoming,
+    lastResetAt: curReset,
     factoryInfo: { ...(current.factoryInfo || {}), ...(incoming.factoryInfo || {}) },
     treasuryBalances: { ...(current.treasuryBalances || {}), ...(incoming.treasuryBalances || {}) },
     catalog: {
@@ -919,6 +939,7 @@ function smartMergeClientState(current, incoming) {
       thicknesses: smartMergeListClient(current.catalog?.thicknesses, incoming.catalog?.thicknesses, delSet),
       grades: smartMergeListClient(current.catalog?.grades, incoming.catalog?.grades, delSet),
       dimensions: smartMergeListClient(current.catalog?.dimensions, incoming.catalog?.dimensions, delSet),
+      customDimensions: smartMergeListClient(current.catalog?.customDimensions, incoming.catalog?.customDimensions, delSet),
       cellPrices: sanitizeCellPricesMap({ ...(current.catalog?.cellPrices || {}), ...(incoming.catalog?.cellPrices || {}) })
     },
     deletedIds
@@ -4766,18 +4787,164 @@ function renderBackupSettings() {
   `;
 }
 
-async function resetAllFactoryData() {
-  if (!confirm('هل أنت متأكد من تصفير وتفريغ جميع الخامات والطلبات والتخانات والبدء بنظام فارغ تماماً؟')) return;
+function resetAllFactoryData() {
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) {
+    executeFactoryDataReset('full');
+    return;
+  }
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:560px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title" style="color:var(--danger);">🗑️ تصفير وتفريغ النظام (البدء من جديد)</div>
+            <small style="color:var(--text-muted);">اختر نوع التصفير المطلوب — سيتم تصفير البيانات على هذا الجهاز وعلى السيرفر السحابي لجميع المستخدمين فوراً</small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:12px;margin:14px 0;">
+          <div style="background:rgba(2,132,199,0.08);border:1.5px solid #0284c7;border-radius:12px;padding:12px 14px;">
+            <div style="font-weight:800;color:#0284c7;margin-bottom:4px;">1️⃣ تصفير الأرصدة والطلبيات والحسابات فقط (مع بقاء التخانات والجودات)</div>
+            <p style="font-size:0.8rem;color:var(--text-muted);margin:0 0 10px 0;">
+              يقوم بتصفير جميع أرصدة القشرة، الخامات، الهالك، قطع الغيار، الطلبيات، فواتير العملاء، وسجل الحركات، مع <strong>الاحتفاظ بتقسيمة جدول التخانات والجودات والأسعار ولوجو الشركة وحسابات المستخدمين</strong>.
+            </p>
+            <button type="button" class="btn btn-primary" style="width:100%;font-weight:800;" onclick="executeFactoryDataReset('keep_catalog')">
+              🔄 تصفير الأرصدة والطلبيات والحسابات فقط
+            </button>
+          </div>
+
+          <div style="background:rgba(220,38,38,0.08);border:1.5px solid #dc2626;border-radius:12px;padding:12px 14px;">
+            <div style="font-weight:800;color:#dc2626;margin-bottom:4px;">2️⃣ تصفير وتفريغ شامل للنظام بالكامل (بدء من الصفر تماماً)</div>
+            <p style="font-size:0.8rem;color:var(--text-muted);margin:0 0 10px 0;">
+              يقوم بتفريغ كل شيء في النظام (الأرصدة + الطلبيات + العملاء + التخانات + الجودات + الأسعار) مع الاحتفاظ فقط بحسابات المستخدمين الـ 8 ولوجو الشركة والمقاس المعتمد (125×250 سم).
+            </p>
+            <button type="button" class="btn btn-danger" style="width:100%;font-weight:800;" onclick="executeFactoryDataReset('full')">
+              🗑️ تصفير وتفريغ النظام بالكامل من الصفر
+            </button>
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;margin-top:8px;">
+          <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function executeFactoryDataReset(mode = 'full') {
+  window._isSavingState = true;
   try {
-    const res = await fetch('/api/reset', { method: 'POST' });
-    if (res.ok) {
-      state = await res.json();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      render();
-      alert('تم تصفير وتفريغ النظام بالكامل بنجاح!');
+    const resetTs = Date.now();
+    const nowIso = new Date(resetTs + 100).toISOString();
+    const def = getDefaultInitialState();
+
+    // Preserve users (with updated timestamp so they stay active) and custom factory logo
+    const preservedUsers = (state?.users && state.users.length > 0 ? state.users : def.users).map(u => ({
+      ...u,
+      updatedAt: nowIso
+    }));
+    const preservedLogo = state?.factoryInfo?.logoDataUrl || '';
+
+    // Stamp existing catalog items with fresh updatedAt if keeping catalog
+    const keptCatalog = mode === 'keep_catalog' && state?.catalog
+      ? {
+          woodTypes: (state.catalog.woodTypes || []).map(x => ({ ...x, updatedAt: nowIso })),
+          thicknesses: (state.catalog.thicknesses || []).map(x => ({ ...x, updatedAt: nowIso })),
+          grades: (state.catalog.grades || []).map(x => ({ ...x, updatedAt: nowIso })),
+          dimensions: (state.catalog.dimensions || def.catalog.dimensions).map(x => ({ ...x, updatedAt: nowIso })),
+          customDimensions: (state.catalog.customDimensions || []).map(x => ({ ...x, updatedAt: nowIso })),
+          cellPrices: sanitizeCellPricesMap(state.catalog.cellPrices || {})
+        }
+      : {
+          woodTypes: [],
+          thicknesses: [],
+          grades: [],
+          dimensions: def.catalog.dimensions.map(x => ({ ...x, updatedAt: nowIso })),
+          customDimensions: [],
+          cellPrices: {}
+        };
+
+    const freshState = normalizeState({
+      ...def,
+      lastResetAt: resetTs,
+      lastFullCatalogResetAt: mode === 'full' ? resetTs : Number(state?.lastFullCatalogResetAt || 0),
+      factoryInfo: {
+        ...def.factoryInfo,
+        ...(state?.factoryInfo || {}),
+        logoDataUrl: preservedLogo,
+        updatedAt: nowIso
+      },
+      catalog: keptCatalog,
+      users: preservedUsers,
+      pallets: [],
+      rawMaterials: [],
+      scrapItems: [],
+      spareParts: [],
+      productionOrders: [],
+      approvalRequests: [],
+      warehouseMovements: [],
+      salesReturns: [],
+      partners: [],
+      palletMovements: [],
+      financialTransactions: [],
+      treasuryBalances: { cashVault: 0, bankAccount: 0, checksUnderCollection: 0 },
+      auditLogs: [
+        {
+          id: uid('log'),
+          timestamp: nowIso,
+          updatedAt: nowIso,
+          user: currentUser?.name || 'الإدارة',
+          roleTitle: currentUser?.roleTitle || '',
+          action: mode === 'keep_catalog'
+            ? '🔄 تم تصفير جميع الأرصدة والطلبيات والحسابات بنجاح (مع الاحتفاظ بهيكل جدول التخانات والجودات)'
+            : '🗑️ تم تصفير وتفريغ النظام بالكامل والبدء من الصفر بنجاح',
+          targetRole: 'all'
+        }
+      ],
+      chatMessages: [],
+      deletedIds: []
+    });
+
+    state = freshState;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (currentUser) {
+      currentUser = state.users.find(u => u.id === currentUser.id) || currentUser;
     }
+    closeModal();
+    render();
+
+    const isLocalHost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname.startsWith('192.168.');
+    if (isLocalHost) {
+      try {
+        await fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...state, _forceReplace: true })
+        });
+      } catch (_) {}
+    }
+
+    try {
+      await fetch(FIREBASE_CLOUD_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(state)
+      });
+    } catch (_) {}
+
+    updateSyncIndicator();
+    alert(
+      mode === 'keep_catalog'
+        ? '✅ تم تصفير جميع الأرصدة والطلبيات والحسابات بنجاح (مع الاحتفاظ بجدول التخانات والجودات)!'
+        : '✅ تم تصفير وتفريغ النظام بالكامل والبدء من الصفر بنجاح!'
+    );
   } catch (e) {
-    alert('حدث خطأ أثناء التصفير: ' + e.message);
+    alert('حدث خطأ أثناء التصفير: ' + (e?.message || e));
+  } finally {
+    window._isSavingState = false;
   }
 }
 
