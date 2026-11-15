@@ -1753,8 +1753,14 @@ function render() {
             <button class="btn btn-sm btn-outline" onclick="openFactoryLogoModal()" title="رفع أو تغيير لوجو الشركة ليظهر في النظام وفي أعلى يسار جميع التقارير">
               🖼️ لوجو الشركة
             </button>
+            <button class="btn btn-sm" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;font-weight:800;border:none;" onclick="openSmartAiAssistantModal()" title="فتح مساعد مصنع العاصمة الذكي (بالأوامر الصوتية والكتابية بالعربي)">
+              🤖 المساعد الذكي 🎤
+            </button>
             <button class="btn btn-sm ${activeTab === 'chat' ? 'btn-primary' : 'btn-outline'}" onclick="setTab('chat')" title="فتح غرفة الشات وتكليف المهام بين الـ 8 حسابات">
               💬 الشات والمهام ${openTasksForMeCount > 0 ? `<span class="badge badge-danger" style="margin-right:4px;">${openTasksForMeCount} مهمة</span>` : ''}
+            </button>
+            <button class="btn btn-sm btn-outline" style="border-color:#a855f7;color:#7c3aed;" onclick="openFloatingDockPositionModal()" title="نقل أو إظهار/إخفاء أيقونة الشات والمساعد الذكي من أسفل يسار الصفحة لأي مكان">
+              ✥ مكان الشات العائم
             </button>
             <button class="btn btn-sm btn-outline" style="border-color:var(--primary);color:var(--primary);" onclick="openNotificationsCenterModal()" title="سجل الإشعارات المسموح لك برؤيتها وتجربة الصوت الطويل">
               🔔 الإشعارات والصوت (${authorizedLogsCount})
@@ -1780,14 +1786,10 @@ function render() {
       </div>
     </div>
 
-    ${activeTab !== 'chat' ? `
-      <button class="floating-chat-fab" onclick="setTab('chat')" title="فتح الشات والمهام بين الحسابات">
-        <span>💬 الشات والمهام</span>
-        ${openTasksForMeCount > 0 ? `<span class="badge" style="background:#ef4444;color:#fff;">${openTasksForMeCount}</span>` : ''}
-      </button>
-    ` : ''}
+    ${renderFloatingDockHtml(openTasksForMeCount)}
   `;
   renderLiveBannerDOM();
+  initFloatingDockDragEvents();
 
   if (focusedId) {
     const restoredEl = document.getElementById(focusedId);
@@ -11576,6 +11578,973 @@ function deletePalletMovementRecord(pmId) {
   state.palletMovements = (state.palletMovements || []).filter(x => x.id !== pm.id);
   closeModal();
   saveState(`🗑️ حذف حركة بالتات للعميل (${pm.clientName}) بواسطة ${currentUser.name}`);
+}
+
+// ============================================================================
+// 11. MOVABLE FLOATING DOCK & SMART ARABIC AI ASSISTANT (v29)
+// ============================================================================
+const FLOATING_DOCK_STORAGE_KEY = 'al_asimah_floating_dock_pos_v1';
+
+function getFloatingDockConfig() {
+  try {
+    const raw = localStorage.getItem(FLOATING_DOCK_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+  } catch (_) {}
+  return { mode: 'preset', preset: 'bottom-left', x: null, y: null };
+}
+
+function saveFloatingDockConfig(cfg) {
+  try {
+    localStorage.setItem(FLOATING_DOCK_STORAGE_KEY, JSON.stringify(cfg));
+  } catch (_) {}
+}
+
+function setFloatingDockPreset(presetName) {
+  saveFloatingDockConfig({ mode: 'preset', preset: presetName, x: null, y: null });
+  closeModal();
+  render();
+}
+
+function renderFloatingDockHtml(openTasksForMeCount) {
+  const cfg = getFloatingDockConfig();
+  if (cfg.mode === 'preset' && cfg.preset === 'hidden') {
+    return '';
+  }
+
+  let posClass = '';
+  let inlineStyle = '';
+
+  if (cfg.mode === 'custom' && typeof cfg.x === 'number' && typeof cfg.y === 'number') {
+    const maxX = Math.max(20, (window.innerWidth || 1200) - 240);
+    const maxY = Math.max(20, (window.innerHeight || 800) - 65);
+    const clampedX = Math.max(8, Math.min(cfg.x, maxX));
+    const clampedY = Math.max(8, Math.min(cfg.y, maxY));
+    inlineStyle = `left:${clampedX}px;top:${clampedY}px;bottom:auto;right:auto;transform:none;`;
+  } else {
+    const preset = cfg.preset || 'bottom-left';
+    posClass = `floating-dock-pos-${preset}`;
+  }
+
+  return `
+    <div id="floating-smart-dock" class="floating-smart-dock ${posClass}" style="${inlineStyle}">
+      <button type="button" id="floating-dock-handle" class="dock-drag-handle" title="اسحب بالماوس أو الإصبع لنقل الشريط لأي مكان في الصفحة، أو اضغط لاختيار المكان أو إخفائه">
+        ✥ نقل
+      </button>
+      <button type="button" class="dock-ai-btn" onclick="openSmartAiAssistantModal()" title="مساعد مصنع العاصمة الذكي (بالأوامر الصوتية والكتابية بالعربي)">
+        <span>🤖 المساعد الذكي</span>
+        <span>🎤</span>
+      </button>
+      ${activeTab !== 'chat' ? `
+        <button type="button" class="dock-chat-btn" onclick="setTab('chat')" title="فتح الشات والمهام بين الحسابات">
+          <span>💬 الشات والمهام</span>
+          ${openTasksForMeCount > 0 ? `<span class="badge" style="background:#ef4444;color:#fff;padding:1px 6px;border-radius:999px;">${openTasksForMeCount}</span>` : ''}
+        </button>
+      ` : ''}
+    </div>
+  `;
+}
+
+function initFloatingDockDragEvents() {
+  const dock = document.getElementById('floating-smart-dock');
+  const handle = document.getElementById('floating-dock-handle');
+  if (!dock || !handle) return;
+
+  let isDragging = false;
+  let moved = false;
+  let startClientX = 0;
+  let startClientY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+
+  const onPointerDown = (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    isDragging = true;
+    moved = false;
+    const rect = dock.getBoundingClientRect();
+    startClientX = e.touches ? e.touches[0].clientX : e.clientX;
+    startClientY = e.touches ? e.touches[0].clientY : e.clientY;
+    startLeft = rect.left;
+    startTop = rect.top;
+    dock.classList.add('dragging');
+  };
+
+  const onPointerMove = (e) => {
+    if (!isDragging) return;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const dx = clientX - startClientX;
+    const dy = clientY - startClientY;
+    if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+      moved = true;
+    }
+    if (!moved) return;
+    if (e.cancelable) e.preventDefault();
+
+    const rect = dock.getBoundingClientRect();
+    const maxX = Math.max(10, window.innerWidth - rect.width - 8);
+    const maxY = Math.max(10, window.innerHeight - rect.height - 8);
+    const newLeft = Math.max(8, Math.min(startLeft + dx, maxX));
+    const newTop = Math.max(8, Math.min(startTop + dy, maxY));
+
+    dock.className = 'floating-smart-dock dragging';
+    dock.style.left = `${newLeft}px`;
+    dock.style.top = `${newTop}px`;
+    dock.style.bottom = 'auto';
+    dock.style.right = 'auto';
+    dock.style.transform = 'none';
+  };
+
+  const onPointerUp = () => {
+    if (!isDragging) return;
+    isDragging = false;
+    dock.classList.remove('dragging');
+    if (moved) {
+      const rect = dock.getBoundingClientRect();
+      saveFloatingDockConfig({
+        mode: 'custom',
+        preset: 'custom',
+        x: Math.round(rect.left),
+        y: Math.round(rect.top)
+      });
+    } else {
+      openFloatingDockPositionModal();
+    }
+  };
+
+  handle.addEventListener('mousedown', onPointerDown);
+  window.addEventListener('mousemove', onPointerMove, { passive: false });
+  window.addEventListener('mouseup', onPointerUp);
+
+  handle.addEventListener('touchstart', onPointerDown, { passive: true });
+  window.addEventListener('touchmove', onPointerMove, { passive: false });
+  window.addEventListener('touchend', onPointerUp);
+}
+
+function openFloatingDockPositionModal() {
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  const cfg = getFloatingDockConfig();
+  const curPreset = cfg.mode === 'custom' ? 'custom' : (cfg.preset || 'bottom-left');
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:540px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">✥ نقل أو تغيير مكان أيقونة الشات والمساعد الذكي</div>
+            <small style="color:var(--text-muted);">يمكنك سحب زر (✥ نقل) بالماوس أو الإصبع لأي نقطة في الشاشة، أو اختيار مكان جاهز بضغطة واحدة:</small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0;">
+          <button type="button" class="btn ${curPreset === 'bottom-left' ? 'btn-primary' : 'btn-outline'}" style="padding:12px;font-weight:800;" onclick="setFloatingDockPreset('bottom-left')">
+            ↙️ أسفل يسار الصفحة (الافتراضي)
+          </button>
+          <button type="button" class="btn ${curPreset === 'bottom-right' ? 'btn-primary' : 'btn-outline'}" style="padding:12px;font-weight:800;" onclick="setFloatingDockPreset('bottom-right')">
+            ↘️ أسفل يمين الصفحة
+          </button>
+          <button type="button" class="btn ${curPreset === 'mid-left' ? 'btn-primary' : 'btn-outline'}" style="padding:12px;font-weight:800;" onclick="setFloatingDockPreset('mid-left')">
+            ⬅️ منتصف يسار الشاشة
+          </button>
+          <button type="button" class="btn ${curPreset === 'mid-right' ? 'btn-primary' : 'btn-outline'}" style="padding:12px;font-weight:800;" onclick="setFloatingDockPreset('mid-right')">
+            ➡️ منتصف يمين الشاشة
+          </button>
+          <button type="button" class="btn ${curPreset === 'top-left' ? 'btn-primary' : 'btn-outline'}" style="padding:12px;font-weight:800;" onclick="setFloatingDockPreset('top-left')">
+            ↖️ أعلى يسار الصفحة
+          </button>
+          <button type="button" class="btn ${curPreset === 'hidden' ? 'btn-danger' : 'btn-outline'}" style="padding:12px;font-weight:800;border-color:var(--danger);color:${curPreset === 'hidden' ? '#fff' : 'var(--danger)'};" onclick="setFloatingDockPreset('hidden')">
+            🙈 إخفاء الأيقونة العائمة (الاعتماد على الشريط العلوي)
+          </button>
+        </div>
+
+        <div style="background:rgba(124,58,237,0.08);border:1px dashed #7c3aed;border-radius:10px;padding:10px 14px;font-size:0.82rem;color:var(--text-main);">
+          💡 <strong>تلميح سريع:</strong> يمكنك في أي وقت الضغط باستمرار على زر <strong>«✥ نقل»</strong> الموجود بجوار أيقونة الشات وسحبه بالماوس أو بإصبعك على الموبايل لوضعه في أي مكان يناسبك حتى لا يغطي أي جدول أو زر!
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;margin-top:14px;">
+          <button type="button" class="btn btn-outline" onclick="closeModal()">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ============================================================================
+// SMART ARABIC AI ASSISTANT (VOICE & TEXT COMMANDS + ROLE-SAFE QUERIES)
+// ============================================================================
+let aiVoiceRecognition = null;
+let aiIsListening = false;
+let aiTtsEnabled = true;
+let aiChatHistory = [];
+
+function normalizeArabicAiText(str) {
+  if (!str) return '';
+  const arabicDigits = '٠١٢٣٤٥٦٧٨٩';
+  const persianDigits = '۰۱۲۳۴۵۶۷۸۹';
+  let out = String(str);
+  for (let i = 0; i < 10; i++) {
+    out = out.replace(new RegExp(arabicDigits[i], 'g'), String(i));
+    out = out.replace(new RegExp(persianDigits[i], 'g'), String(i));
+  }
+  out = out
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/٫/g, '.');
+  return out.trim();
+}
+
+function speakArabicAiResponse(plainText) {
+  if (!aiTtsEnabled || !('speechSynthesis' in window) || !plainText) return;
+  try {
+    window.speechSynthesis.cancel();
+    const clean = String(plainText)
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/[📊📦🪵💰🧮⏳✅🚚🔄📥📤♻️📋🤖🎤🔊]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!clean) return;
+    const utter = new SpeechSynthesisUtterance(clean.slice(0, 340));
+    utter.lang = 'ar-EG';
+    utter.rate = 1.02;
+    const voices = window.speechSynthesis.getVoices() || [];
+    const arVoice = voices.find(v => v.lang && v.lang.toLowerCase().startsWith('ar'));
+    if (arVoice) utter.voice = arVoice;
+    window.speechSynthesis.speak(utter);
+  } catch (_) {}
+}
+
+function getRoleSpecificAiSuggestions() {
+  const showPrices = canSeeFinancialPrices();
+  if (!showPrices) {
+    // Warehouse Keeper suggestions (100% quantities, orders, calculator sheets, voice operations — NO prices)
+    return [
+      { label: '📦 إجمالي رصيد المخزن الآن', cmd: 'كم إجمالي رصيد مخزن القشرة الآن؟' },
+      { label: '⏳ الطلبيات المطلوبة مني بالمخزن', cmd: 'ما هي الطلبيات المعلقة المطلوب تجهيزها أو صرفها؟' },
+      { label: '🧮 كم فرخ في المتر المكعب تخانة 1.5؟', cmd: 'كم عدد الأفرخ في المتر المكعب لتخانة 1.5 مم؟' },
+      { label: '📥 أمر: إضافة إنتاج 400 فرخ 1.5 قص C', cmd: 'إضافة إنتاج 400 فرخ تخانة 1.5 قص جودة C' },
+      { label: '📤 أمر: صرف مبيعات 200 قطعة 1.3 قص ABC+', cmd: 'خروج مبيعات 200 فرخ تخانة 1.3 قص جودة ABC+' },
+      { label: '🔄 أمر: تسجيل مرتجع مبيعات 100 فرخ 1.5 قص', cmd: 'تسجيل مرتجع مبيعات 100 فرخ تخانة 1.5 قص جودة C' },
+      { label: '🔍 جرد تخانة 1.5 مم', cmd: 'رصيد تخانة 1.5' },
+      { label: '🪵 رصيد البالتات لدى العملاء', cmd: 'رصيد البالتات عند العملاء' }
+    ];
+  }
+
+  return [
+    { label: '📊 ملخص المخزن والمبيعات والمديونيات', cmd: 'اعطني ملخص شامل للمصنع والمخزن والمبيعات' },
+    { label: '⏳ الطلبيات المعلقة للموافقة أو الصرف', cmd: 'ما هي الطلبيات المعلقة حالياً؟' },
+    { label: '🧮 احسب تخانة 1.5 بسعر متر 22000', cmd: 'احسب عدد الأفرخ وسعر الفرخ لتخانة 1.5 بسعر متر 22000' },
+    { label: '💰 مديونيات وحسابات العملاء', cmd: 'كشف أرصدة ومديونيات العملاء والبالتات' },
+    { label: '📥 أمر: إضافة إنتاج 500 فرخ 1.5 قص C', cmd: 'إضافة إنتاج 500 فرخ تخانة 1.5 قص جودة C' },
+    { label: '📋 أمر: إنشاء طلبية جديدة لعميل', cmd: 'إنشاء طلبية عميل جديدة' },
+    { label: '🔍 جرد تخانة 1.5 مم', cmd: 'رصيد تخانة 1.5' },
+    { label: '🔄 المرتجعات المعلقة للموافقة', cmd: 'ما هي مرتجعات المبيعات المعلقة للموافقة؟' }
+  ];
+}
+
+function openSmartAiAssistantModal(initialCommand = '') {
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+
+  if (aiChatHistory.length === 0) {
+    const showPrices = canSeeFinancialPrices();
+    aiChatHistory.push({
+      sender: 'ai',
+      time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+      html: `
+        <div style="font-weight:800;color:var(--primary);margin-bottom:6px;">
+          👋 أهلاً بك يا <strong>${currentUser?.name || 'بطل المصنع'}</strong> في مساعد مصنع العاصمة الذكي!
+        </div>
+        <div style="font-size:0.86rem;line-height:1.6;">
+          يمكنك التحدث معي <strong>بالصوت باللغة العربية 🎤</strong> أو بالكتابة لتنفيذ المهام فوراً:<br/>
+          • <strong>استعلام لحظي:</strong> اسأل عن رصيد أي تخانة أو جودة (مثل: <em>"رصيد 1.5 قص"</em> أو <em>"إجمالي المخزن"</em>).<br/>
+          • <strong>أوامر تشغيل سريعة بالصوت:</strong> قل مثلاً <em>"إضافة إنتاج 400 فرخ 1.5 قص جودة C"</em> أو <em>"صرف مبيعات 150 قطعة 1.3 قص"</em> وسأفتح لك النافذة جاهزة بالأرقام للتأكيد!<br/>
+          • <strong>حاسبة القشرة الفورية:</strong> قل <em>"كم فرخ في المتر المكعب تخانة 1.5${showPrices ? ' وسعر المتر 22000' : ''}؟"</em>.<br/>
+          • <strong>متابعة الطلبيات والعملاء:</strong> اسأل عن <em>"الطلبيات المعلقة"</em> أو اسم أي عميل.
+        </div>
+      `
+    });
+  }
+
+  const suggestions = getRoleSpecificAiSuggestions();
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeSmartAiModal()">
+      <div class="modal-box" style="max-width:820px;padding:18px;">
+        <div class="card-header" style="margin-bottom:10px;border-bottom:2px solid rgba(124,58,237,0.2);padding-bottom:10px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.45rem;box-shadow:0 6px 16px rgba(124,58,237,0.35);">
+              🤖
+            </div>
+            <div>
+              <div class="card-title" style="color:#5b21b6;font-size:1.05rem;">
+                مساعد مصنع العاصمة الذكي (بالأوامر الصوتية والكتابية بالعربي)
+              </div>
+              <small style="color:var(--text-muted);font-size:0.78rem;">
+                يعمل وفق صلاحيات حسابك الحالي: <strong>${currentUser?.roleTitle || ''}</strong> ${!canSeeFinancialPrices() ? '<span class="badge badge-info">كميات وتشغيل فقط بدون أسعار</span>' : ''}
+              </small>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <button type="button" id="ai-tts-toggle-btn" class="btn btn-sm ${aiTtsEnabled ? 'btn-primary' : 'btn-outline'}" onclick="toggleAiTtsVoice()" title="تشغيل أو إيقاف القراءة الصوتية للردود">
+              ${aiTtsEnabled ? '🔊 الرد الصوتي: مفعل' : '🔇 الرد الصوتي: صامت'}
+            </button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="clearSmartAiHistory()" title="مسح سجل المحادثة">
+              🧹 مسح
+            </button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="closeSmartAiModal()">✕</button>
+          </div>
+        </div>
+
+        <!-- Quick Suggestion Chips -->
+        <div style="margin-bottom:10px;">
+          <div style="font-size:0.76rem;font-weight:800;color:var(--text-muted);margin-bottom:5px;">⚡ أوامر واستعلامات سريعة بضغطة واحدة (أو اضغط الميكروفون وتحدث):</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            ${suggestions.map(s => `
+              <button type="button" class="btn btn-sm btn-outline" style="font-size:0.74rem;padding:4px 9px;border-color:rgba(124,58,237,0.35);background:rgba(124,58,237,0.04);" onclick="runSmartAiQuickChip('${s.cmd.replace(/'/g, "\\'")}')">
+                ${s.label}
+              </button>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- AI Conversation Messages Box -->
+        <div id="ai-assistant-messages" style="height:350px;overflow-y:auto;background:var(--bg-elevated);border:1px solid var(--border-color);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;margin-bottom:12px;">
+          ${renderSmartAiMessagesHtml()}
+        </div>
+
+        <!-- Voice Status Banner -->
+        <div id="ai-voice-status-bar" style="display:none;background:rgba(220,38,38,0.1);border:1px solid #dc2626;color:#dc2626;padding:8px 12px;border-radius:10px;margin-bottom:10px;font-weight:800;font-size:0.84rem;text-align:center;">
+          🎙️ جاري الاستماع لصوتك باللغة العربية... تحدث الآن (مثال: "إضافة إنتاج 400 فرخ 1.5 قص جودة C" أو "رصيد تخانة 1.5")
+        </div>
+
+        <!-- Input & Microphone Bar -->
+        <form onsubmit="submitSmartAiForm(event)" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button type="button" id="ai-mic-btn" class="btn" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;font-weight:900;padding:10px 16px;border-radius:10px;display:flex;align-items:center;gap:6px;" onclick="toggleSmartAiVoiceRecognition()">
+            <span>🎤</span>
+            <span id="ai-mic-btn-label">تحدث بالصوت</span>
+          </button>
+          <input id="ai-command-input" class="form-control" style="flex:1;min-width:210px;padding:10px 14px;font-weight:700;border:2px solid #7c3aed;" placeholder="اكتب سؤالك أو أمرك بالعربية هنا أو اضغط 🎤 للتحدث..." value="${initialCommand}" autofocus />
+          <button type="submit" class="btn btn-primary" style="padding:10px 18px;font-weight:900;">
+            🚀 تنفيذ / إرسال
+          </button>
+        </form>
+      </div>
+    </div>
+  `;
+
+  scrollSmartAiMessagesBottom();
+  if (initialCommand) {
+    processSmartAiCommand(initialCommand);
+  }
+}
+
+function closeSmartAiModal() {
+  stopSmartAiVoiceRecognition();
+  if ('speechSynthesis' in window) {
+    try { window.speechSynthesis.cancel(); } catch (_) {}
+  }
+  closeModal();
+}
+
+function toggleAiTtsVoice() {
+  aiTtsEnabled = !aiTtsEnabled;
+  if (!aiTtsEnabled && ('speechSynthesis' in window)) {
+    try { window.speechSynthesis.cancel(); } catch (_) {}
+  }
+  const btn = document.getElementById('ai-tts-toggle-btn');
+  if (btn) {
+    btn.className = `btn btn-sm ${aiTtsEnabled ? 'btn-primary' : 'btn-outline'}`;
+    btn.innerHTML = aiTtsEnabled ? '🔊 الرد الصوتي: مفعل' : '🔇 الرد الصوتي: صامت';
+  }
+}
+
+function clearSmartAiHistory() {
+  aiChatHistory = [];
+  openSmartAiAssistantModal();
+}
+
+function renderSmartAiMessagesHtml() {
+  return aiChatHistory.map(m => {
+    const isUser = m.sender === 'user';
+    return `
+      <div style="align-self:${isUser ? 'flex-start' : 'stretch'};max-width:${isUser ? '85%' : '100%'};background:${isUser ? 'linear-gradient(135deg,#0f766e,#0d9488)' : 'var(--bg-card)'};color:${isUser ? '#fff' : 'var(--text-main)'};padding:10px 14px;border-radius:12px;border:${isUser ? 'none' : '1px solid var(--border-color)'};box-shadow:0 2px 6px rgba(0,0,0,0.05);">
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.7rem;opacity:0.8;margin-bottom:4px;">
+          <strong>${isUser ? `👤 ${currentUser?.name || 'أنت'}` : '🤖 مساعد مصنع العاصمة الذكي'}</strong>
+          <span>${m.time || ''}</span>
+        </div>
+        <div style="font-size:0.86rem;line-height:1.55;">${m.html}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function scrollSmartAiMessagesBottom() {
+  const box = document.getElementById('ai-assistant-messages');
+  if (box) {
+    box.scrollTop = box.scrollHeight;
+  }
+}
+
+function runSmartAiQuickChip(cmdText) {
+  const input = document.getElementById('ai-command-input');
+  if (input) input.value = cmdText;
+  processSmartAiCommand(cmdText);
+}
+
+function submitSmartAiForm(e) {
+  if (e) e.preventDefault();
+  const input = document.getElementById('ai-command-input');
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  processSmartAiCommand(text);
+}
+
+function toggleSmartAiVoiceRecognition() {
+  if (aiIsListening) {
+    stopSmartAiVoiceRecognition();
+    return;
+  }
+
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) {
+    alert('⚠️ متصفحك الحالي لا يدعم الأوامر الصوتية المباشرة. يفضل استخدام متصفح Google Chrome أو Microsoft Edge على الكمبيوتر أو الموبايل، أو الكتابة في المربع مباشرة.');
+    return;
+  }
+
+  try {
+    aiVoiceRecognition = new SpeechRec();
+    aiVoiceRecognition.lang = 'ar-EG';
+    aiVoiceRecognition.interimResults = true;
+    aiVoiceRecognition.continuous = false;
+
+    aiVoiceRecognition.onstart = () => {
+      aiIsListening = true;
+      const micBtn = document.getElementById('ai-mic-btn');
+      const micLbl = document.getElementById('ai-mic-btn-label');
+      const statusBar = document.getElementById('ai-voice-status-bar');
+      if (micBtn) micBtn.classList.add('ai-mic-pulse');
+      if (micLbl) micLbl.textContent = 'جاري الاستماع... (اضغط للإيقاف)';
+      if (statusBar) statusBar.style.display = 'block';
+    };
+
+    aiVoiceRecognition.onresult = (event) => {
+      let transcript = '';
+      let isFinal = false;
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+        if (event.results[i].isFinal) isFinal = true;
+      }
+      const input = document.getElementById('ai-command-input');
+      if (input && transcript) {
+        input.value = transcript.trim();
+      }
+      if (isFinal && transcript.trim()) {
+        stopSmartAiVoiceRecognition();
+        const finalCmd = transcript.trim();
+        if (input) input.value = '';
+        processSmartAiCommand(finalCmd);
+      }
+    };
+
+    aiVoiceRecognition.onerror = () => {
+      stopSmartAiVoiceRecognition();
+    };
+
+    aiVoiceRecognition.onend = () => {
+      stopSmartAiVoiceRecognition();
+    };
+
+    aiVoiceRecognition.start();
+  } catch (_) {
+    stopSmartAiVoiceRecognition();
+  }
+}
+
+function stopSmartAiVoiceRecognition() {
+  aiIsListening = false;
+  if (aiVoiceRecognition) {
+    try { aiVoiceRecognition.stop(); } catch (_) {}
+    aiVoiceRecognition = null;
+  }
+  const micBtn = document.getElementById('ai-mic-btn');
+  const micLbl = document.getElementById('ai-mic-btn-label');
+  const statusBar = document.getElementById('ai-voice-status-bar');
+  if (micBtn) micBtn.classList.remove('ai-mic-pulse');
+  if (micLbl) micLbl.textContent = 'تحدث بالصوت';
+  if (statusBar) statusBar.style.display = 'none';
+}
+
+function launchAiPrefilledCellAction(thkId, gradeId, opMode, sheetsCount, lengthCm, widthCm, clientName = '') {
+  closeSmartAiModal();
+  setTab('veneer');
+  openMatrixCellModal(thkId, gradeId, opMode);
+  setTimeout(() => {
+    if (activeCellContext) {
+      activeCellContext.op = opMode;
+      activeCellContext.lengthCm = Number(lengthCm || 250);
+      activeCellContext.widthCm = Number(widthCm || 125);
+      const selectedWoodId = state.catalog.woodTypes?.[0]?.id || 'wt-general';
+      renderMatrixCellModalUI(selectedWoodId, Number(sheetsCount || 100));
+      const sheetsEl = document.getElementById('cell-sheets');
+      if (sheetsEl && sheetsCount > 0) sheetsEl.value = sheetsCount;
+      const widEl = document.getElementById('cell-wid');
+      const lenEl = document.getElementById('cell-len');
+      if (widEl) widEl.value = Number(widthCm || 125);
+      if (lenEl) lenEl.value = Number(lengthCm || 250);
+      const clientEl = document.getElementById('cell-client-name');
+      if (clientEl && clientName) clientEl.value = clientName;
+      updateMatrixCellModalPreview();
+    }
+  }, 60);
+}
+
+function processSmartAiCommand(rawText) {
+  const timeStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+  aiChatHistory.push({
+    sender: 'user',
+    time: timeStr,
+    html: `<strong>${rawText}</strong>`
+  });
+
+  const norm = normalizeArabicAiText(rawText).toLowerCase();
+  const showPrices = canSeeFinancialPrices();
+  const inStockPallets = (state.pallets || []).filter(p => p.status === 'in_stock');
+  const thicknesses = getSortedThicknesses();
+  const grades = state.catalog?.grades || [];
+  const clients = (state.partners || []).filter(p => p.type === 'client');
+  const orders = state.productionOrders || [];
+
+  let responseHtml = '';
+  let speechSummary = '';
+
+  // 1. Detect Action / Operation Command (إضافة إنتاج / مرتجع مبيعات / صرف أو خروج مبيعات / إعادة تشغيل)
+  const isProdInCmd = /(اضاف|اضف|ادخل|توريد|انتاج|وارد)/.test(norm) && !/(مرتجع|عميل جديد)/.test(norm);
+  const isSalesReturnCmd = /(مرتجع)/.test(norm) && /(اضاف|اضف|سجل|تسجيل|ادخل|فرخ|قطع)/.test(norm);
+  const isSalesOutCmd = /(خروج|صرف|بيع|مبيعات)/.test(norm) && /(فرخ|افرخ|قطع|تخانه|مم|قص|سدا)/.test(norm);
+  const isReworkCmd = /(اعاده تشغيل|تدوير|فرز)/.test(norm) && /(فرخ|افرخ|قطع|تخانه|مم)/.test(norm);
+
+  if (isProdInCmd || isSalesReturnCmd || isSalesOutCmd || isReworkCmd) {
+    const opMode = isSalesReturnCmd ? 'sales_return' : isSalesOutCmd ? 'out' : isReworkCmd ? 'rework' : 'in';
+    const opLabel = opMode === 'in' ? '📥 إضافة كميات إنتاج للمخزن'
+      : opMode === 'sales_return' ? '🔄 تسجيل مرتجع مبيعات (يدخل المخزن بعد موافقة الإدارة/المحاسب)'
+      : opMode === 'out' ? '📤 خروج كميات حسب المبيعات'
+      : '♻️ خروج كميات لإعادة التشغيل';
+
+    const dir = /(سدا|سدي)/.test(norm) ? 'sada' : 'qas';
+    const dirLabel = dir === 'sada' ? 'اتجاه سدا' : 'اتجاه قص';
+
+    let matchedThk = null;
+    for (const t of thicknesses) {
+      const mmStr = String(t.mm);
+      const regex = new RegExp(`(^|\\s|تخانه)${mmStr.replace('.', '\\.')}(\\s|مم|$)`);
+      if (regex.test(norm) && (t.direction || 'qas') === dir) {
+        matchedThk = t;
+        break;
+      }
+    }
+    if (!matchedThk) {
+      for (const t of thicknesses) {
+        const mmStr = String(t.mm);
+        if (norm.includes(mmStr) && (t.direction || 'qas') === dir) {
+          matchedThk = t;
+          break;
+        }
+      }
+    }
+    if (!matchedThk) {
+      matchedThk = thicknesses.find(t => (t.direction || 'qas') === dir) || thicknesses[0] || { id: 'th-1.5-qas', mm: 1.5, direction: 'qas' };
+    }
+
+    let matchedGrade = null;
+    if (/abc\+|اي بي سي|ايه بي سي/.test(norm)) {
+      matchedGrade = grades.find(g => g.code.toLowerCase().includes('abc'));
+    } else if (/قطع\s*b|قطع\s*بي/.test(norm)) {
+      matchedGrade = grades.find(g => g.name.includes('قطع') || g.code.includes('قطع'));
+    } else if (/(جوده\s*r|درجه\s*r|\br\b|ار)/.test(norm)) {
+      matchedGrade = grades.find(g => g.code.toUpperCase() === 'R');
+    } else if (/(جوده\s*c|درجه\s*c|\bc\b|سي)/.test(norm)) {
+      matchedGrade = grades.find(g => g.code.toUpperCase() === 'C');
+    }
+    if (!matchedGrade) matchedGrade = grades[0] || { id: 'gr-c', name: 'C', code: 'C' };
+
+    const allNums = (norm.match(/\d+(\.\d+)?/g) || []).map(Number);
+    let qty = 200;
+    for (const n of allNums) {
+      if (n !== Number(matchedThk.mm) && n !== 125 && n !== 250 && n >= 1 && Number.isInteger(n)) {
+        qty = n;
+        break;
+      }
+    }
+
+    const m = calculateVeneerMetrics(250, 125, matchedThk.mm, qty);
+    speechSummary = `تم تجهيز أمر ${opLabel} بعدد ${qty} فرخ لتخانة ${matchedThk.mm} ملي ${dirLabel} جودة ${matchedGrade.code}. اضغط على زر فتح نافذة التنفيذ للتأكيد.`;
+
+    responseHtml = `
+      <div style="border-right:4px solid #7c3aed;padding-right:10px;">
+        <div style="font-weight:900;color:#5b21b6;margin-bottom:6px;">⚡ تم فهم الأمر الصوتي/الكتابي وتجهيز الحركة المخزنية فوراً:</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;background:var(--bg-elevated);padding:10px;border-radius:10px;margin-bottom:10px;">
+          <div><small style="color:var(--text-muted);">نوع الحركة:</small><br/><strong>${opLabel}</strong></div>
+          <div><small style="color:var(--text-muted);">التخانة والاتجاه:</small><br/><strong>${matchedThk.mm} مم (${dirLabel})</strong></div>
+          <div><small style="color:var(--text-muted);">درجة الجودة:</small><br/><strong>${matchedGrade.name} (${matchedGrade.code})</strong></div>
+          <div><small style="color:var(--text-muted);">الكمية والحجم:</small><br/><strong>${fmtNum(qty, 0)} فرخ (${fmtNum(m.totalVolumeM3, 4)} م³)</strong></div>
+        </div>
+        <button type="button" class="btn btn-primary" style="width:100%;font-weight:900;padding:10px;" onclick="launchAiPrefilledCellAction('${matchedThk.id}', '${matchedGrade.id}', '${opMode}', ${qty}, 250, 125)">
+          🚀 فتح نافذة التنفيذ الآن جاهزة بالأرقام للتأكيد والحفظ
+        </button>
+      </div>
+    `;
+  }
+  // 2. Detect New Client Order Command
+  else if (/(انشاء|عمل|اضاف|فتح)\s*(طلبيه|بيان|امر)/.test(norm)) {
+    let matchedClient = clients.find(c => norm.includes(normalizeArabicAiText(c.name).toLowerCase()) || (c.code && norm.includes(c.code.toLowerCase())));
+    speechSummary = matchedClient
+      ? `جاري فتح نافذة إنشاء طلبية جديدة للعميل ${matchedClient.name}`
+      : `اضغط لفتح نافذة تجهيز طلبية عميل جديدة`;
+    responseHtml = `
+      <div>
+        <div style="font-weight:800;color:var(--primary);margin-bottom:8px;">📋 تجهيز طلبية عميل جديدة (بيان أسعار وكميات):</div>
+        <button type="button" class="btn btn-primary" onclick="closeSmartAiModal(); setTab('production'); openNewClientOrderPrepModal('${matchedClient ? matchedClient.id : ''}');">
+          ➕ فتح نافذة تجهيز طلبية جديدة ${matchedClient ? `للعميل (${matchedClient.name})` : 'الآن'}
+        </button>
+      </div>
+    `;
+  }
+  // 3. Detect Veneer Calculator / Sheets per m3 / Piece Price Query
+  else if (/(احسب|حاسبه|كم فرخ|عدد الافرخ|المتر المكعب|سعر الفرخ|في المتر)/.test(norm)) {
+    const nums = (norm.match(/\d+(\.\d+)?/g) || []).map(Number);
+    let thkMm = 1.5;
+    let pricePerM3 = 0;
+    let sheetsCount = 400;
+
+    for (const n of nums) {
+      if (n > 0 && n <= 10) thkMm = n;
+      else if (n >= 2000) pricePerM3 = n;
+      else if (n > 10 && n < 2000 && n !== 125 && n !== 250) sheetsCount = n;
+    }
+
+    const calc = calculateVeneerMetrics(250, 125, thkMm, sheetsCount);
+    const piecePriceFromM3 = pricePerM3 > 0 && calc.sheetsPerM3 > 0 ? +(pricePerM3 / calc.sheetsPerM3).toFixed(2) : 0;
+
+    speechSummary = `في المقاس المعتمد مائة وخمسة وعشرين في مائتين وخمسين سنتيمتر لتخانة ${thkMm} ملي: المتر المكعب الواحد يحتوي على ${fmtNum(calc.sheetsPerM3, 1)} فرخ تقريباً.` + (showPrices && piecePriceFromM3 > 0 ? ` وسعر الفرخ الواحد هو ${piecePriceFromM3} جنيه.` : '');
+
+    responseHtml = `
+      <div style="border-right:4px solid var(--primary);padding-right:10px;">
+        <div style="font-weight:900;color:var(--primary);margin-bottom:8px;">🧮 نتيجة حاسبة القشرة الخشبية الفورية (مقاس 125×250 سم — تخانة ${thkMm} مم):</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:8px;background:var(--bg-elevated);padding:10px;border-radius:10px;">
+          <div>
+            <small style="color:var(--text-muted);">📦 عدد الأفرخ في المتر المكعب (1 م³):</small>
+            <div style="font-weight:900;font-size:1.1rem;color:#7c3aed;">${fmtNum(calc.sheetsPerM3, 2)} فرخ / م³</div>
+            <small style="color:var(--text-muted);">(حوالي ${Math.round(calc.sheetsPerM3)} فرخ)</small>
+          </div>
+          <div>
+            <small style="color:var(--text-muted);">📐 مساحة وحجم الفرخ الواحد:</small>
+            <div style="font-weight:800;">${calc.sheetAreaM2} م² | ${calc.sheetVolumeM3} م³</div>
+          </div>
+          <div>
+            <small style="color:var(--text-muted);">🪵 حجم (${fmtNum(sheetsCount, 0)} فرخ):</small>
+            <div style="font-weight:800;color:var(--primary);">${fmtNum(calc.totalVolumeM3, 4)} م³ (${fmtNum(calc.totalAreaM2, 2)} م²)</div>
+          </div>
+          ${showPrices && pricePerM3 > 0 ? `
+            <div style="background:rgba(217,119,6,0.1);padding:6px 8px;border-radius:8px;border:1px solid #d97706;">
+              <small style="color:#b45309;font-weight:800;">💰 سعر الفرخ الواحد (عند م³ = ${fmtNum(pricePerM3, 0)} ج):</small>
+              <div style="font-weight:900;font-size:1.1rem;color:#b45309;">${fmtNum(piecePriceFromM3, 2)} ج.م / فرخ</div>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }
+  // 4. Detect Pending Orders / Approvals / Dispatch Queries
+  else if (/(طلبيات|طلبيه|معلقه|موافقات|تجهيز|اذن سياره|سيارات|صرف)/.test(norm) && !/(عميل)/.test(norm)) {
+    const activeOrders = orders.filter(o => o.stage !== 'completed');
+    speechSummary = activeOrders.length === 0
+      ? 'لا توجد طلبيات معلقة حالياً، جميع الطلبيات مكتملة.'
+      : `يوجد حالياً ${activeOrders.length} طلبية قيد التجهيز أو الموافقة أو تحميل السيارة.`;
+
+    responseHtml = `
+      <div>
+        <div style="font-weight:900;color:var(--primary);margin-bottom:8px;">
+          ⏳ الطلبيات الجارية والمعلقة حالياً (${activeOrders.length} طلبية من إجمالي ${orders.length}):
+        </div>
+        ${activeOrders.length === 0 ? `
+          <div style="padding:10px;background:var(--bg-elevated);border-radius:8px;color:var(--success);font-weight:700;">
+            ✅ جميع الطلبيات مكتملة ولا توجد أي طلبية معلقة حالياً.
+          </div>
+        ` : `
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>رقم الطلبية</th>
+                  <th>العميل</th>
+                  <th>الأصناف والكمية</th>
+                  ${showPrices ? '<th>الصافي</th>' : ''}
+                  <th>المرحلة الحالية</th>
+                  <th>إجراء سريع</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${activeOrders.slice(0, 10).map(o => {
+                  const totalSh = (o.items || []).reduce((s, i) => s + Number(i.sheetsCount || 0), 0);
+                  return `
+                    <tr>
+                      <td><strong>${o.orderNumber}</strong><br/><small>${o.date}</small></td>
+                      <td><strong>${o.clientName}</strong></td>
+                      <td>${fmtNum(totalSh, 0)} فرخ (${fmtNum(o.totalVolumeM3 || 0, 3)} م³)</td>
+                      ${showPrices ? `<td><strong>${fmtMoney(o.netTotalAmount || 0)}</strong></td>` : ''}
+                      <td><span class="badge badge-warning">${o.stageLabel || o.stage}</span></td>
+                      <td>
+                        <button type="button" class="btn btn-sm btn-primary" onclick="closeSmartAiModal(); openClientOrderStatementModal('${o.id}');">
+                          📄 فتح البيان والتنفيذ
+                        </button>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        `}
+      </div>
+    `;
+  }
+  // 5. Detect Sales Returns Query
+  else if (/(مرتجع|مرتجعات)/.test(norm)) {
+    const returnsList = state.salesReturns || [];
+    const pendingReturns = returnsList.filter(r => r.status === 'pending_approval');
+    speechSummary = `إجمالي سجلات مرتجع المبيعات ${returnsList.length} سجل، منها ${pendingReturns.length} بانتظار موافقة الإدارة أو المحاسب لدخول المخزن.`;
+    responseHtml = `
+      <div>
+        <div style="font-weight:900;color:#6d28d9;margin-bottom:8px;">
+          🔄 حالة مرتجعات المبيعات (${returnsList.length} إجمالي — ${pendingReturns.length} معلق للموافقة):
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <button type="button" class="btn btn-sm" style="background:#7c3aed;color:#fff;" onclick="closeSmartAiModal(); setTab('veneer'); openWarehouseOpShortcut('sales_return');">
+            ➕ تسجيل مرتجع مبيعات جديد
+          </button>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeSmartAiModal(); setTab('veneer');">
+            📂 عرض جدول المرتجعات بالمخزن
+          </button>
+        </div>
+      </div>
+    `;
+  }
+  // 6. Detect Specific Client or Clients / Debts / Pallets Query
+  else if (/(عميل|عملاء|مديونيه|مديونيات|حسابات|بالتات عند|شركه|مصنع الفنيه|الجيزه|cl-)/.test(norm)) {
+    const matchedClient = clients.find(c => {
+      const cNorm = normalizeArabicAiText(c.name).toLowerCase();
+      const codeNorm = (c.code || '').toLowerCase();
+      return (cNorm && norm.includes(cNorm)) || (codeNorm && norm.includes(codeNorm)) ||
+        cNorm.split(/\s+/).some(w => w.length >= 4 && norm.includes(w));
+    });
+
+    if (matchedClient) {
+      const cm = computeClientMetrics(matchedClient);
+      speechSummary = showPrices
+        ? `العميل ${matchedClient.name} كود ${matchedClient.code}: صافي الرصيد ${cm.netDebt > 0 ? 'مدين بمبلغ ' + fmtNum(cm.netDebt, 0) + ' جنيه' : 'خالص'}، ورصيد البالتات المتبقي طرفه ${cm.netPalletsAtClient} بالتة.`
+        : `العميل ${matchedClient.name} كود ${matchedClient.code}: إجمالي الطلبيات ${cm.orders.length} طلبية، ورصيد البالتات المتبقي طرفه ${cm.netPalletsAtClient} بالتة.`;
+
+      responseHtml = `
+        <div style="border-right:4px solid var(--primary);padding-right:10px;">
+          <div style="font-weight:900;color:var(--primary);margin-bottom:6px;">
+            🤝 بيانات العميل: [${matchedClient.code}] ${matchedClient.name}
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;background:var(--bg-elevated);padding:10px;border-radius:10px;margin-bottom:10px;">
+            <div><small>عدد الطلبيات:</small><br/><strong>${cm.orders.length} طلبية</strong></div>
+            <div><small>بالتات متبقية طرف العميل:</small><br/><strong style="color:#d97706;">${cm.netPalletsAtClient} بالتة</strong> (مسلم: ${cm.palletsDelivered} / مستلم: ${cm.palletsReceived})</div>
+            ${showPrices ? `
+              <div><small>إجمالي المسحوبات:</small><br/><strong>${fmtMoney(cm.totalDebit)}</strong></div>
+              <div><small>صافي المديونية:</small><br/><strong style="color:${cm.netDebt > 0 ? 'var(--danger)' : 'var(--success)'};">${cm.netDebt > 0 ? 'عليه: ' + fmtMoney(cm.netDebt) : 'خالص / له'}</strong></div>
+            ` : ''}
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            ${showPrices ? `
+              <button type="button" class="btn btn-sm btn-primary" onclick="closeSmartAiModal(); openClientFullHistoryModal('${matchedClient.id}');">
+                📂 فتح كشف الحساب الشامل للعميل
+              </button>
+            ` : ''}
+            <button type="button" class="btn btn-sm btn-outline" onclick="closeSmartAiModal(); openClientPalletMovementModal('${matchedClient.id}');">
+              🪵 تسجيل تسليم / استلام بالتات
+            </button>
+          </div>
+        </div>
+      `;
+    } else {
+      let totalReceivables = 0;
+      let totalPalletsAtClients = 0;
+      const rows = clients.map(c => {
+        const cm = computeClientMetrics(c);
+        if (cm.netDebt > 0) totalReceivables += cm.netDebt;
+        if (cm.netPalletsAtClient > 0) totalPalletsAtClients += cm.netPalletsAtClient;
+        return { c, cm };
+      });
+
+      speechSummary = showPrices
+        ? `يوجد ${clients.length} عميل مسجل بالنظام. إجمالي مديونيات العملاء للمصنع ${fmtNum(totalReceivables, 0)} جنيه، وإجمالي البالتات المتبقية طرف العملاء ${totalPalletsAtClients} بالتة.`
+        : `يوجد ${clients.length} عميل مسجل بالنظام، وإجمالي البالتات الخشبية المتبقية طرف العملاء ${totalPalletsAtClients} بالتة.`;
+
+      responseHtml = `
+        <div>
+          <div style="font-weight:900;color:var(--primary);margin-bottom:8px;">
+            🤝 ملخص العملاء والبالتات ${showPrices ? 'والمديونيات' : ''} (${clients.length} عميل):
+          </div>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px;background:var(--bg-elevated);padding:10px;border-radius:10px;">
+            <div>🪵 إجمالي البالتات طرف العملاء: <strong style="color:#d97706;">${totalPalletsAtClients} بالتة</strong></div>
+            ${showPrices ? `<div>💰 إجمالي مديونيات العملاء (عليهم): <strong style="color:var(--danger);">${fmtMoney(totalReceivables)}</strong></div>` : ''}
+          </div>
+          <div class="table-responsive" style="max-height:210px;overflow-y:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>الكود والاسم</th>
+                  <th>الطلبيات</th>
+                  <th>بالتات طرفه</th>
+                  ${showPrices ? '<th>صافي الرصيد</th>' : ''}
+                  <th>إجراء</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.map(({ c, cm }) => `
+                  <tr>
+                    <td><strong>[${c.code || 'CL'}] ${c.name}</strong></td>
+                    <td>${cm.orders.length}</td>
+                    <td><span class="badge ${cm.netPalletsAtClient > 0 ? 'badge-warning' : 'badge-success'}">${cm.netPalletsAtClient} بالتة</span></td>
+                    ${showPrices ? `<td style="font-weight:800;color:${cm.netDebt > 0 ? 'var(--danger)' : 'var(--success)'};">${cm.netDebt > 0 ? 'عليه ' + fmtMoney(cm.netDebt) : 'خالص'}</td>` : ''}
+                    <td>
+                      <button type="button" class="btn btn-sm btn-outline" style="padding:2px 7px;" onclick="runSmartAiQuickChip('عميل ${c.code}')">🔍 تفاصيل</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+  }
+  // 7. Specific Thickness / Grade Stock Query or General Factory Summary
+  else {
+    const nums = (norm.match(/\d+(\.\d+)?/g) || []).map(Number);
+    const queriedThkMm = nums.find(n => thicknesses.some(t => Number(t.mm) === n));
+    const filterDir = /(سدا|سدي)/.test(norm) ? 'sada' : /(قص)/.test(norm) ? 'qas' : null;
+
+    if (queriedThkMm !== undefined) {
+      const matchingRows = thicknesses.filter(t => Number(t.mm) === queriedThkMm && (!filterDir || (t.direction || 'qas') === filterDir));
+      const matchingPallets = inStockPallets.filter(p => Number(p.thicknessMm) === queriedThkMm && (!filterDir || (p.direction || 'qas') === filterDir));
+      const totalSh = matchingPallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+      const totalM3 = matchingPallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
+
+      speechSummary = `رصيد تخانة ${queriedThkMm} ملي في المخزن هو ${fmtNum(totalSh, 0)} فرخ بإجمالي حجم ${fmtNum(totalM3, 3)} متر مكعب موزعة على ${matchingPallets.length} بالتة.`;
+
+      responseHtml = `
+        <div>
+          <div style="font-weight:900;color:var(--primary);margin-bottom:8px;">
+            🪵 جرد تخانة (${queriedThkMm} مم ${filterDir ? (filterDir === 'sada' ? '— سدا' : '— قص') : '— قص وسدا'}) في المخزن الآن:
+          </div>
+          <div style="background:var(--bg-elevated);padding:10px;border-radius:10px;margin-bottom:10px;display:flex;gap:14px;flex-wrap:wrap;">
+            <div>📦 إجمالي القطع: <strong style="color:var(--primary);font-size:1.05rem;">${fmtNum(totalSh, 0)} فرخ</strong></div>
+            <div>📐 إجمالي الحجم: <strong>${fmtNum(totalM3, 4)} م³</strong></div>
+            <div>🏷️ عدد البالتات: <strong>${matchingPallets.length} بالتة</strong></div>
+          </div>
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>التخانة والاتجاه</th>
+                  ${grades.map(g => `<th>${g.code}</th>`).join('')}
+                  <th>إجراء سريع</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${matchingRows.map(t => `
+                  <tr>
+                    <td><strong>${t.mm} مم (${t.direction === 'sada' ? 'سدا' : 'قص'})</strong></td>
+                    ${grades.map(g => {
+                      const sh = inStockPallets
+                        .filter(p => matchPalletToThicknessRow(p, t) && matchPalletToGrade(p, g.id))
+                        .reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+                      return `<td style="font-weight:800;color:${sh > 0 ? 'var(--success)' : 'var(--text-muted)'};">${fmtNum(sh, 0)} ق</td>`;
+                    }).join('')}
+                    <td>
+                      <button type="button" class="btn btn-sm btn-primary" style="padding:2px 8px;" onclick="closeSmartAiModal(); openMatrixCellModal('${t.id}', '${grades[0]?.id || 'gr-c'}', 'in');">
+                        ➕ حركة مخزنية
+                      </button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    } else {
+      const totalSheets = inStockPallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+      const totalM3 = inStockPallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
+      const totalM2 = inStockPallets.reduce((s, p) => s + Number(p.areaM2 || 0), 0);
+      const totalStockVal = inStockPallets.reduce((s, p) => s + Number(p.totalValue || 0), 0);
+      const pendingOrders = orders.filter(o => o.stage !== 'completed').length;
+
+      speechSummary = `إجمالي رصيد مخزن القشرة الآن ${inStockPallets.length} بالتة بإجمالي ${fmtNum(totalSheets, 0)} فرخ وحجم ${fmtNum(totalM3, 2)} متر مكعب، ويوجد ${pendingOrders} طلبية جارية.`;
+
+      responseHtml = `
+        <div>
+          <div style="font-weight:900;color:var(--primary);margin-bottom:8px;">
+            📊 الملخص اللحظي لمصنع العاصمة للصناعات المتخصصة:
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin-bottom:10px;">
+            <div style="background:var(--bg-elevated);padding:10px;border-radius:10px;border-right:4px solid var(--primary);">
+              <small style="color:var(--text-muted);">📦 رصيد مخزن القشرة التامة</small>
+              <div style="font-weight:900;font-size:1.05rem;">${fmtNum(totalSheets, 0)} فرخ (${inStockPallets.length} بالتة)</div>
+              <small>${fmtNum(totalM3, 4)} م³ | ${fmtNum(totalM2, 1)} م²</small>
+            </div>
+            ${showPrices ? `
+              <div style="background:var(--bg-elevated);padding:10px;border-radius:10px;border-right:4px solid var(--accent);">
+                <small style="color:var(--text-muted);">💰 القيمة التقديرية للمخزون</small>
+                <div style="font-weight:900;font-size:1.05rem;color:var(--accent);">${fmtMoney(totalStockVal)}</div>
+              </div>
+            ` : ''}
+            <div style="background:var(--bg-elevated);padding:10px;border-radius:10px;border-right:4px solid var(--success);">
+              <small style="color:var(--text-muted);">⏳ الطلبيات الجارية والمعلقة</small>
+              <div style="font-weight:900;font-size:1.05rem;">${pendingOrders} طلبية نشطة</div>
+              <small>من إجمالي ${orders.length} طلبية</small>
+            </div>
+            <div style="background:var(--bg-elevated);padding:10px;border-radius:10px;border-right:4px solid #7c3aed;">
+              <small style="color:var(--text-muted);">🤝 العملاء المسجلون</small>
+              <div style="font-weight:900;font-size:1.05rem;">${clients.length} عميل</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm btn-primary" onclick="closeSmartAiModal(); setTab('veneer');">🪵 فتح جدول مخزن القشرة</button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="runSmartAiQuickChip('ما هي الطلبيات المعلقة حالياً؟')">⏳ عرض الطلبيات المعلقة</button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="runSmartAiQuickChip('رصيد البالتات عند العملاء')">🪵 أرصدة العملاء والبالتات</button>
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  aiChatHistory.push({
+    sender: 'ai',
+    time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+    html: responseHtml
+  });
+
+  const msgBox = document.getElementById('ai-assistant-messages');
+  if (msgBox) {
+    msgBox.innerHTML = renderSmartAiMessagesHtml();
+    scrollSmartAiMessagesBottom();
+  }
+
+  if (speechSummary) {
+    speakArabicAiResponse(speechSummary);
+  }
 }
 
 // Initialize
