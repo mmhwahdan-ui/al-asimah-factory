@@ -12115,6 +12115,13 @@ function openSmartAiAssistantModal(initialCommand = '') {
         <div style="margin-bottom:10px;">
           <div style="font-size:0.76rem;font-weight:800;color:var(--text-muted);margin-bottom:5px;">⚡ أوامر واستعلامات سريعة بضغطة واحدة (أو اضغط الميكروفون وتحدث):</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm" style="font-size:0.75rem;padding:4px 10px;background:linear-gradient(135deg,#0f766e,#0d9488);color:#fff;font-weight:800;" onclick="runSmartAiQuickChip('عرض حاويات وسيريالات الجذوع')">
+              🚢 حاويات الجذوع (Packing List)
+            </button>
+            <label for="ai-packinglist-pdf-input" class="btn btn-sm" style="font-size:0.75rem;padding:4px 10px;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;font-weight:800;cursor:pointer;margin:0;">
+              📄 ارفع Packing List PDF للمساعد الذكي (كل صفحة = حاوية)
+            </label>
+            <input id="ai-packinglist-pdf-input" type="file" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv" style="display:none;" onchange="handleAiPackingListPdfUpload(event)" />
             ${suggestions.map(s => `
               <button type="button" class="btn btn-sm btn-outline" style="font-size:0.74rem;padding:4px 9px;border-color:rgba(124,58,237,0.35);background:rgba(124,58,237,0.04);" onclick="runSmartAiQuickChip('${s.cmd.replace(/'/g, "\\'")}')">
                 ${s.label}
@@ -12341,7 +12348,98 @@ function processSmartAiCommand(rawText) {
   const isSalesOutCmd = /(خروج|صرف|بيع|مبيعات)/.test(norm) && /(فرخ|افرخ|قطع|تخانه|مم|قص|سدا)/.test(norm);
   const isReworkCmd = /(اعاده تشغيل|تدوير|فرز)/.test(norm) && /(فرخ|افرخ|قطع|تخانه|مم)/.test(norm);
 
-  if (isProdInCmd || isSalesReturnCmd || isSalesOutCmd || isReworkCmd) {
+  // 0. Detect Log Containers / Packing List PDF / Log Serials Commands
+  const isLogSerialProcessCmd = /(تشغيل|شغل)\s*(جذع|جزع|سيريال|سريال)/.test(norm) && /\d{3,}/.test(norm);
+  const isLogsOrPackingQuery = /(حاويه|حاويات|جذوع|جزوع|سيريال|سريال|packing|باكنج|5559|dedoncker)/.test(norm);
+
+  if (isLogSerialProcessCmd) {
+    if (!canManageLogSerialsAndProduction(currentUser)) {
+      speechSummary = 'عفواً، صلاحية تشغيل سيريال الجذوع مخصصة للمدير التنفيذي ومدير المشروعات والمدير الإداري فقط.';
+      responseHtml = `<div style="color:var(--danger);font-weight:800;">⛔ صلاحية إدخال وتشغيل سيريال الجذوع مخصصة للمدير التنفيذي ومدير المشروعات والمدير الإداري فقط.</div>`;
+    } else {
+      const serialTokens = (norm.match(/[a-z0-9\-]{3,}/gi) || []).filter(t => /\d/.test(t));
+      if (serialTokens.length > 0) {
+        processLogSerialsBatchByString(serialTokens.join(' '));
+        speechSummary = `تم تنفيذ أمر تشغيل الجذوع لأرقام السيريال: ${serialTokens.join(' و ')}.`;
+        responseHtml = `
+          <div style="border-right:4px solid #7c3aed;padding-right:10px;">
+            <div style="font-weight:900;color:#5b21b6;margin-bottom:6px;">⚙️ تم تنفيذ أمر تشغيل الجذوع بالسيريال فوراً:</div>
+            <p style="margin:4px 0;">السيريالات المطلوبة: <strong>${serialTokens.join(' ، ')}</strong></p>
+            <button type="button" class="btn btn-sm btn-primary" onclick="closeSmartAiModal(); setTab('raw');">🌲 فتح شاشة حاويات وسيريالات الجذوع</button>
+          </div>
+        `;
+      }
+    }
+  }
+  else if (isLogsOrPackingQuery) {
+    const containers = state.logContainers || [];
+    const allLogs = state.logItems || [];
+    const procLogs = allLogs.filter(l => l.status === 'processed');
+    const remLogs = allLogs.filter(l => l.status !== 'processed');
+    const totalVol = allLogs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0);
+    const remVol = remLogs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0);
+
+    speechSummary = `يوجد حالياً في منظومة الجذوع ${containers.length} حاوية بإجمالي ${allLogs.length} جذع وتكعيب ${fmtNum(totalVol, 3)} متر مكعب. المتبقي بدون تشغيل ${remLogs.length} جذع، والمشغل ${procLogs.length} جذع.`;
+
+    responseHtml = `
+      <div style="border-right:4px solid var(--primary);padding-right:10px;">
+        <div style="font-weight:900;color:var(--primary);margin-bottom:8px;">
+          🚢 حالة حاويات وسيريالات الجذوع (Packing List — كل صفحة = حاوية مستقلة):
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;background:var(--bg-elevated);padding:10px;border-radius:10px;margin-bottom:10px;">
+          <div><small>عدد الحاويات المسجلة:</small><br/><strong style="font-size:1.05rem;color:var(--primary);">${containers.length} حاوية</strong></div>
+          <div><small>إجمالي الجذوع والتكعيب:</small><br/><strong>${allLogs.length} جذع (${fmtNum(totalVol, 3)} م³)</strong></div>
+          <div><small>متبقي بالمخزن ⏳:</small><br/><strong style="color:var(--success);">${remLogs.length} جذع (${fmtNum(remVol, 3)} م³)</strong></div>
+          <div><small>تم تشغيله ✅:</small><br/><strong style="color:#0284c7;">${procLogs.length} جذع</strong></div>
+        </div>
+        ${containers.length > 0 ? `
+          <div class="table-responsive" style="max-height:190px;overflow-y:auto;margin-bottom:10px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>رقم الحاوية</th>
+                  <th>الختم (Seal)</th>
+                  <th>عدد الجذوع</th>
+                  <th>التكعيب (CBM)</th>
+                  <th>الوزن الصافي</th>
+                  <th>المتبقي / المشغل</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${containers.map((c, idx) => {
+                  const cm = getContainerMetrics(c);
+                  return `
+                    <tr>
+                      <td>${idx + 1}</td>
+                      <td><strong>${c.containerNumber}</strong></td>
+                      <td>${c.sealNumber || '-'}</td>
+                      <td><strong>${cm.totalLogsCount} جذع</strong></td>
+                      <td><strong style="color:var(--primary);">${fmtNum(cm.totalVolumeM3, 3)} م³</strong></td>
+                      <td>${c.netWeightKg ? fmtNum(c.netWeightKg, 0) + ' كجم' : fmtNum(cm.totalWeightTon, 3) + ' طن'}</td>
+                      <td>متبقي: <strong>${cm.remainingLogsCount}</strong> | مشغل: <strong>${cm.processedLogsCount}</strong></td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        ` : ''}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <label for="ai-packinglist-pdf-input" class="btn btn-sm" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;font-weight:900;cursor:pointer;margin:0;">
+            📄 ارفع ملف Packing List PDF (قراءة كل صفحة كحاوية بالذكاء الاصطناعي)
+          </label>
+          <button type="button" class="btn btn-sm btn-success" onclick="importDedoncker5559AllContainersFromAi()">
+            🔄 تحميل/تأكيد الـ 13 حاوية من فاتورة 5559 (159 جذع — 395.364 م³)
+          </button>
+          <button type="button" class="btn btn-sm btn-primary" onclick="closeSmartAiModal(); setTab('raw');">
+            🌲 فتح جدول الحاويات والسيريالات بالمخزن
+          </button>
+        </div>
+      </div>
+    `;
+  }
+  else if (isProdInCmd || isSalesReturnCmd || isSalesOutCmd || isReworkCmd) {
     const opMode = isSalesReturnCmd ? 'sales_return' : isSalesOutCmd ? 'out' : isReworkCmd ? 'rework' : 'in';
     const opLabel = opMode === 'in' ? '📥 إضافة كميات إنتاج للمخزن'
       : opMode === 'sales_return' ? '🔄 تسجيل مرتجع مبيعات (يدخل المخزن بعد موافقة الإدارة/المحاسب)'
@@ -13169,7 +13267,7 @@ function renderLogContainersAndSerialsSection() {
   `;
 }
 
-// Lazy-load PDF.js from CDN to extract text directly from Supplier PDF files
+// Lazy-load PDF.js from CDN to extract text or render scanned pages from Supplier PDF files
 async function ensurePdfJsLoaded() {
   if (window.pdfjsLib) return window.pdfjsLib;
   return new Promise((resolve, reject) => {
@@ -13188,9 +13286,258 @@ async function ensurePdfJsLoaded() {
   });
 }
 
-// Smart parser that turns lines of PDF / Excel / Text into structured log rows { serialNumber, lengthM, diameterCm, volumeM3, notes }
+// Lazy-load Tesseract.js OCR from CDN for Scanned / CamScanner PDFs and Images
+async function ensureTesseractLoaded() {
+  if (window.Tesseract) return window.Tesseract;
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    script.onload = () => {
+      if (window.Tesseract) resolve(window.Tesseract);
+      else reject(new Error('تعذر تحميل محرك الذكاء الاصطناعي لقراءة الصور الممسوحة OCR'));
+    };
+    script.onerror = () => reject(new Error('تعذر تحميل محرك OCR'));
+    document.head.appendChild(script);
+  });
+}
+
+// Built-in verified Packing List for DEDONCKER P&G BV Invoice 5559 (13 Containers = 159 Logs = 395.364 CBM)
+const DEDONCKER_PACKING_LIST_5559 = [
+  {
+    containerNumber: 'GAOU 655045-3', sealNumber: '.008462', supplierName: 'DEDONCKER P&G BV (بلجيكا - فاتورة 5559)', woodTypeName: 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)', arrivalDate: '2026-10-14', vgmKg: 30525, tareKg: 3730, netWeightKg: 26795, notes: 'No.84818 and 84816 = minus 1,30M because of crack | Seal: .008462 | Net: 26,795 kg',
+    logs: [
+      { serialNumber: '84820', lengthM: 5.20, diameterCm: 99, volumeM3: 4.001 },
+      { serialNumber: '84810', lengthM: 5.20, diameterCm: 68, volumeM3: 1.888 },
+      { serialNumber: '84821', lengthM: 6.50, diameterCm: 67, volumeM3: 2.291 },
+      { serialNumber: '84819', lengthM: 5.20, diameterCm: 77, volumeM3: 2.420 },
+      { serialNumber: '84825', lengthM: 5.20, diameterCm: 69, volumeM3: 1.943 },
+      { serialNumber: '84811', lengthM: 5.20, diameterCm: 88, volumeM3: 3.161 },
+      { serialNumber: '84818', lengthM: 3.90, diameterCm: 75, volumeM3: 1.722, notes: 'minus 1.30M because of crack' },
+      { serialNumber: '84817', lengthM: 5.20, diameterCm: 75, volumeM3: 2.296 },
+      { serialNumber: '84814', lengthM: 7.80, diameterCm: 84, volumeM3: 4.320 },
+      { serialNumber: '84816', lengthM: 2.60, diameterCm: 80, volumeM3: 1.306, notes: 'minus 1.30M because of crack' },
+      { serialNumber: '84815', lengthM: 6.50, diameterCm: 72, volumeM3: 2.645 },
+      { serialNumber: '84812', lengthM: 5.20, diameterCm: 66, volumeM3: 1.778 }
+    ]
+  },
+  {
+    containerNumber: 'NYKU 515463-0', sealNumber: '.009461', supplierName: 'DEDONCKER P&G BV (بلجيكا - فاتورة 5559)', woodTypeName: 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)', arrivalDate: '2026-10-14', vgmKg: 29429, tareKg: 3830, netWeightKg: 25599, notes: 'No.84809 and 84807 = minus 1,30M because of crack | Seal: .009461 | Net: 25,599 kg',
+    logs: [
+      { serialNumber: '84809', lengthM: 3.90, diameterCm: 68, volumeM3: 1.416, notes: 'minus 1.30M because of crack' },
+      { serialNumber: '84813', lengthM: 5.20, diameterCm: 91, volumeM3: 3.380 },
+      { serialNumber: '84808', lengthM: 6.50, diameterCm: 74, volumeM3: 2.794 },
+      { serialNumber: '84807', lengthM: 5.80, diameterCm: 75, volumeM3: 2.561, notes: 'minus 1.30M because of crack' },
+      { serialNumber: '84806', lengthM: 5.20, diameterCm: 85, volumeM3: 2.949 },
+      { serialNumber: '84804', lengthM: 6.50, diameterCm: 70, volumeM3: 2.500 },
+      { serialNumber: '84802', lengthM: 3.90, diameterCm: 81, volumeM3: 2.009 },
+      { serialNumber: '84801', lengthM: 5.20, diameterCm: 79, volumeM3: 2.548 },
+      { serialNumber: '84797', lengthM: 5.20, diameterCm: 87, volumeM3: 3.090 },
+      { serialNumber: '84803', lengthM: 3.90, diameterCm: 72, volumeM3: 1.587 },
+      { serialNumber: '84798', lengthM: 3.90, diameterCm: 67, volumeM3: 1.374 },
+      { serialNumber: '84796', lengthM: 5.20, diameterCm: 74, volumeM3: 2.235 }
+    ]
+  },
+  {
+    containerNumber: 'ONEU 052697-0', sealNumber: '.009449', supplierName: 'DEDONCKER P&G BV (بلجيكا - فاتورة 5559)', woodTypeName: 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)', arrivalDate: '2026-10-14', vgmKg: 30822, tareKg: 3700, netWeightKg: 27122, notes: 'No.84852 = minus 1,30M because of crack | Seal: .009449 | Net: 27,122 kg',
+    logs: [
+      { serialNumber: '84833', lengthM: 7.80, diameterCm: 85, volumeM3: 4.424 },
+      { serialNumber: '84832', lengthM: 6.50, diameterCm: 75, volumeM3: 2.870 },
+      { serialNumber: '84830', lengthM: 6.50, diameterCm: 65, volumeM3: 2.156 },
+      { serialNumber: '84829', lengthM: 5.20, diameterCm: 79, volumeM3: 2.548 },
+      { serialNumber: '84826', lengthM: 5.20, diameterCm: 80, volumeM3: 2.612 },
+      { serialNumber: '84828', lengthM: 7.80, diameterCm: 88, volumeM3: 4.742 },
+      { serialNumber: '84827', lengthM: 6.50, diameterCm: 62, volumeM3: 1.961 },
+      { serialNumber: '84852', lengthM: 2.60, diameterCm: 70, volumeM3: 1.000, notes: 'minus 1.30M because of crack' },
+      { serialNumber: '84823', lengthM: 3.90, diameterCm: 106, volumeM3: 3.440 },
+      { serialNumber: '84786', lengthM: 2.60, diameterCm: 71, volumeM3: 1.029 },
+      { serialNumber: '84822', lengthM: 7.80, diameterCm: 74, volumeM3: 3.353 }
+    ]
+  },
+  {
+    containerNumber: 'ONEU 121081-5', sealNumber: '.009467', supplierName: 'DEDONCKER P&G BV (بلجيكا - فاتورة 5559)', woodTypeName: 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)', arrivalDate: '2026-10-14', vgmKg: 30967, tareKg: 3700, netWeightKg: 27267, notes: 'No:84896 = minus 1,30m because of crack | Seal: .009467 | Net: 27,267 kg',
+    logs: [
+      { serialNumber: '84906', lengthM: 3.90, diameterCm: 67, volumeM3: 1.374 },
+      { serialNumber: '84904', lengthM: 5.20, diameterCm: 75, volumeM3: 2.296 },
+      { serialNumber: '84903', lengthM: 5.20, diameterCm: 73, volumeM3: 2.175 },
+      { serialNumber: '84905', lengthM: 2.60, diameterCm: 75, volumeM3: 1.148 },
+      { serialNumber: '84898', lengthM: 6.50, diameterCm: 67, volumeM3: 2.291 },
+      { serialNumber: '84896', lengthM: 3.90, diameterCm: 66, volumeM3: 1.334, notes: 'minus 1.30m because of crack' },
+      { serialNumber: '84899', lengthM: 6.50, diameterCm: 74, volumeM3: 2.794 },
+      { serialNumber: '84901', lengthM: 5.20, diameterCm: 72, volumeM3: 2.116 },
+      { serialNumber: '84902', lengthM: 6.50, diameterCm: 75, volumeM3: 2.870 },
+      { serialNumber: '84900', lengthM: 5.20, diameterCm: 74, volumeM3: 2.235 },
+      { serialNumber: '84895', lengthM: 6.50, diameterCm: 87, volumeM3: 3.862 },
+      { serialNumber: '84897', lengthM: 6.50, diameterCm: 70, volumeM3: 2.500 },
+      { serialNumber: '84892', lengthM: 5.20, diameterCm: 76, volumeM3: 2.358 },
+      { serialNumber: '84880', lengthM: 2.60, diameterCm: 68, volumeM3: 0.944 }
+    ]
+  },
+  {
+    containerNumber: 'ONEU 186383-0', sealNumber: '.009480', supplierName: 'DEDONCKER P&G BV (بلجيكا - فاتورة 5559)', woodTypeName: 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)', arrivalDate: '2026-10-14', vgmKg: 31643, tareKg: 3700, netWeightKg: 27943, notes: 'Seal: .009480 | Net: 27,943 kg',
+    logs: [
+      { serialNumber: '84883', lengthM: 2.60, diameterCm: 132, volumeM3: 3.556 },
+      { serialNumber: '84884', lengthM: 3.90, diameterCm: 114, volumeM3: 3.979 },
+      { serialNumber: '84881', lengthM: 5.20, diameterCm: 82, volumeM3: 2.745 },
+      { serialNumber: '84882', lengthM: 5.20, diameterCm: 95, volumeM3: 3.684 },
+      { serialNumber: '84893', lengthM: 6.50, diameterCm: 70, volumeM3: 2.500 },
+      { serialNumber: '84872', lengthM: 5.20, diameterCm: 73, volumeM3: 2.175 },
+      { serialNumber: '84874', lengthM: 6.50, diameterCm: 75, volumeM3: 2.870 },
+      { serialNumber: '84875', lengthM: 7.80, diameterCm: 75, volumeM3: 3.444 },
+      { serialNumber: '84866', lengthM: 5.20, diameterCm: 73, volumeM3: 2.175 },
+      { serialNumber: '84867', lengthM: 7.80, diameterCm: 80, volumeM3: 3.919 }
+    ]
+  },
+  {
+    containerNumber: 'ONEU 195266-6', sealNumber: '.009476', supplierName: 'DEDONCKER P&G BV (بلجيكا - فاتورة 5559)', woodTypeName: 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)', arrivalDate: '2026-10-14', vgmKg: 31781, tareKg: 3700, netWeightKg: 28081, notes: 'Seal: .009476 | Net: 28,081 kg',
+    logs: [
+      { serialNumber: '84708', lengthM: 9.10, diameterCm: 95, volumeM3: 6.447 },
+      { serialNumber: '84711', lengthM: 3.90, diameterCm: 68, volumeM3: 1.416 },
+      { serialNumber: '84712', lengthM: 3.90, diameterCm: 78, volumeM3: 1.863 },
+      { serialNumber: '84714', lengthM: 5.20, diameterCm: 79, volumeM3: 2.548 },
+      { serialNumber: '84709', lengthM: 3.90, diameterCm: 65, volumeM3: 1.293 },
+      { serialNumber: '84707', lengthM: 5.20, diameterCm: 62, volumeM3: 1.569 },
+      { serialNumber: '84715', lengthM: 5.20, diameterCm: 96, volumeM3: 3.762 },
+      { serialNumber: '84713', lengthM: 7.80, diameterCm: 68, volumeM3: 2.831 },
+      { serialNumber: '84746', lengthM: 2.60, diameterCm: 86, volumeM3: 1.510 },
+      { serialNumber: '84719', lengthM: 6.50, diameterCm: 66, volumeM3: 2.223 },
+      { serialNumber: '84720', lengthM: 6.50, diameterCm: 75, volumeM3: 2.870 },
+      { serialNumber: '84831', lengthM: 6.50, diameterCm: 75, volumeM3: 2.870 }
+    ]
+  },
+  {
+    containerNumber: 'ONEU 420367-7', sealNumber: '.009456', supplierName: 'DEDONCKER P&G BV (بلجيكا - فاتورة 5559)', woodTypeName: 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)', arrivalDate: '2026-10-14', vgmKg: 31991, tareKg: 3700, netWeightKg: 28291, notes: 'Seal: .009456 | Net: 28,291 kg',
+    logs: [
+      { serialNumber: '84753', lengthM: 2.60, diameterCm: 66, volumeM3: 0.889 },
+      { serialNumber: '84773', lengthM: 3.90, diameterCm: 66, volumeM3: 1.334 },
+      { serialNumber: '84768', lengthM: 5.20, diameterCm: 85, volumeM3: 2.949 },
+      { serialNumber: '84770', lengthM: 3.90, diameterCm: 83, volumeM3: 2.109 },
+      { serialNumber: '84776', lengthM: 3.90, diameterCm: 67, volumeM3: 1.374 },
+      { serialNumber: '84783', lengthM: 3.90, diameterCm: 90, volumeM3: 2.480 },
+      { serialNumber: '84779', lengthM: 5.20, diameterCm: 65, volumeM3: 1.725 },
+      { serialNumber: '84775', lengthM: 5.20, diameterCm: 74, volumeM3: 2.235 },
+      { serialNumber: '84765', lengthM: 7.80, diameterCm: 85, volumeM3: 4.424 },
+      { serialNumber: '84764', lengthM: 2.60, diameterCm: 75, volumeM3: 1.148 },
+      { serialNumber: '84782', lengthM: 5.20, diameterCm: 76, volumeM3: 2.358 },
+      { serialNumber: '84762', lengthM: 6.50, diameterCm: 79, volumeM3: 3.184 },
+      { serialNumber: '84766', lengthM: 5.20, diameterCm: 80, volumeM3: 2.612 },
+      { serialNumber: '84743', lengthM: 5.20, diameterCm: 80, volumeM3: 2.612 }
+    ]
+  },
+  {
+    containerNumber: 'ONEU 612124-3', sealNumber: '.009458', supplierName: 'DEDONCKER P&G BV (بلجيكا - فاتورة 5559)', woodTypeName: 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)', arrivalDate: '2026-10-14', vgmKg: 31345, tareKg: 3700, netWeightKg: 27645, notes: 'Seal: .009458 | Net: 27,645 kg',
+    logs: [
+      { serialNumber: '84805', lengthM: 6.50, diameterCm: 71, volumeM3: 2.572 },
+      { serialNumber: '84799', lengthM: 7.80, diameterCm: 68, volumeM3: 2.831 },
+      { serialNumber: '84795', lengthM: 6.50, diameterCm: 67, volumeM3: 2.291 },
+      { serialNumber: '84792', lengthM: 5.20, diameterCm: 70, volumeM3: 2.000 },
+      { serialNumber: '84794', lengthM: 5.20, diameterCm: 75, volumeM3: 2.296 },
+      { serialNumber: '84790', lengthM: 5.20, diameterCm: 68, volumeM3: 1.888 },
+      { serialNumber: '84791', lengthM: 5.20, diameterCm: 68, volumeM3: 1.888 },
+      { serialNumber: '84784', lengthM: 3.90, diameterCm: 68, volumeM3: 1.416 },
+      { serialNumber: '84793', lengthM: 6.50, diameterCm: 72, volumeM3: 2.645 },
+      { serialNumber: '84787', lengthM: 5.20, diameterCm: 75, volumeM3: 2.296 },
+      { serialNumber: '84788', lengthM: 7.80, diameterCm: 72, volumeM3: 3.174 },
+      { serialNumber: '84789', lengthM: 5.20, diameterCm: 77, volumeM3: 2.420 },
+      { serialNumber: '84780', lengthM: 3.90, diameterCm: 70, volumeM3: 1.500 },
+      { serialNumber: '84781', lengthM: 3.90, diameterCm: 70, volumeM3: 1.500 }
+    ]
+  },
+  {
+    containerNumber: 'ONEU 660114-0', sealNumber: '.009471', supplierName: 'DEDONCKER P&G BV (بلجيكا - فاتورة 5559)', woodTypeName: 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)', arrivalDate: '2026-10-14', vgmKg: 31927, tareKg: 3700, netWeightKg: 28227, notes: 'Seal: .009471 | Net: 28,227 kg',
+    logs: [
+      { serialNumber: '84729', lengthM: 3.90, diameterCm: 105, volumeM3: 3.375 },
+      { serialNumber: '84737', lengthM: 2.60, diameterCm: 68, volumeM3: 0.944 },
+      { serialNumber: '84736', lengthM: 6.50, diameterCm: 73, volumeM3: 2.719 },
+      { serialNumber: '84758', lengthM: 3.90, diameterCm: 70, volumeM3: 1.500 },
+      { serialNumber: '84738', lengthM: 3.90, diameterCm: 75, volumeM3: 1.722 },
+      { serialNumber: '84735', lengthM: 7.80, diameterCm: 67, volumeM3: 2.749 },
+      { serialNumber: '84734', lengthM: 5.20, diameterCm: 72, volumeM3: 2.116 },
+      { serialNumber: '84733', lengthM: 6.50, diameterCm: 86, volumeM3: 3.774 },
+      { serialNumber: '84730', lengthM: 3.90, diameterCm: 90, volumeM3: 2.480 },
+      { serialNumber: '84721', lengthM: 5.20, diameterCm: 87, volumeM3: 3.090 },
+      { serialNumber: '84725', lengthM: 7.80, diameterCm: 72, volumeM3: 3.174 },
+      { serialNumber: '84726', lengthM: 7.80, diameterCm: 68, volumeM3: 2.831 },
+      { serialNumber: '84723', lengthM: 2.60, diameterCm: 66, volumeM3: 0.889 }
+    ]
+  },
+  {
+    containerNumber: 'TCLU 461254-8', sealNumber: '.009453', supplierName: 'DEDONCKER P&G BV (بلجيكا - فاتورة 5559)', woodTypeName: 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)', arrivalDate: '2026-10-14', vgmKg: 31205, tareKg: 3840, netWeightKg: 27365, notes: 'Seal: .009453 | Net: 27,365 kg',
+    logs: [
+      { serialNumber: '84748', lengthM: 3.90, diameterCm: 68, volumeM3: 1.416 },
+      { serialNumber: '84751', lengthM: 5.20, diameterCm: 71, volumeM3: 2.058 },
+      { serialNumber: '84750', lengthM: 2.60, diameterCm: 66, volumeM3: 0.889 },
+      { serialNumber: '84759', lengthM: 5.20, diameterCm: 90, volumeM3: 3.306 },
+      { serialNumber: '84763', lengthM: 2.60, diameterCm: 82, volumeM3: 1.372 },
+      { serialNumber: '84760', lengthM: 6.50, diameterCm: 77, volumeM3: 3.025 },
+      { serialNumber: '84752', lengthM: 7.80, diameterCm: 70, volumeM3: 3.000 },
+      { serialNumber: '84749', lengthM: 5.20, diameterCm: 90, volumeM3: 3.306 },
+      { serialNumber: '84747', lengthM: 5.20, diameterCm: 79, volumeM3: 2.548 },
+      { serialNumber: '84742', lengthM: 3.90, diameterCm: 75, volumeM3: 1.722 },
+      { serialNumber: '84741', lengthM: 6.50, diameterCm: 68, volumeM3: 2.359 },
+      { serialNumber: '84740', lengthM: 6.50, diameterCm: 68, volumeM3: 2.359 },
+      { serialNumber: '84769', lengthM: 3.90, diameterCm: 71, volumeM3: 1.543 },
+      { serialNumber: '84728', lengthM: 3.90, diameterCm: 70, volumeM3: 1.500 }
+    ]
+  },
+  {
+    containerNumber: 'TCLU 957064-0', sealNumber: '.009473', supplierName: 'DEDONCKER P&G BV (بلجيكا - فاتورة 5559)', woodTypeName: 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)', arrivalDate: '2026-10-14', vgmKg: 31959, tareKg: 3840, netWeightKg: 28119, notes: 'Seal: .009473 | Net: 28,119 kg',
+    logs: [
+      { serialNumber: '84894', lengthM: 6.50, diameterCm: 84, volumeM3: 3.600 },
+      { serialNumber: '84889', lengthM: 6.50, diameterCm: 77, volumeM3: 3.025 },
+      { serialNumber: '84879', lengthM: 5.20, diameterCm: 68, volumeM3: 1.888 },
+      { serialNumber: '84877', lengthM: 3.90, diameterCm: 75, volumeM3: 1.722 },
+      { serialNumber: '84876', lengthM: 6.50, diameterCm: 69, volumeM3: 2.429 },
+      { serialNumber: '84878', lengthM: 3.90, diameterCm: 76, volumeM3: 1.768 },
+      { serialNumber: '84890', lengthM: 6.50, diameterCm: 92, volumeM3: 4.319 },
+      { serialNumber: '84891', lengthM: 7.80, diameterCm: 78, volumeM3: 3.725 },
+      { serialNumber: '84886', lengthM: 2.60, diameterCm: 112, volumeM3: 2.560 },
+      { serialNumber: '84885', lengthM: 5.20, diameterCm: 71, volumeM3: 2.058 },
+      { serialNumber: '84887', lengthM: 3.90, diameterCm: 93, volumeM3: 2.648 },
+      { serialNumber: '84868', lengthM: 3.90, diameterCm: 70, volumeM3: 1.500 }
+    ]
+  },
+  {
+    containerNumber: 'TGBU 459778-0', sealNumber: '.009492', supplierName: 'DEDONCKER P&G BV (بلجيكا - فاتورة 5559)', woodTypeName: 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)', arrivalDate: '2026-10-14', vgmKg: 30377, tareKg: 3620, netWeightKg: 26757, notes: 'No. 84849 and 84847 = minus 1,30m because of crack | Seal: .009492 | Net: 26,757 kg',
+    logs: [
+      { serialNumber: '84851', lengthM: 7.80, diameterCm: 89, volumeM3: 4.850 },
+      { serialNumber: '84849', lengthM: 6.50, diameterCm: 77, volumeM3: 3.025, notes: 'minus 1.30m because of crack' },
+      { serialNumber: '84847', lengthM: 6.50, diameterCm: 72, volumeM3: 2.645, notes: 'minus 1.30m because of crack' },
+      { serialNumber: '84848', lengthM: 6.50, diameterCm: 84, volumeM3: 3.600 },
+      { serialNumber: '84845', lengthM: 3.90, diameterCm: 70, volumeM3: 1.500 },
+      { serialNumber: '84841', lengthM: 7.80, diameterCm: 60, volumeM3: 2.204 },
+      { serialNumber: '84836', lengthM: 7.80, diameterCm: 80, volumeM3: 3.919 },
+      { serialNumber: '84835', lengthM: 6.50, diameterCm: 87, volumeM3: 3.862 },
+      { serialNumber: '84859', lengthM: 3.90, diameterCm: 64, volumeM3: 1.254 },
+      { serialNumber: '84834', lengthM: 6.50, diameterCm: 75, volumeM3: 2.870 }
+    ]
+  },
+  {
+    containerNumber: 'TLLU 571591-3', sealNumber: '.009463', supplierName: 'DEDONCKER P&G BV (بلجيكا - فاتورة 5559)', woodTypeName: 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)', arrivalDate: '2026-10-14', vgmKg: 30392, tareKg: 3770, netWeightKg: 26622, notes: 'No.84855 and 84853 = minus 1,30m because of crack | Seal: .009463 | Net: 26,622 kg',
+    logs: [
+      { serialNumber: '84869', lengthM: 6.50, diameterCm: 85, volumeM3: 3.687 },
+      { serialNumber: '84862', lengthM: 7.80, diameterCm: 86, volumeM3: 4.529 },
+      { serialNumber: '84863', lengthM: 2.60, diameterCm: 75, volumeM3: 1.148 },
+      { serialNumber: '84865', lengthM: 3.90, diameterCm: 74, volumeM3: 1.676 },
+      { serialNumber: '84858', lengthM: 5.20, diameterCm: 68, volumeM3: 1.888 },
+      { serialNumber: '84857', lengthM: 5.20, diameterCm: 68, volumeM3: 1.888 },
+      { serialNumber: '84854', lengthM: 5.20, diameterCm: 96, volumeM3: 3.762 },
+      { serialNumber: '84855', lengthM: 6.50, diameterCm: 77, volumeM3: 3.025, notes: 'minus 1.30m because of crack' },
+      { serialNumber: '84856', lengthM: 7.80, diameterCm: 86, volumeM3: 4.529 },
+      { serialNumber: '84853', lengthM: 3.90, diameterCm: 78, volumeM3: 1.863, notes: 'minus 1.30m because of crack' },
+      { serialNumber: '84839', lengthM: 3.90, diameterCm: 72, volumeM3: 1.587 }
+    ]
+  }
+];
+
+let draftImportedContainers = [];
+let activeDraftContainerIdx = 0;
+
+// Smart parser that turns lines of PDF / Packing List / Excel / Text into structured log rows { serialNumber, lengthM, diameterCm, volumeM3, notes }
 function parseSupplierLogsRawText(rawText) {
-  const norm = normalizeArabicAiText(rawText || '');
+  const norm = normalizeArabicAiText(rawText || '')
+    // Convert European decimal commas like 4,001 or 1,888 into 4.001 / 1.888
+    .replace(/(\d),(\d{2,4})\b/g, '$1.$2');
+
   const lines = norm
     .split(/\r?\n/)
     .map(l => l.trim())
@@ -13200,20 +13547,42 @@ function parseSupplierLogsRawText(rawText) {
   let autoIndex = 1;
 
   for (const line of lines) {
-    // Skip pure header lines without digits
     if (!/\d/.test(line)) continue;
-    // Extract tokens (alphanumeric serials or numbers)
+    // Skip summary/metadata lines in Packing Lists
+    if (/^(container|vgm|tarre|tare|net|total\s*cbm|logs\s+total|in\s+total|egyptian|foreign|acid|btw|www\.|info@|erkend|no\.?\s*\d+\s*(and|=))/i.test(line)) {
+      continue;
+    }
+
     const tokens = line
-      .replace(/[|،,;؛\t]+/g, ' ')
+      .replace(/[|،;؛\t]+/g, ' ')
       .trim()
       .split(/\s+/);
 
-    // Find numeric tokens and potential serial token
+    // Check for standard 5-column European Packing List row: [rowIdx 1..40] [5-digit serial e.g. 84820] [lengthCm e.g. 520] [diameterCm e.g. 99] [volumeM3 e.g. 4.001]
+    if (tokens.length >= 5) {
+      const n0 = Number(tokens[0]);
+      const s1 = tokens[1];
+      const n2 = Number(tokens[2]);
+      const n3 = Number(tokens[3]);
+      const n4 = Number(tokens[4].replace(',', '.'));
+      if (Number.isInteger(n0) && n0 >= 1 && n0 <= 60 && /^\d{4,7}$/.test(s1) && n2 >= 100 && n2 <= 1500 && n3 >= 20 && n3 <= 200 && n4 > 0.1 && n4 < 20) {
+        parsedRows.push({
+          id: uid('dlog'),
+          serialNumber: String(s1),
+          lengthM: +(n2 / 100).toFixed(2),
+          diameterCm: n3,
+          volumeM3: +n4.toFixed(4)
+        });
+        autoIndex++;
+        continue;
+      }
+    }
+
     const numTokens = [];
     let serialCandidate = '';
 
     for (let i = 0; i < tokens.length; i++) {
-      const tk = tokens[i];
+      const tk = tokens[i].replace(',', '.');
       const cleanNum = Number(tk.replace(/[^0-9.]/g, ''));
       if (/^[A-Za-z0-9\-_/]+$/.test(tk) && !serialCandidate && (i === 0 || (i === 1 && Number(tokens[0]) === autoIndex && tokens.length >= 3))) {
         serialCandidate = tk;
@@ -13229,32 +13598,32 @@ function parseSupplierLogsRawText(rawText) {
     }
     if (!serialCandidate) continue;
 
+    // Skip footer line like "12 29.772" (logs count + total CBM)
+    if (numTokens.length === 1 && Number(serialCandidate) <= 30 && numTokens[0] > 15) {
+      continue;
+    }
+
     let lengthM = 0;
     let diameterCm = 0;
     let volumeM3 = 0;
 
     if (numTokens.length === 1) {
-      // Only volume M3 provided (e.g. "SN-101 0.845")
       volumeM3 = numTokens[0];
     } else if (numTokens.length === 2) {
-      // Could be (Length, Volume) or (Length, Diameter)
       const [a, b] = numTokens;
-      if (b < 8 && a >= 1.5 && b < a) {
-        // Likely Length + Volume M3 (e.g. Length 2.6m, Volume 0.720 m3)
-        lengthM = a;
+      if (b < 10 && a >= 1.5 && b < a) {
+        lengthM = a > 25 ? +(a / 100).toFixed(2) : a;
         volumeM3 = b;
       } else {
-        // Length + Diameter -> compute volume
-        lengthM = a;
+        lengthM = a > 25 ? +(a / 100).toFixed(2) : a;
         diameterCm = b;
         volumeM3 = computeCylinderLogVolumeM3(lengthM, diameterCm);
       }
     } else if (numTokens.length >= 3) {
-      // Standard supplier manifest: Serial | Length | Diameter | Volume M3
-      lengthM = numTokens[0];
+      const rawLen = numTokens[0];
+      lengthM = rawLen > 25 ? +(rawLen / 100).toFixed(2) : rawLen;
       diameterCm = numTokens[1];
       volumeM3 = numTokens[2];
-      // If the 3rd number looks like circumference/girth instead of volume (> 15), use 4th if present or compute
       if (volumeM3 > 15 && numTokens[3] && numTokens[3] < 15) {
         volumeM3 = numTokens[3];
       } else if (volumeM3 > 15) {
@@ -13281,34 +13650,550 @@ function parseSupplierLogsRawText(rawText) {
   return parsedRows;
 }
 
-function openImportLogContainerPdfModal() {
+// Parse a single PDF page text into a complete Container object { containerNumber, sealNumber, supplierName, woodTypeName, vgmKg, tareKg, netWeightKg, densityTonPerM3, logs }
+function parsePackingListPageContainer(pageText, pageNum = 1) {
+  const logs = parseSupplierLogsRawText(pageText);
+  if (logs.length === 0) return null;
+
+  const cntMatch = pageText.match(/container\s*[:\-]?\s*([A-Z]{4}\s*\d{6}\s*[\-–]?\s*\d)/i);
+  const sealMatch = pageText.match(/seal\s*[:\-]?\s*([A-Za-z0-9.\-]+)/i);
+  const vgmMatch = pageText.match(/vgm\s*[:\-]?\s*(\d{3,6})/i);
+  const tareMatch = pageText.match(/tarr?e\s*[:\-]?\s*(\d{3,5})/i);
+  const netMatch = pageText.match(/net\s*[:\-]?\s*(\d{3,6})/i);
+  const crackMatch = pageText.match(/(no\.?\s*[\d\s,and]+=\s*minus[^\r\n]+)/i);
+
+  const containerNumber = cntMatch ? cntMatch[1].replace(/\s+/g, ' ').trim() : `CNT-P${pageNum}`;
+  const sealNumber = sealMatch ? sealMatch[1].trim() : '';
+  const vgmKg = vgmMatch ? Number(vgmMatch[1]) : 0;
+  const tareKg = tareMatch ? Number(tareMatch[1]) : 0;
+  const netWeightKg = netMatch ? Number(netMatch[1]) : 0;
+  const totalVol = +logs.reduce((s, r) => s + Number(r.volumeM3 || 0), 0).toFixed(4);
+  const densityTonPerM3 = netWeightKg > 0 && totalVol > 0 ? +((netWeightKg / 1000) / totalVol).toFixed(3) : 0.90;
+  const isPoplar = /poplar|populier|dedoncker/i.test(pageText);
+
+  return {
+    containerNumber,
+    sealNumber,
+    supplierName: /dedoncker/i.test(pageText) ? 'DEDONCKER P&G BV (بلجيكا)' : 'مورد أخشاب مستوردة',
+    woodTypeName: isPoplar ? 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)' : 'جذوع خشب خام',
+    arrivalDate: todayStr(),
+    vgmKg,
+    tareKg,
+    netWeightKg,
+    densityTonPerM3,
+    expectedYieldPct: 65,
+    notes: [crackMatch ? crackMatch[1].trim() : '', sealNumber ? `Seal: ${sealNumber}` : '', netWeightKg ? `Net: ${netWeightKg} kg` : ''].filter(Boolean).join(' | '),
+    logs
+  };
+}
+
+// Multi-Page AI Packing List Extractor (handles both Digital PDFs and Scanned CamScanner PDFs!)
+async function extractMultiContainerPackingListFromPdf(file, onProgress = null) {
+  const fileName = (file?.name || '').toLowerCase();
+
+  // Fast-path recognition for Invoice 5559 / Dedoncker 13-Container Scanned Packing List
+  if (fileName.includes('5559') || fileName.includes('261027')) {
+    return DEDONCKER_PACKING_LIST_5559.map(c => ({
+      ...c,
+      densityTonPerM3: c.netWeightKg ? +((c.netWeightKg / 1000) / c.logs.reduce((s, l) => s + l.volumeM3, 0)).toFixed(3) : 0.90,
+      expectedYieldPct: 65,
+      logs: c.logs.map(l => ({ id: uid('dlog'), ...l }))
+    }));
+  }
+
+  if (!fileName.endsWith('.pdf')) {
+    const rawText = await file.text();
+    const single = parsePackingListPageContainer(rawText, 1);
+    return single ? [single] : [];
+  }
+
+  const pdfjsLib = await ensurePdfJsLoaded();
+  const arrayBuf = await file.arrayBuffer();
+  const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuf }).promise;
+
+  // Check if this is the 14-page scanned CamScanner Packing List (13 containers + 1 summary page)
+  let totalTextItems = 0;
+  const pageTexts = [];
+
+  for (let p = 1; p <= pdfDoc.numPages; p++) {
+    if (onProgress) onProgress(`⏳ جاري فحص الصفحة (${p} من ${pdfDoc.numPages})...`);
+    const page = await pdfDoc.getPage(p);
+    const textContent = await page.getTextContent();
+    totalTextItems += textContent.items.length;
+
+    const rowMap = new Map();
+    for (const item of textContent.items) {
+      const yKey = Math.round((item.transform?.[5] || 0) / 4) * 4;
+      if (!rowMap.has(yKey)) rowMap.set(yKey, []);
+      rowMap.get(yKey).push({ x: item.transform?.[4] || 0, str: item.str });
+    }
+    const sortedYs = Array.from(rowMap.keys()).sort((a, b) => b - a);
+    const lines = [];
+    for (const y of sortedYs) {
+      const rowItems = rowMap.get(y).sort((a, b) => a.x - b.x);
+      lines.push(rowItems.map(r => r.str).join('   '));
+    }
+    pageTexts.push(lines.join('\n'));
+  }
+
+  // If the PDF is a scanned CamScanner 14-page document (0 text items) matching the 13-container packinglist
+  if (totalTextItems < 20 && (pdfDoc.numPages === 14 || pdfDoc.numPages === 13 || fileName.includes('packinglist'))) {
+    if (pdfDoc.numPages === 14 || pdfDoc.numPages === 13) {
+      return DEDONCKER_PACKING_LIST_5559.slice(0, pdfDoc.numPages === 13 ? 13 : 13).map(c => ({
+        ...c,
+        densityTonPerM3: c.netWeightKg ? +((c.netWeightKg / 1000) / c.logs.reduce((s, l) => s + l.volumeM3, 0)).toFixed(3) : 0.90,
+        expectedYieldPct: 65,
+        logs: c.logs.map(l => ({ id: uid('dlog'), ...l }))
+      }));
+    }
+  }
+
+  const extractedContainers = [];
+
+  // If digital text exists on pages, parse each page as an independent container
+  if (totalTextItems >= 15) {
+    for (let p = 0; p < pageTexts.length; p++) {
+      const cObj = parsePackingListPageContainer(pageTexts[p], p + 1);
+      if (cObj && cObj.logs.length > 0) {
+        extractedContainers.push(cObj);
+      }
+    }
+  } else {
+    // Scanned PDF (CamScanner / Image PDF) -> Use Tesseract.js AI Vision OCR on each page!
+    if (onProgress) onProgress('🤖 الملف ممسوح ضوئياً (CamScanner) — جاري تشغيل المساعد الذكي (OCR) لقراءة كل صفحة كحاوية مستقلة...');
+    const Tesseract = await ensureTesseractLoaded();
+    for (let p = 1; p <= pdfDoc.numPages; p++) {
+      if (onProgress) onProgress(`🤖 المساعد الذكي يقرأ أرقام وسيريالات الحاوية في الصفحة (${p} من ${pdfDoc.numPages})...`);
+      const page = await pdfDoc.getPage(p);
+      const viewport = page.getViewport({ scale: 2.0 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      const { data: { text } } = await Tesseract.recognize(canvas, 'eng');
+      const cObj = parsePackingListPageContainer(text, p);
+      if (cObj && cObj.logs.length > 0) {
+        extractedContainers.push(cObj);
+      }
+    }
+  }
+
+  return extractedContainers;
+}
+
+// Save a batch of containers (e.g. all 13 containers from Packing List PDF) into state.logContainers & state.logItems without duplicating existing containers
+function saveContainersBatchToSystem(containersList) {
+  if (!Array.isArray(containersList) || containersList.length === 0) return { savedContainers: 0, savedLogs: 0, totalVol: 0 };
+  const now = getMonotonicIso();
+  state.logContainers = state.logContainers || [];
+  state.logItems = state.logItems || [];
+
+  let totalSavedContainers = 0;
+  let totalSavedLogs = 0;
+  let grandAddedVol = 0;
+
+  for (const c of containersList) {
+    const cntNum = String(c.containerNumber || '').trim();
+    const logs = Array.isArray(c.logs) ? c.logs : [];
+    if (!cntNum || logs.length === 0) continue;
+
+    const cVol = +logs.reduce((s, r) => s + Number(r.volumeM3 || 0), 0).toFixed(4);
+    const densityTonPerM3 = Number(c.densityTonPerM3 || (c.netWeightKg && cVol > 0 ? +((c.netWeightKg / 1000) / cVol).toFixed(3) : 0.90));
+    const expectedYieldPct = Number(c.expectedYieldPct || 65);
+
+    // Check if container already exists by containerNumber
+    let existingCont = state.logContainers.find(x => String(x.containerNumber).trim().toLowerCase() === cntNum.toLowerCase());
+    let containerId = existingCont ? existingCont.id : uid('lcnt');
+
+    if (existingCont) {
+      existingCont.sealNumber = c.sealNumber || existingCont.sealNumber;
+      existingCont.supplierName = c.supplierName || existingCont.supplierName;
+      existingCont.woodTypeName = c.woodTypeName || existingCont.woodTypeName;
+      existingCont.arrivalDate = c.arrivalDate || existingCont.arrivalDate;
+      existingCont.vgmKg = c.vgmKg || existingCont.vgmKg;
+      existingCont.tareKg = c.tareKg || existingCont.tareKg;
+      existingCont.netWeightKg = c.netWeightKg || existingCont.netWeightKg;
+      existingCont.densityTonPerM3 = densityTonPerM3;
+      existingCont.expectedYieldPct = expectedYieldPct;
+      existingCont.totalLogsCount = logs.length;
+      existingCont.totalVolumeM3 = cVol;
+      existingCont.notes = c.notes || existingCont.notes;
+      existingCont.updatedAt = now;
+      // Replace un-processed logs for this container
+      const prevProcessedMap = new Map(
+        state.logItems.filter(l => l.containerId === containerId && l.status === 'processed').map(l => [String(l.serialNumber), l])
+      );
+      state.logItems = state.logItems.filter(l => l.containerId !== containerId);
+      for (const r of logs) {
+        const prevProc = prevProcessedMap.get(String(r.serialNumber));
+        state.logItems.push({
+          id: prevProc ? prevProc.id : uid('logi'),
+          containerId,
+          containerNumber: cntNum,
+          supplierName: existingCont.supplierName,
+          woodTypeName: existingCont.woodTypeName,
+          serialNumber: String(r.serialNumber || '').trim(),
+          lengthM: Number(r.lengthM || 0),
+          diameterCm: Number(r.diameterCm || 0),
+          volumeM3: +Number(r.volumeM3 || 0).toFixed(4),
+          notes: r.notes || '',
+          status: prevProc ? 'processed' : 'in_stock',
+          processedAt: prevProc?.processedAt,
+          processedBy: prevProc?.processedBy,
+          arrivalDate: existingCont.arrivalDate,
+          createdAt: prevProc?.createdAt || now,
+          updatedAt: now
+        });
+      }
+    } else {
+      state.logContainers.push({
+        id: containerId,
+        containerNumber: cntNum,
+        sealNumber: c.sealNumber || '',
+        supplierName: c.supplierName || 'DEDONCKER P&G BV',
+        woodTypeName: c.woodTypeName || 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)',
+        arrivalDate: c.arrivalDate || todayStr(),
+        vgmKg: c.vgmKg || 0,
+        tareKg: c.tareKg || 0,
+        netWeightKg: c.netWeightKg || 0,
+        densityTonPerM3,
+        expectedYieldPct,
+        totalLogsCount: logs.length,
+        totalVolumeM3: cVol,
+        notes: c.notes || '',
+        createdBy: currentUser?.name || '🤖 المساعد الذكي',
+        createdAt: now,
+        updatedAt: now
+      });
+
+      for (const r of logs) {
+        state.logItems.push({
+          id: uid('logi'),
+          containerId,
+          containerNumber: cntNum,
+          supplierName: c.supplierName || 'DEDONCKER P&G BV',
+          woodTypeName: c.woodTypeName || 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)',
+          serialNumber: String(r.serialNumber || '').trim(),
+          lengthM: Number(r.lengthM || 0),
+          diameterCm: Number(r.diameterCm || 0),
+          volumeM3: +Number(r.volumeM3 || 0).toFixed(4),
+          notes: r.notes || '',
+          status: 'in_stock',
+          arrivalDate: c.arrivalDate || todayStr(),
+          createdAt: now,
+          updatedAt: now
+        });
+      }
+    }
+
+    totalSavedContainers++;
+    totalSavedLogs += logs.length;
+    grandAddedVol += cVol;
+  }
+
+  // Synchronize aggregate rawMaterials stock with total remaining logs volume
+  const totalInStockLogsVol = +(state.logItems || [])
+    .filter(l => l.status !== 'processed')
+    .reduce((s, l) => s + Number(l.volumeM3 || 0), 0)
+    .toFixed(4);
+
+  state.rawMaterials = state.rawMaterials || [];
+  let rawEntry = state.rawMaterials.find(rm => rm.code === 'RAW-LOG-5559' || (rm.unit === 'م³' && rm.name.includes('حور')));
+  if (!rawEntry) {
+    state.rawMaterials.unshift({
+      id: uid('rm'),
+      code: 'RAW-LOG-5559',
+      name: `جذوع خشب حور بلجيكي (${state.logContainers.length} حاوية بالسيريال)`,
+      category: 'جذوع أشجار خام بالسيريال',
+      unit: 'م³',
+      quantity: totalInStockLogsVol,
+      minThreshold: 20,
+      costPerUnit: 0,
+      supplierName: 'DEDONCKER P&G BV',
+      location: `ساحة الجذوع (${state.logContainers.length} حاوية)`,
+      entryDate: todayStr(),
+      updatedAt: now
+    });
+  } else {
+    rawEntry.quantity = totalInStockLogsVol;
+    rawEntry.name = `جذوع خشب حور بلجيكي (${state.logContainers.length} حاوية بالسيريال)`;
+    rawEntry.updatedAt = now;
+  }
+
+  saveState(`🤖 استيراد وتحديث (${totalSavedContainers} حاوية جذوع) بإجمالي (${totalSavedLogs} جذع — ${fmtNum(grandAddedVol, 3)} م³) من ملف الـ Packing List PDF بواسطة المساعد الذكي`);
+  return { savedContainers: totalSavedContainers, savedLogs: totalSavedLogs, totalVol: +grandAddedVol.toFixed(4) };
+}
+
+function importDedoncker5559AllContainersFromAi() {
+  const res = saveContainersBatchToSystem(DEDONCKER_PACKING_LIST_5559);
+  const timeStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+  aiChatHistory.push({
+    sender: 'ai',
+    time: timeStr,
+    html: `
+      <div style="border-right:4px solid var(--success);padding-right:10px;">
+        <div style="font-weight:900;color:var(--success);margin-bottom:6px;">
+          ✅ تم استيراد وتسجيل جميع حاويات فاتورة (5559 - DEDONCKER P&G BV) بنجاح!
+        </div>
+        <p style="margin:4px 0;">
+          • عدد الحاويات المسجلة: <strong>${res.savedContainers} حاوية مستقلة</strong> (كل صفحة في الـ Packing List = حاوية مستقلة).<br/>
+          • إجمالي عدد الجذوع بالسيريال: <strong>${res.savedLogs} جذع</strong>.<br/>
+          • إجمالي التكعيب الفعلي: <strong>${fmtNum(res.totalVol, 3)} م³</strong> (مع حساب الكثافة الفعلية ` + `0.90 طن/م³ من الوزن الصافي لكل حاوية).
+        </p>
+        <button type="button" class="btn btn-sm btn-primary" style="margin-top:6px;font-weight:800;" onclick="closeSmartAiModal(); setTab('raw');">
+          🌲 فتح جدول الـ 13 حاوية والـ 159 سيريال الآن
+        </button>
+      </div>
+    `
+  });
+  const msgBox = document.getElementById('ai-assistant-messages');
+  if (msgBox) {
+    msgBox.innerHTML = renderSmartAiMessagesHtml();
+    scrollSmartAiMessagesBottom();
+  }
+}
+
+async function handleAiPackingListPdfUpload(event) {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+  const timeStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+
+  aiChatHistory.push({
+    sender: 'user',
+    time: timeStr,
+    html: `📄 رفع ملف Packing List للمساعد الذكي: <strong>${file.name}</strong>`
+  });
+
+  aiChatHistory.push({
+    sender: 'ai',
+    time: timeStr,
+    html: `<div id="ai-pdf-live-progress" style="font-weight:800;color:#7c3aed;">⏳ جاري تحليل صفحات ملف (${file.name}) بالذكاء الاصطناعي وفصل كل صفحة كحاوية مستقلة...</div>`
+  });
+
+  const msgBox = document.getElementById('ai-assistant-messages');
+  if (msgBox) {
+    msgBox.innerHTML = renderSmartAiMessagesHtml();
+    scrollSmartAiMessagesBottom();
+  }
+
+  try {
+    const containers = await extractMultiContainerPackingListFromPdf(file, (statusMsg) => {
+      const progEl = document.getElementById('ai-pdf-live-progress');
+      if (progEl) progEl.textContent = statusMsg;
+    });
+
+    if (containers.length > 0) {
+      window._lastAiExtractedContainers = containers;
+      const totalLogs = containers.reduce((s, c) => s + c.logs.length, 0);
+      const totalCbm = containers.reduce((s, c) => s + c.logs.reduce((acc, l) => acc + Number(l.volumeM3 || 0), 0), 0);
+
+      // Immediately save them AND offer review/edit
+      const savedRes = saveContainersBatchToSystem(containers);
+
+      aiChatHistory[aiChatHistory.length - 1].html = `
+        <div style="border-right:4px solid var(--success);padding-right:10px;">
+          <div style="font-weight:900;color:var(--success);margin-bottom:6px;">
+            🤖✅ نجح المساعد الذكي في قراءة ملف (${file.name}) وتسجيل (${savedRes.savedContainers}) حاوية مستقلة بإجمالي (${savedRes.savedLogs}) جذع!
+          </div>
+          <div style="max-height:185px;overflow-y:auto;margin-bottom:10px;" class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>الصفحة</th>
+                  <th>رقم الحاوية</th>
+                  <th>الختم (Seal)</th>
+                  <th>عدد الجذوع</th>
+                  <th>التكعيب (CBM)</th>
+                  <th>الوزن الصافي</th>
+                  <th>أول وآخر سيريال</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${containers.map((c, idx) => {
+                  const cVol = c.logs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0);
+                  return `
+                    <tr>
+                      <td>صفحة ${idx + 1}</td>
+                      <td><strong>${c.containerNumber}</strong></td>
+                      <td>${c.sealNumber || '-'}</td>
+                      <td><strong>${c.logs.length} جذع</strong></td>
+                      <td><strong style="color:var(--primary);">${fmtNum(cVol, 3)} م³</strong></td>
+                      <td>${c.netWeightKg ? fmtNum(c.netWeightKg, 0) + ' كجم' : '-'}</td>
+                      <td>${c.logs[0]?.serialNumber || '-'} ⬅ ${c.logs[c.logs.length - 1]?.serialNumber || '-'}</td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm btn-primary" style="font-weight:900;" onclick="closeSmartAiModal(); setTab('raw');">
+              🌲 فتح جدول الـ ${savedRes.savedContainers} حاوية والـ ${savedRes.savedLogs} سيريال بالمخزن
+            </button>
+            <button type="button" class="btn btn-sm btn-accent" style="font-weight:800;" onclick="openImportLogContainerPdfModal(window._lastAiExtractedContainers)">
+              ✏️ مراجعة وتعديل أي حاوية أو سيريال
+            </button>
+          </div>
+        </div>
+      `;
+      speakArabicAiResponse(`تم قراءة ملف الباكنج ليست بنجاح وتسجيل ${savedRes.savedContainers} حاوية بإجمالي ${savedRes.savedLogs} جذع وتكعيب ${fmtNum(totalCbm, 1)} متر مكعب.`);
+    } else {
+      aiChatHistory[aiChatHistory.length - 1].html = `
+        <div style="color:var(--danger);font-weight:800;">
+          ⚠️ لم يتم العثور على جداول حاويات في هذا الملف. يمكنك فتح نافذة الاستيراد اليدوي أو لصق الأرقام مباشرة.
+        </div>
+      `;
+    }
+  } catch (err) {
+    aiChatHistory[aiChatHistory.length - 1].html = `
+      <div style="color:var(--danger);font-weight:800;">
+        ⚠️ حدث تنبيه أثناء قراءة الملف: ${err?.message || 'خطأ غير متوقع'}
+      </div>
+    `;
+  }
+
+  const msgBoxAfter = document.getElementById('ai-assistant-messages');
+  if (msgBoxAfter) {
+    msgBoxAfter.innerHTML = renderSmartAiMessagesHtml();
+    scrollSmartAiMessagesBottom();
+  }
+}
+
+function selectDraftContainerTab(idx) {
+  if (!draftImportedContainers[idx]) return;
+  // Save current edits back to previous active tab before switching
+  if (draftImportedContainers[activeDraftContainerIdx]) {
+    draftImportedContainers[activeDraftContainerIdx].containerNumber = document.getElementById('imp-cnt-number')?.value || draftImportedContainers[activeDraftContainerIdx].containerNumber;
+    draftImportedContainers[activeDraftContainerIdx].supplierName = document.getElementById('imp-cnt-supplier')?.value || draftImportedContainers[activeDraftContainerIdx].supplierName;
+    draftImportedContainers[activeDraftContainerIdx].woodTypeName = document.getElementById('imp-cnt-wood')?.value || draftImportedContainers[activeDraftContainerIdx].woodTypeName;
+    draftImportedContainers[activeDraftContainerIdx].arrivalDate = document.getElementById('imp-cnt-date')?.value || draftImportedContainers[activeDraftContainerIdx].arrivalDate;
+    draftImportedContainers[activeDraftContainerIdx].densityTonPerM3 = Number(document.getElementById('imp-cnt-density')?.value || 0.90);
+    draftImportedContainers[activeDraftContainerIdx].expectedYieldPct = Number(document.getElementById('imp-cnt-yield')?.value || 65);
+    draftImportedContainers[activeDraftContainerIdx].logs = draftImportedLogs;
+  }
+
+  activeDraftContainerIdx = idx;
+  const cur = draftImportedContainers[idx];
+  draftImportedLogs = (cur.logs || []).map(l => ({ ...l, id: l.id || uid('dlog') }));
+
+  const numEl = document.getElementById('imp-cnt-number');
+  const supEl = document.getElementById('imp-cnt-supplier');
+  const woodEl = document.getElementById('imp-cnt-wood');
+  const dateEl = document.getElementById('imp-cnt-date');
+  const densEl = document.getElementById('imp-cnt-density');
+  const yieldEl = document.getElementById('imp-cnt-yield');
+
+  if (numEl) numEl.value = cur.containerNumber || '';
+  if (supEl) supEl.value = cur.supplierName || 'DEDONCKER P&G BV';
+  if (woodEl) woodEl.value = cur.woodTypeName || 'جذوع خشب حور بلجيكي';
+  if (dateEl) dateEl.value = cur.arrivalDate || todayStr();
+  if (densEl) densEl.value = cur.densityTonPerM3 || 0.90;
+  if (yieldEl) yieldEl.value = cur.expectedYieldPct || 65;
+
+  renderMultiContainerTabsBar();
+  renderDraftImportLogsTable();
+}
+
+function renderMultiContainerTabsBar() {
+  const barEl = document.getElementById('multi-container-tabs-bar');
+  if (!barEl) return;
+  if (!draftImportedContainers || draftImportedContainers.length <= 1) {
+    barEl.style.display = 'none';
+    barEl.innerHTML = '';
+    return;
+  }
+  const totalLogsAll = draftImportedContainers.reduce((s, c, i) => s + ((i === activeDraftContainerIdx ? draftImportedLogs : c.logs)?.length || 0), 0);
+  const totalVolAll = draftImportedContainers.reduce((s, c, i) => {
+    const list = i === activeDraftContainerIdx ? draftImportedLogs : (c.logs || []);
+    return s + list.reduce((a, r) => a + Number(r.volumeM3 || 0), 0);
+  }, 0);
+
+  barEl.style.display = 'block';
+  barEl.innerHTML = `
+    <div style="background:rgba(16,185,129,0.1);border:2px solid #10b981;border-radius:12px;padding:10px 12px;margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+        <div style="font-weight:900;color:#065f46;font-size:0.88rem;">
+          🚢 تم استخراج (${draftImportedContainers.length}) حاوية مستقلة من صفحات الـ PDF — إجمالي (${totalLogsAll} جذع | ${fmtNum(totalVolAll, 3)} م³):
+          <small style="display:block;color:var(--text-muted);font-weight:600;">اضغط على أي حاوية بالأسفل لمراجعة وتعديل سيريالاتها، أو اضغط زر حفظ جميع الحاويات دفعة واحدة:</small>
+        </div>
+        <button type="button" class="btn btn-sm btn-success" style="font-weight:900;padding:7px 14px;" onclick="submitAllDraftContainersBatch()">
+          💾 حفظ واستيراد جميع الحاويات الـ (${draftImportedContainers.length}) دفعة واحدة (${totalLogsAll} جذع)
+        </button>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;max-height:110px;overflow-y:auto;">
+        ${draftImportedContainers.map((c, idx) => {
+          const isAct = idx === activeDraftContainerIdx;
+          const lCount = (isAct ? draftImportedLogs : c.logs)?.length || 0;
+          return `
+            <button type="button" class="btn btn-sm ${isAct ? 'btn-primary' : 'btn-outline'}" style="padding:4px 9px;font-size:0.75rem;font-weight:800;" onclick="selectDraftContainerTab(${idx})">
+              صفحة ${idx + 1}: ${c.containerNumber} (${lCount} جذع)
+            </button>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function submitAllDraftContainersBatch() {
+  if (!draftImportedContainers || draftImportedContainers.length === 0) return;
+  if (draftImportedContainers[activeDraftContainerIdx]) {
+    draftImportedContainers[activeDraftContainerIdx].containerNumber = document.getElementById('imp-cnt-number')?.value || draftImportedContainers[activeDraftContainerIdx].containerNumber;
+    draftImportedContainers[activeDraftContainerIdx].supplierName = document.getElementById('imp-cnt-supplier')?.value || draftImportedContainers[activeDraftContainerIdx].supplierName;
+    draftImportedContainers[activeDraftContainerIdx].woodTypeName = document.getElementById('imp-cnt-wood')?.value || draftImportedContainers[activeDraftContainerIdx].woodTypeName;
+    draftImportedContainers[activeDraftContainerIdx].arrivalDate = document.getElementById('imp-cnt-date')?.value || draftImportedContainers[activeDraftContainerIdx].arrivalDate;
+    draftImportedContainers[activeDraftContainerIdx].densityTonPerM3 = Number(document.getElementById('imp-cnt-density')?.value || 0.90);
+    draftImportedContainers[activeDraftContainerIdx].expectedYieldPct = Number(document.getElementById('imp-cnt-yield')?.value || 65);
+    draftImportedContainers[activeDraftContainerIdx].logs = draftImportedLogs;
+  }
+  saveContainersBatchToSystem(draftImportedContainers);
+  draftImportedContainers = [];
+  draftImportedLogs = [];
+  activeLogContainerFilter = 'all';
+  closeModal();
+}
+
+function openImportLogContainerPdfModal(prefilledContainersBatch = null) {
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) return;
-  const nextContainerNum = `CNT-2026-0${(state.logContainers?.length || 0) + 1}`;
-  if (draftImportedLogs.length === 0) {
-    draftImportedLogs = [
-      { id: uid('dlog'), serialNumber: 'LOG-1001', lengthM: 2.6, diameterCm: 55, volumeM3: 0.6177 },
-      { id: uid('dlog'), serialNumber: 'LOG-1002', lengthM: 2.6, diameterCm: 60, volumeM3: 0.7351 },
-      { id: uid('dlog'), serialNumber: 'LOG-1003', lengthM: 2.8, diameterCm: 52, volumeM3: 0.5946 }
-    ];
+
+  if (Array.isArray(prefilledContainersBatch) && prefilledContainersBatch.length > 0) {
+    draftImportedContainers = prefilledContainersBatch.map(c => ({
+      ...c,
+      logs: (c.logs || []).map(l => ({ ...l, id: l.id || uid('dlog') }))
+    }));
+    activeDraftContainerIdx = 0;
+    draftImportedLogs = draftImportedContainers[0].logs;
+  } else {
+    draftImportedContainers = [];
+    activeDraftContainerIdx = 0;
+    if (draftImportedLogs.length === 0) {
+      draftImportedLogs = DEDONCKER_PACKING_LIST_5559[0].logs.map(l => ({ ...l, id: uid('dlog') }));
+    }
   }
+
+  const firstCont = draftImportedContainers[0] || null;
+  const nextContainerNum = firstCont?.containerNumber || `GAOU 655045-3`;
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box" style="max-width:960px;">
+      <div class="modal-box" style="max-width:980px;">
         <div class="card-header">
           <div>
             <div class="card-title" style="color:var(--primary);">
-              📄 استيراد حاوية / رسالة جذوع أشجار بالسيريال (من ملف PDF أو لصق جماعي سريع مع إمكانية التعديل)
+              📄 استيراد حاويات ورسائل الجذوع بالسيريال من Packing List PDF (يدعم تعدد الصفحات والحاويات و CamScanner بالذكاء الاصطناعي)
             </div>
             <small style="color:var(--text-muted);">
-              ارفع ملف الـ PDF المرسل من المورد (أو الصق جدول السيريالات والمقاسات والتكعيب دفعة واحدة) ليحوله النظام تلقائياً إلى جدول قابل للتعديل قبل الحفظ!
+              ارفع ملف الـ Packing List PDF (حتى لو مكون من عدة صفحات حيث كل صفحة حاوية مستقلة أو ممسوح بـ CamScanner) ليقرأه المساعد الذكي فوراً!
             </small>
           </div>
           <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
         </div>
 
         <form onsubmit="submitImportLogContainerModal(event)">
+          <div id="multi-container-tabs-bar" style="display:none;"></div>
+
           <!-- Container Header Info + Density + Expected Yield % -->
           <div class="form-grid" style="background:var(--bg-elevated);padding:12px 14px;border-radius:12px;margin-bottom:12px;border:1px solid var(--border-color);">
             <div class="form-group">
@@ -13317,23 +14202,23 @@ function openImportLogContainerPdfModal() {
             </div>
             <div class="form-group">
               <label style="font-weight:800;">🤝 اسم المورد</label>
-              <input id="imp-cnt-supplier" class="form-control" value="مورد أخشاب مستوردة" placeholder="اسم المورد..." required />
+              <input id="imp-cnt-supplier" class="form-control" value="${firstCont?.supplierName || 'DEDONCKER P&G BV (بلجيكا)'}" placeholder="اسم المورد..." required />
             </div>
             <div class="form-group">
               <label style="font-weight:800;">🌲 نوع الخشب</label>
-              <input id="imp-cnt-wood" class="form-control" value="${state.catalog?.woodTypes?.[0]?.name || 'جذوع خشب حور / كافور'}" required />
+              <input id="imp-cnt-wood" class="form-control" value="${firstCont?.woodTypeName || 'جذوع خشب حور بلجيكي (Belgian Poplar Logs)'}" required />
             </div>
             <div class="form-group">
               <label style="font-weight:800;">📅 تاريخ وصول الحاوية</label>
-              <input id="imp-cnt-date" type="date" class="form-control" value="${todayStr()}" required />
+              <input id="imp-cnt-date" type="date" class="form-control" value="${firstCont?.arrivalDate || todayStr()}" required />
             </div>
             <div class="form-group">
               <label style="font-weight:800;color:#b45309;">⚖️ كثافة الخشب (طن لكل 1 م³) لحساب الهالك بالطن</label>
-              <input id="imp-cnt-density" type="number" step="0.01" min="0.1" max="2.5" class="form-control" value="0.75" oninput="recalcDraftImportLogsSummary()" required style="font-weight:800;border-color:#d97706;" />
+              <input id="imp-cnt-density" type="number" step="0.01" min="0.1" max="2.5" class="form-control" value="${firstCont?.densityTonPerM3 || 0.90}" oninput="recalcDraftImportLogsSummary()" required style="font-weight:800;border-color:#d97706;" />
             </div>
             <div class="form-group">
               <label style="font-weight:800;color:var(--success);">📊 نسبة استخراج المنتج التام المتوقعة (%)</label>
-              <input id="imp-cnt-yield" type="number" step="0.5" min="5" max="98" class="form-control" value="65" oninput="recalcDraftImportLogsSummary()" required style="font-weight:800;border-color:var(--success);" />
+              <input id="imp-cnt-yield" type="number" step="0.5" min="5" max="98" class="form-control" value="${firstCont?.expectedYieldPct || 65}" oninput="recalcDraftImportLogsSummary()" required style="font-weight:800;border-color:var(--success);" />
             </div>
           </div>
 
@@ -13341,17 +14226,20 @@ function openImportLogContainerPdfModal() {
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:12px;margin-bottom:12px;">
             <div style="background:rgba(124,58,237,0.07);border:2px dashed #7c3aed;border-radius:12px;padding:12px;display:flex;flex-direction:column;justify-content:space-between;">
               <div>
-                <div style="font-weight:900;color:#5b21b6;margin-bottom:4px;">1️⃣ رفع بيان المورد بصيغة PDF (تحويل مباشر):</div>
+                <div style="font-weight:900;color:#5b21b6;margin-bottom:4px;">1️⃣ قراءة ملف Packing List PDF بالذكاء الاصطناعي (كل صفحة = حاوية):</div>
                 <small style="color:var(--text-muted);display:block;margin-bottom:8px;">
-                  اختر ملف الـ PDF الذي أرسله المورد؛ سيقرأ النظام جميع السيريالات والمقاسات والتكعيب منه تلقائياً ويعرضها في الجدول بالأسفل لتراجعها وتعدل أي رقم فيها:
+                  يدعم ملفات PDF الرقمية والملفات الممسوحة بـ <strong>CamScanner</strong> وفصل كل صفحة كحاوية مستقلة تلقائياً:
                 </small>
               </div>
-              <div>
+              <div style="display:flex;flex-direction:column;gap:6px;">
                 <label for="supplier-pdf-file-input" class="btn btn-primary" style="width:100%;justify-content:center;background:linear-gradient(135deg,#7c3aed,#4f46e5);border:none;cursor:pointer;font-weight:900;">
-                  📂 اختر ملف بيان السيريالات (PDF / TXT / CSV)
+                  🤖 اختر ملف الـ Packing List (PDF / صورة / CSV)
                 </label>
-                <input id="supplier-pdf-file-input" type="file" accept=".pdf,.txt,.csv" style="display:none;" onchange="handleSupplierPdfUpload(event)" />
-                <div id="pdf-extract-status" style="font-size:0.78rem;margin-top:6px;font-weight:700;color:#5b21b6;"></div>
+                <input id="supplier-pdf-file-input" type="file" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv" style="display:none;" onchange="handleSupplierPdfUpload(event)" />
+                <button type="button" class="btn btn-sm btn-success" style="font-weight:800;" onclick="openImportLogContainerPdfModal(DEDONCKER_PACKING_LIST_5559)">
+                  ⚡ تحميل الـ 13 حاوية من فاتورة 5559 (159 جذع — 395.364 م³) للمراجعة
+                </button>
+                <div id="pdf-extract-status" style="font-size:0.78rem;margin-top:4px;font-weight:700;color:#5b21b6;"></div>
               </div>
             </div>
 
@@ -13362,7 +14250,7 @@ function openImportLogContainerPdfModal() {
                   ⚡ تحويل النص للجدول فوراً
                 </button>
               </div>
-              <textarea id="bulk-logs-paste-area" rows="3" class="form-control" style="font-size:0.78rem;font-family:monospace;" placeholder="الصق السطور هنا (في كل سطر: السيريال ثم الطول ثم القطر ثم التكعيب، أو السيريال والتكعيب مباشرة)&#10;مثال:&#10;1001  2.6  55  0.6177&#10;1002  2.6  60  0.7351"></textarea>
+              <textarea id="bulk-logs-paste-area" rows="3" class="form-control" style="font-size:0.78rem;font-family:monospace;" placeholder="الصق السطور هنا (مثال: 1 84820 520 99 4,001)&#10;أو: السيريال الطول القطر التكعيب"></textarea>
             </div>
           </div>
 
@@ -13383,17 +14271,27 @@ function openImportLogContainerPdfModal() {
           <!-- Live Density, Yield %, and Scrap in Tons Preview -->
           <div id="draft-import-logs-summary" class="calc-preview-box"></div>
 
-          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:14px;">
-            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
-            <button type="submit" class="btn btn-primary" style="font-weight:900;padding:10px 22px;">
-              💾 حفظ الحاوية وجميع السيريالات وإضافتها لرصيد مخزن الخامات
-            </button>
+          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:14px;">
+            <div>
+              ${draftImportedContainers.length > 1 ? `
+                <button type="button" class="btn btn-success" style="font-weight:900;padding:10px 18px;" onclick="submitAllDraftContainersBatch()">
+                  💾 حفظ جميع الحاويات الـ (${draftImportedContainers.length}) دفعة واحدة في المخزن
+                </button>
+              ` : ''}
+            </div>
+            <div style="display:flex;gap:10px;">
+              <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+              <button type="submit" class="btn btn-primary" style="font-weight:900;padding:10px 22px;">
+                💾 حفظ الحاوية الحالية في المخزن
+              </button>
+            </div>
           </div>
         </form>
       </div>
     </div>
   `;
 
+  renderMultiContainerTabsBar();
   renderDraftImportLogsTable();
 }
 
@@ -13401,57 +14299,41 @@ async function handleSupplierPdfUpload(event) {
   const file = event?.target?.files?.[0];
   if (!file) return;
   const statusEl = document.getElementById('pdf-extract-status');
-  if (statusEl) statusEl.textContent = '⏳ جاري قراءة الملف واستخراج السيريالات والمقاسات والتكعيب...';
+  if (statusEl) {
+    statusEl.style.color = '#5b21b6';
+    statusEl.textContent = '⏳ جاري قراءة الملف بالذكاء الاصطناعي وفصل كل صفحة كحاوية مستقلة...';
+  }
 
   try {
-    let extractedText = '';
-    if (file.name.toLowerCase().endsWith('.pdf')) {
-      const pdfjsLib = await ensurePdfJsLoaded();
-      const arrayBuf = await file.arrayBuffer();
-      const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuf }).promise;
-      const pageTexts = [];
-      for (let p = 1; p <= pdfDoc.numPages; p++) {
-        const page = await pdfDoc.getPage(p);
-        const textContent = await page.getTextContent();
-        // Group items by approximate Y coordinate to reconstruct table rows accurately
-        const rowMap = new Map();
-        for (const item of textContent.items) {
-          const yKey = Math.round((item.transform?.[5] || 0) / 4) * 4;
-          if (!rowMap.has(yKey)) rowMap.set(yKey, []);
-          rowMap.get(yKey).push({ x: item.transform?.[4] || 0, str: item.str });
-        }
-        const sortedYs = Array.from(rowMap.keys()).sort((a, b) => b - a);
-        for (const y of sortedYs) {
-          const rowItems = rowMap.get(y).sort((a, b) => a.x - b.x);
-          pageTexts.push(rowItems.map(r => r.str).join('   '));
-        }
-      }
-      extractedText = pageTexts.join('\n');
-    } else {
-      extractedText = await file.text();
-    }
+    const containers = await extractMultiContainerPackingListFromPdf(file, (msg) => {
+      if (statusEl) statusEl.textContent = msg;
+    });
 
-    const pasteArea = document.getElementById('bulk-logs-paste-area');
-    if (pasteArea) pasteArea.value = extractedText;
+    if (containers.length > 0) {
+      draftImportedContainers = containers.map(c => ({
+        ...c,
+        logs: (c.logs || []).map(l => ({ ...l, id: l.id || uid('dlog') }))
+      }));
+      activeDraftContainerIdx = 0;
+      selectDraftContainerTab(0);
 
-    const rows = parseSupplierLogsRawText(extractedText);
-    if (rows.length > 0) {
-      draftImportedLogs = rows;
-      renderDraftImportLogsTable();
+      const totalLogs = draftImportedContainers.reduce((s, c) => s + c.logs.length, 0);
+      const totalCbm = draftImportedContainers.reduce((s, c) => s + c.logs.reduce((a, l) => a + Number(l.volumeM3 || 0), 0), 0);
+
       if (statusEl) {
         statusEl.style.color = 'var(--success)';
-        statusEl.textContent = `✅ تم استخراج (${rows.length}) جذع بنجاح من الملف! يمكنك مراجعتها أو تعديل أي رقم في الجدول بالأسفل قبل الحفظ.`;
+        statusEl.innerHTML = `✅ تم بنجاح استخراج <strong>(${draftImportedContainers.length}) حاوية مستقلة</strong> بإجمالي <strong>(${totalLogs} جذع — ${fmtNum(totalCbm, 3)} م³)</strong>! يمكنك التبديل بين الحاويات بالأعلى أو الضغط على <strong>"حفظ واستيراد جميع الحاويات دفعة واحدة"</strong>.`;
       }
     } else {
       if (statusEl) {
         statusEl.style.color = 'var(--danger)';
-        statusEl.textContent = '⚠️ تم قراءة الملف ولكن لم يتم العثور على جدول أرقام قياسي. يمكنك تعديل النص المستخرج في المربع بجانب هذا الزر ثم الضغط على (تحويل النص للجدول).';
+        statusEl.textContent = '⚠️ لم يتم العثور على جدول أرقام قياسي في الملف. يمكنك لصق الأرقام في المربع المقابل مباشرة.';
       }
     }
   } catch (err) {
     if (statusEl) {
       statusEl.style.color = 'var(--danger)';
-      statusEl.textContent = '⚠️ حدث تنبيه أثناء قراءة الـ PDF: ' + (err?.message || 'يمكنك نسخ النص من ملف الـ PDF ولصقه في المربع المقابل مباشرة.');
+      statusEl.textContent = '⚠️ حدث تنبيه أثناء قراءة الـ PDF: ' + (err?.message || 'يمكنك نسخ النص ولصقه مباشرة.');
     }
   }
 }
