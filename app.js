@@ -845,7 +845,7 @@ function normalizeState(s) {
   });
 
   const arrayKeys = [
-    'users', 'pallets', 'rawMaterials', 'scrapItems', 'spareParts',
+    'users', 'pallets', 'rawMaterials', 'logContainers', 'logItems', 'scrapItems', 'spareParts',
     'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
     'partners', 'palletMovements', 'financialTransactions',
     'auditLogs', 'chatMessages', 'deletedIds'
@@ -939,7 +939,7 @@ function smartMergeClientState(current, incoming) {
   if (incReset > curReset && curReset === 0) {
     // Still filter incoming against minResetTs in case an old client tainted it
     const listKeys = [
-      'pallets', 'rawMaterials', 'scrapItems', 'spareParts',
+      'pallets', 'rawMaterials', 'logContainers', 'logItems', 'scrapItems', 'spareParts',
       'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
       'partners', 'palletMovements', 'financialTransactions', 'auditLogs', 'chatMessages'
     ];
@@ -956,7 +956,7 @@ function smartMergeClientState(current, incoming) {
   }
 
   const listKeys = [
-    'users', 'pallets', 'rawMaterials', 'scrapItems', 'spareParts',
+    'users', 'pallets', 'rawMaterials', 'logContainers', 'logItems', 'scrapItems', 'spareParts',
     'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
     'partners', 'palletMovements', 'financialTransactions', 'auditLogs', 'chatMessages'
   ];
@@ -1023,7 +1023,7 @@ function getDefaultInitialState() {
       { id: 'u-7', code: 'USR-07', name: 'مدير التشغيل', roleKey: 'operations_manager', roleTitle: 'مدير التشغيل وخطوط تقشير القشرة', pin: '7777', avatarColor: '#0284c7', active: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: true, production: true, approvals: true, approveFinancial: false, approveExecutive: false, approveWarehouse: false, salesAccounting: false, clientsSuppliers: false, reports: true, settingsUsers: false } },
       { id: 'u-8', code: 'USR-08', name: 'مستخدم احتياطي', roleKey: 'reserve_user', roleTitle: 'حساب احتياطي / طوارئ وجرد', pin: '8888', avatarColor: '#64748b', active: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: true, production: true, approvals: true, approveFinancial: false, approveExecutive: false, approveWarehouse: false, salesAccounting: false, clientsSuppliers: false, reports: true, settingsUsers: false } }
     ],
-    pallets: [], rawMaterials: [], scrapItems: [], spareParts: [], productionOrders: [],
+    pallets: [], rawMaterials: [], logContainers: [], logItems: [], scrapItems: [], spareParts: [], productionOrders: [],
     approvalRequests: [], warehouseMovements: [], salesReturns: [], partners: [], palletMovements: [], financialTransactions: [],
     treasuryBalances: { cashVault: 0, bankAccount: 0, checksUnderCollection: 0 },
     auditLogs: [], chatMessages: [], deletedIds: []
@@ -3495,11 +3495,13 @@ function renderSalesReturnsSection() {
 
 function renderRawMaterialsWarehouse() {
   return `
+    ${typeof renderLogContainersAndSerialsSection === 'function' ? renderLogContainersAndSerialsSection() : ''}
+
     <div class="card">
       <div class="card-header">
         <div>
-          <div class="card-title">🌲 مخزن الخامات (كتل وجذوع الخشب قبل التقشير ومستلزمات الإنتاج)</div>
-          <small style="color:var(--text-muted);">متابعة أرصدة الأخشاب الخام بالمتر المكعب ومستلزمات التغليف والتجميع</small>
+          <div class="card-title">🌲 مخزن الخامات العام (الأرصدة الإجمالية ومستلزمات الإنتاج والتغليف)</div>
+          <small style="color:var(--text-muted);">متابعة الأرصدة الإجمالية للأخشاب الخام بالمتر المكعب ومستلزمات التغليف والتجميع والغراء</small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-sm btn-outline" onclick="printRawMaterialsReportPdf()">🖨️ طباعة تقرير الخامات PDF</button>
@@ -4642,6 +4644,7 @@ function renderReports() {
         <button class="btn btn-outline" onclick="printPalletsInventoryPdf()">🖨️ سجل البالتات بالمخزن PDF</button>
         <button class="btn btn-outline" onclick="printSalesReturnsReportPdf()">🖨️ سجل مرتجعات المبيعات PDF</button>
         <button class="btn btn-outline" onclick="printRawMaterialsReportPdf()">🖨️ جرد مخزن الخامات PDF</button>
+        <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="printLogContainersAndSerialsReportPdf()">🖨️ بيان حاويات وسيريالات الجذوع PDF</button>
         <button class="btn btn-outline" onclick="printScrapReportPdf()">🖨️ جرد مخزن الهالك PDF</button>
         <button class="btn btn-outline" onclick="printSparePartsReportPdf()">🖨️ جرد قطع الغيار PDF</button>
         <button class="btn btn-outline" onclick="printWarehouseMovementsReportPdf()">🖨️ سجل حركات المخازن PDF</button>
@@ -5011,7 +5014,7 @@ async function executeFactoryDataReset(mode = 'full') {
     // Collect all existing record IDs into deletedIds so even older unrefreshed devices purge them
     const oldDeletedSet = new Set(state?.deletedIds || []);
     const purgeKeys = [
-      'pallets', 'rawMaterials', 'scrapItems', 'spareParts',
+      'pallets', 'rawMaterials', 'logContainers', 'logItems', 'scrapItems', 'spareParts',
       'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
       'partners', 'palletMovements', 'financialTransactions', 'auditLogs', 'chatMessages'
     ];
@@ -5066,6 +5069,8 @@ async function executeFactoryDataReset(mode = 'full') {
       users: preservedUsers,
       pallets: [],
       rawMaterials: [],
+      logContainers: [],
+      logItems: [],
       scrapItems: [],
       spareParts: [],
       productionOrders: [],
@@ -12545,6 +12550,1478 @@ function processSmartAiCommand(rawText) {
   if (speechSummary) {
     speakArabicAiResponse(speechSummary);
   }
+}
+
+// ============================================================================
+// 12. RAW WOOD LOG CONTAINERS, SERIALS, PDF IMPORT & DENSITY/YIELD/SCRAP (v30)
+// ============================================================================
+let activeLogContainerFilter = 'all';
+let activeLogStatusFilter = 'all'; // 'all' | 'in_stock' | 'processed'
+let logSerialSearchQuery = '';
+let draftImportedLogs = [];
+
+// صلاحيـة إدخال وتشغيل سيريال الجذوع: مدير المشروعات + المدير التنفيذي + المدير الإداري
+function canManageLogSerialsAndProduction(user = currentUser) {
+  if (!user) return false;
+  return ['ceo', 'projects_manager', 'admin_manager'].includes(user.roleKey);
+}
+
+function computeCylinderLogVolumeM3(lengthVal, diameterCmVal) {
+  let lenM = Number(lengthVal || 0);
+  const diaCm = Number(diameterCmVal || 0);
+  if (lenM <= 0 || diaCm <= 0) return 0;
+  // If length was entered in cm (e.g. 260 cm instead of 2.6 m), convert to meters
+  if (lenM > 25) lenM = lenM / 100;
+  const radiusM = (diaCm / 100) / 2;
+  return +(Math.PI * radiusM * radiusM * lenM).toFixed(4);
+}
+
+function getContainerMetrics(container) {
+  if (!container) {
+    return {
+      totalLogsCount: 0, processedLogsCount: 0, remainingLogsCount: 0,
+      totalVolumeM3: 0, processedVolumeM3: 0, remainingVolumeM3: 0,
+      densityTonPerM3: 0.75, expectedYieldPct: 65,
+      totalWeightTon: 0, processedWeightTon: 0, remainingWeightTon: 0,
+      expectedFinishedM3: 0, expectedFinishedTon: 0,
+      expectedScrapM3: 0, expectedScrapTon: 0,
+      processedExpectedFinishedM3: 0, processedExpectedScrapM3: 0, processedExpectedScrapTon: 0,
+      actualFinishedM3: 0, actualYieldPctOnProcessed: 0,
+      actualScrapM3: 0, actualScrapTon: 0,
+      yieldDiffPct: 0, scrapDiffTon: 0, logs: []
+    };
+  }
+
+  const logs = (state.logItems || []).filter(l => l.containerId === container.id);
+  const processedLogs = logs.filter(l => l.status === 'processed');
+  const remainingLogs = logs.filter(l => l.status !== 'processed');
+
+  const totalVolumeM3 = +logs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0).toFixed(4);
+  const processedVolumeM3 = +processedLogs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0).toFixed(4);
+  const remainingVolumeM3 = +Math.max(0, totalVolumeM3 - processedVolumeM3).toFixed(4);
+
+  const densityTonPerM3 = Math.max(0.1, Number(container.densityTonPerM3 || 0.75));
+  const expectedYieldPct = Math.min(100, Math.max(1, Number(container.expectedYieldPct || 65)));
+  const expectedScrapPct = +(100 - expectedYieldPct).toFixed(2);
+
+  const totalWeightTon = +(totalVolumeM3 * densityTonPerM3).toFixed(3);
+  const processedWeightTon = +(processedVolumeM3 * densityTonPerM3).toFixed(3);
+  const remainingWeightTon = +(remainingVolumeM3 * densityTonPerM3).toFixed(3);
+
+  const expectedFinishedM3 = +(totalVolumeM3 * (expectedYieldPct / 100)).toFixed(4);
+  const expectedFinishedTon = +(expectedFinishedM3 * densityTonPerM3).toFixed(3);
+  const expectedScrapM3 = +Math.max(0, totalVolumeM3 - expectedFinishedM3).toFixed(4);
+  const expectedScrapTon = +(expectedScrapM3 * densityTonPerM3).toFixed(3);
+
+  const processedExpectedFinishedM3 = +(processedVolumeM3 * (expectedYieldPct / 100)).toFixed(4);
+  const processedExpectedScrapM3 = +Math.max(0, processedVolumeM3 - processedExpectedFinishedM3).toFixed(4);
+  const processedExpectedScrapTon = +(processedExpectedScrapM3 * densityTonPerM3).toFixed(3);
+
+  const hasCustomActual = container.actualFinishedM3 !== undefined && container.actualFinishedM3 !== null && container.actualFinishedM3 !== '';
+  const actualFinishedM3 = hasCustomActual ? Math.max(0, Number(container.actualFinishedM3 || 0)) : processedExpectedFinishedM3;
+  const baseVolForActual = processedVolumeM3 > 0 ? processedVolumeM3 : totalVolumeM3;
+  const actualYieldPctOnProcessed = baseVolForActual > 0 ? +((actualFinishedM3 / baseVolForActual) * 100).toFixed(2) : expectedYieldPct;
+  const actualScrapM3 = +Math.max(0, baseVolForActual - actualFinishedM3).toFixed(4);
+  const actualScrapTon = +(actualScrapM3 * densityTonPerM3).toFixed(3);
+
+  const yieldDiffPct = +(actualYieldPctOnProcessed - expectedYieldPct).toFixed(2);
+  const scrapDiffTon = +(actualScrapTon - (processedVolumeM3 > 0 ? processedExpectedScrapTon : expectedScrapTon)).toFixed(3);
+
+  return {
+    totalLogsCount: logs.length,
+    processedLogsCount: processedLogs.length,
+    remainingLogsCount: remainingLogs.length,
+    totalVolumeM3,
+    processedVolumeM3,
+    remainingVolumeM3,
+    densityTonPerM3,
+    expectedYieldPct,
+    expectedScrapPct,
+    totalWeightTon,
+    processedWeightTon,
+    remainingWeightTon,
+    expectedFinishedM3,
+    expectedFinishedTon,
+    expectedScrapM3,
+    expectedScrapTon,
+    processedExpectedFinishedM3,
+    processedExpectedScrapM3,
+    processedExpectedScrapTon,
+    actualFinishedM3,
+    actualYieldPctOnProcessed,
+    actualScrapM3,
+    actualScrapTon,
+    yieldDiffPct,
+    scrapDiffTon,
+    logs
+  };
+}
+
+function renderLogContainersAndSerialsSection() {
+  const containers = state.logContainers || [];
+  const allLogs = state.logItems || [];
+  const canOperateLogs = canManageLogSerialsAndProduction(currentUser);
+
+  const totalContainers = containers.length;
+  const totalLogs = allLogs.length;
+  const processedLogs = allLogs.filter(l => l.status === 'processed');
+  const remainingLogs = allLogs.filter(l => l.status !== 'processed');
+  const totalVolM3 = allLogs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0);
+  const processedVolM3 = processedLogs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0);
+  const remainingVolM3 = Math.max(0, totalVolM3 - processedVolM3);
+
+  let totalExpectedScrapTon = 0;
+  let totalExpectedFinishedM3 = 0;
+  for (const c of containers) {
+    const cm = getContainerMetrics(c);
+    totalExpectedScrapTon += cm.expectedScrapTon;
+    totalExpectedFinishedM3 += cm.expectedFinishedM3;
+  }
+
+  // Filter logs for the serials table
+  const q = normalizeArabicAiText(logSerialSearchQuery).toLowerCase();
+  const filteredLogs = allLogs.filter(l => {
+    if (activeLogContainerFilter !== 'all' && l.containerId !== activeLogContainerFilter) return false;
+    if (activeLogStatusFilter === 'in_stock' && l.status === 'processed') return false;
+    if (activeLogStatusFilter === 'processed' && l.status !== 'processed') return false;
+    if (q) {
+      const ser = String(l.serialNumber || '').toLowerCase();
+      const cnt = String(l.containerNumber || '').toLowerCase();
+      const sup = normalizeArabicAiText(l.supplierName || '').toLowerCase();
+      if (!ser.includes(q) && !cnt.includes(q) && !sup.includes(q)) return false;
+    }
+    return true;
+  });
+
+  return `
+    <div class="card" style="border:2px solid var(--primary);background:linear-gradient(135deg, rgba(15,118,110,0.05), rgba(217,119,6,0.05));margin-bottom:18px;">
+      <div class="card-header">
+        <div>
+          <div class="card-title" style="font-size:1.05rem;color:var(--primary);">
+            🚢 منظومة رسائل وحاويات جذوع الأشجار بالسيريال + استيراد PDF الفوري + حساب الكثافة ونسبة الاستخراج والهالك بالطن
+          </div>
+          <small style="color:var(--text-muted);">
+            استيراد بيان المورد (PDF أو نسخ ولصق جماعي) في ثوانٍ بدون إدخال جذع بجذع، مع متابعة ما تم تشغيله وما لم يتم تشغيله وحساب الهالك بالطن حسب الكثافة
+          </small>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-sm btn-outline" onclick="printLogContainersAndSerialsReportPdf()">
+            🖨️ طباعة بيان الحاويات والجذوع PDF
+          </button>
+          ${canOperateLogs ? `
+            <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;font-weight:800;" onclick="openQuickLogSerialDispatchModal()">
+              ⚙️ إدخال سيريال جذوع للتشغيل (المدير التنفيذي / المشروعات / الإداري)
+            </button>
+          ` : ''}
+          ${(canOperateLogs || hasPerm('warehouseIssueReceive')) ? `
+            <button type="button" class="btn btn-sm btn-primary" style="font-weight:900;" onclick="openImportLogContainerPdfModal()">
+              📄 استيراد حاوية / بيان جذوع (PDF أو لصق سريع)
+            </button>
+          ` : ''}
+        </div>
+      </div>
+
+      <!-- KPI Summary Bar for Raw Logs -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:10px;margin-bottom:16px;">
+        <div style="background:var(--bg-card);padding:12px;border-radius:10px;border-right:4px solid var(--primary);box-shadow:0 2px 5px rgba(0,0,0,0.04);">
+          <small style="color:var(--text-muted);">🚢 إجمالي الحاويات والجذوع المسجلة</small>
+          <div style="font-weight:900;font-size:1.05rem;">${totalContainers} حاوية (${fmtNum(totalLogs, 0)} جذع)</div>
+          <small style="color:var(--primary);font-weight:700;">إجمالي التكعيب: ${fmtNum(totalVolM3, 4)} م³</small>
+        </div>
+        <div style="background:var(--bg-card);padding:12px;border-radius:10px;border-right:4px solid var(--success);box-shadow:0 2px 5px rgba(0,0,0,0.04);">
+          <small style="color:var(--text-muted);">🌲 جذوع متبقية بالمخزن (لم يتم تشغيلها)</small>
+          <div style="font-weight:900;font-size:1.05rem;color:var(--success);">${fmtNum(remainingLogs.length, 0)} جذع متاح</div>
+          <small style="font-weight:700;">تكعيب متبقي: ${fmtNum(remainingVolM3, 4)} م³</small>
+        </div>
+        <div style="background:var(--bg-card);padding:12px;border-radius:10px;border-right:4px solid #0284c7;box-shadow:0 2px 5px rgba(0,0,0,0.04);">
+          <small style="color:var(--text-muted);">⚙️ جذوع تم تشغيلها (تقشير)</small>
+          <div style="font-weight:900;font-size:1.05rem;color:#0284c7;">${fmtNum(processedLogs.length, 0)} جذع مُشغّل</div>
+          <small style="font-weight:700;">تكعيب مُشغّل: ${fmtNum(processedVolM3, 4)} م³</small>
+        </div>
+        <div style="background:var(--bg-card);padding:12px;border-radius:10px;border-right:4px solid #d97706;box-shadow:0 2px 5px rgba(0,0,0,0.04);">
+          <small style="color:var(--text-muted);">⚖️ استخراج المنتج التام والهالك بالطن</small>
+          <div style="font-weight:900;font-size:0.95rem;color:#b45309;">
+            توقع قشرة تامة: ${fmtNum(totalExpectedFinishedM3, 3)} م³<br/>
+            <span style="color:var(--danger);">إجمالي الهالك المتوقع: ${fmtNum(totalExpectedScrapTon, 3)} طن</span>
+          </div>
+        </div>
+      </div>
+
+      ${canOperateLogs ? `
+        <!-- Instant Serial Bar for CEO, Projects Manager, Admin Manager -->
+        <div style="background:rgba(124,58,237,0.08);border:1.5px solid #7c3aed;border-radius:12px;padding:12px 14px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div style="font-weight:900;color:#5b21b6;font-size:0.92rem;">
+              ⚡ تشغيل فوري بالسيريال (خاص بـ: المدير التنفيذي / مدير المشروعات / المدير الإداري):
+            </div>
+            <small style="color:var(--text-muted);">
+              اكتب رقم سيريال الجذع (أو عدة سيريالات مفصولة بمسافة أو فاصلة) واضغط <strong>"تشغيل الجذع الآن"</strong> لتحويله إلى (تم التشغيل) وخصمه من الرصيد المتبقي فوراً:
+            </small>
+          </div>
+          <form onsubmit="submitInlineLogSerialProcess(event)" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;flex:1;min-width:280px;justify-content:flex-end;">
+            <input id="inline-log-serial-input" class="form-control" style="max-width:300px;font-weight:800;border:2px solid #7c3aed;" placeholder="اكتب رقم السيريال (مثال: 1001 أو 1001, 1002)..." />
+            <button type="submit" class="btn btn-primary" style="background:#7c3aed;border-color:#7c3aed;font-weight:900;">
+              ⚙️ تشغيل السيريال الآن
+            </button>
+          </form>
+        </div>
+      ` : ''}
+
+      <!-- 1. Containers & Shipments Table with Density, Yield %, and Scrap in Tons -->
+      <div style="margin-bottom:16px;">
+        <div style="font-weight:900;font-size:0.92rem;color:var(--primary);margin-bottom:8px;">
+          1️⃣ جدول الرسائل والحاويات ونسبة استخراج المنتج التام وحساب الهالك بالطن (باستخدام الكثافة):
+        </div>
+        ${containers.length === 0 ? `
+          <div style="padding:16px;text-align:center;background:var(--bg-card);border-radius:10px;border:1px dashed var(--border-color);color:var(--text-muted);">
+            لا توجد حاويات أو رسائل جذوع مسجلة حالياً. اضغط على <strong>"📄 استيراد حاوية / بيان جذوع (PDF أو لصق سريع)"</strong> لإدخال بيان المورد كاملاً في ثانية واحدة!
+          </div>
+        ` : `
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>رقم الرسالة / الحاوية</th>
+                  <th>المورد ونوع الخشب</th>
+                  <th>إجمالي الجذوع والتكعيب</th>
+                  <th>تم تشغيله ✅</th>
+                  <th>متبقي بالمخزن ⏳</th>
+                  <th>الكثافة (طن/م³) والوزن</th>
+                  <th>نسبة الاستخراج (منتج تام)</th>
+                  <th>الهالك (م³ وبالطن) والفرق</th>
+                  <th>إجراءات</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${containers.map(c => {
+                  const cm = getContainerMetrics(c);
+                  return `
+                    <tr style="${activeLogContainerFilter === c.id ? 'background:rgba(15,118,110,0.08);' : ''}">
+                      <td>
+                        <strong>${c.containerNumber || c.code}</strong><br/>
+                        <small style="color:var(--text-muted);">📅 ${c.arrivalDate || '-'}</small>
+                      </td>
+                      <td>
+                        <strong>${c.supplierName || 'مورد أخشاب'}</strong><br/>
+                        <span class="badge badge-info">${c.woodTypeName || 'خشب خام'}</span>
+                      </td>
+                      <td>
+                        <strong>${cm.totalLogsCount} جذع</strong><br/>
+                        <span style="color:var(--primary);font-weight:800;">${fmtNum(cm.totalVolumeM3, 4)} م³</span>
+                      </td>
+                      <td>
+                        <span class="badge" style="background:#0284c7;color:#fff;">${cm.processedLogsCount} جذع</span><br/>
+                        <small style="font-weight:700;">${fmtNum(cm.processedVolumeM3, 4)} م³</small>
+                      </td>
+                      <td>
+                        <span class="badge ${cm.remainingLogsCount > 0 ? 'badge-success' : 'badge-warning'}">${cm.remainingLogsCount} جذع متبقي</span><br/>
+                        <strong style="color:var(--success);">${fmtNum(cm.remainingVolumeM3, 4)} م³</strong>
+                      </td>
+                      <td>
+                        <strong>${fmtNum(cm.densityTonPerM3, 3)} طن/م³</strong><br/>
+                        <small style="color:var(--text-muted);">إجمالي الوزن: <strong>${fmtNum(cm.totalWeightTon, 3)} طن</strong></small>
+                      </td>
+                      <td>
+                        <span class="badge badge-success">المتوقع: ${fmtNum(cm.expectedYieldPct, 1)}%</span>
+                        <div style="font-size:0.74rem;margin-top:2px;">
+                          قشرة متوقعة: <strong>${fmtNum(cm.expectedFinishedM3, 3)} م³</strong> (${fmtNum(cm.expectedFinishedTon, 2)} طن)
+                          ${c.actualFinishedM3 !== undefined && c.actualFinishedM3 !== null && c.actualFinishedM3 !== '' ? `<br/><span style="color:#7c3aed;font-weight:800;">فعلي: ${fmtNum(cm.actualFinishedM3, 3)} م³ (${fmtNum(cm.actualYieldPctOnProcessed, 1)}%)</span>` : ''}
+                        </div>
+                      </td>
+                      <td>
+                        <span class="badge badge-danger">هالك: ${fmtNum(cm.expectedScrapPct, 1)}%</span>
+                        <div style="font-size:0.75rem;margin-top:2px;">
+                          متوقع: <strong>${fmtNum(cm.expectedScrapTon, 3)} طن</strong> (${fmtNum(cm.expectedScrapM3, 3)} م³)
+                          ${c.actualFinishedM3 !== undefined && c.actualFinishedM3 !== null && c.actualFinishedM3 !== '' ? `
+                            <br/><strong style="color:var(--danger);">هالك فعلي: ${fmtNum(cm.actualScrapTon, 3)} طن</strong>
+                            <small>(فرق: ${cm.scrapDiffTon > 0 ? '+' : ''}${fmtNum(cm.scrapDiffTon, 3)} طن)</small>
+                          ` : ''}
+                        </div>
+                      </td>
+                      <td>
+                        <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                          <button type="button" class="btn btn-sm ${activeLogContainerFilter === c.id ? 'btn-primary' : 'btn-outline'}" style="padding:3px 7px;" onclick="activeLogContainerFilter = (activeLogContainerFilter === '${c.id}' ? 'all' : '${c.id}'); render();" title="تصفية الجذوع لهذه الحاوية">
+                            🔍 جذوع الحاوية
+                          </button>
+                          <button type="button" class="btn btn-sm btn-accent" style="padding:3px 7px;" onclick="openContainerYieldDensityModal('${c.id}')" title="تعديل الكثافة ونسبة الاستخراج وحساب فرق المنتج التام والهالك بالطن">
+                            ⚖️ الكثافة والاستخراج
+                          </button>
+                          ${isFullAdmin(currentUser) ? `
+                            <button type="button" class="btn btn-sm btn-danger" style="padding:3px 7px;" onclick="deleteLogContainerRecord('${c.id}')" title="حذف الحاوية وجذوعها">🗑️</button>
+                          ` : ''}
+                        </div>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        `}
+      </div>
+
+      <!-- 2. Detailed Serials Table (What is Processed vs What is Not Processed + Edit + Toggle) -->
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;background:var(--bg-card);padding:8px 12px;border-radius:10px;border:1px solid var(--border-color);">
+          <div style="font-weight:900;font-size:0.9rem;color:var(--primary);">
+            2️⃣ بيان سيريالات الجذوع بالتفصيل (ما تم تشغيله وما لم يتم تشغيله — مع إمكانية التعديل):
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+            <select class="form-control" style="max-width:190px;padding:4px 8px;font-size:0.8rem;font-weight:700;" onchange="activeLogContainerFilter=this.value; render();">
+              <option value="all" ${activeLogContainerFilter === 'all' ? 'selected' : ''}>🚢 كل الحاويات (${allLogs.length} جذع)</option>
+              ${containers.map(c => `<option value="${c.id}" ${activeLogContainerFilter === c.id ? 'selected' : ''}>حاوية: ${c.containerNumber}</option>`).join('')}
+            </select>
+            <select class="form-control" style="max-width:195px;padding:4px 8px;font-size:0.8rem;font-weight:700;" onchange="activeLogStatusFilter=this.value; render();">
+              <option value="all" ${activeLogStatusFilter === 'all' ? 'selected' : ''}>📋 الكل (المُشغّل + المتبقي)</option>
+              <option value="in_stock" ${activeLogStatusFilter === 'in_stock' ? 'selected' : ''}>⏳ لم يتم تشغيله فقط (${remainingLogs.length})</option>
+              <option value="processed" ${activeLogStatusFilter === 'processed' ? 'selected' : ''}>✅ تم تشغيله فقط (${processedLogs.length})</option>
+            </select>
+            <input id="log-serial-search-input" class="form-control" style="max-width:190px;padding:4px 10px;font-size:0.8rem;" placeholder="🔍 بحث برقم السيريال..." value="${logSerialSearchQuery}" oninput="logSerialSearchQuery=this.value; render();" />
+          </div>
+        </div>
+
+        ${filteredLogs.length === 0 ? `
+          <div style="padding:14px;text-align:center;color:var(--text-muted);background:var(--bg-card);border-radius:10px;">
+            لا توجد جذوع مطابقة للفلتر الحالي.
+          </div>
+        ` : `
+          <div class="table-responsive" style="max-height:390px;overflow-y:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>رقم السيريال (Serial)</th>
+                  <th>رقم الحاوية</th>
+                  <th>المقاسات (الطول × القطر)</th>
+                  <th>تكعيب الجذع (م³)</th>
+                  <th>الوزن التقديري (طن)</th>
+                  <th>حالة التشغيل</th>
+                  <th>تاريخ وبواسطة من تم التشغيل</th>
+                  <th>إجراءات وتعديل</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${filteredLogs.map((l, idx) => {
+                  const isProc = l.status === 'processed';
+                  const parentCont = containers.find(c => c.id === l.containerId);
+                  const dens = Number(parentCont?.densityTonPerM3 || 0.75);
+                  const weightTon = +(Number(l.volumeM3 || 0) * dens).toFixed(3);
+                  return `
+                    <tr style="${isProc ? 'background:rgba(2,132,199,0.06);' : ''}">
+                      <td>${idx + 1}</td>
+                      <td><strong style="font-size:0.95rem;color:var(--primary);">${l.serialNumber}</strong></td>
+                      <td><strong>${l.containerNumber || '-'}</strong></td>
+                      <td>
+                        ${l.lengthM || l.diameterCm ? `الطول: <strong>${l.lengthM || '-'}</strong> | القطر: <strong>${l.diameterCm || '-'} سم</strong>` : (l.dimensionsText || '-')}
+                      </td>
+                      <td><strong style="font-size:0.95rem;">${fmtNum(l.volumeM3, 4)} م³</strong></td>
+                      <td>${fmtNum(weightTon, 3)} طن</td>
+                      <td>
+                        ${isProc ? `
+                          <span class="badge" style="background:#0284c7;color:#fff;font-weight:800;">✅ تم تشغيله</span>
+                        ` : `
+                          <span class="badge badge-success" style="font-weight:800;">⏳ لم يتم تشغيله (متاح بالمخزن)</span>
+                        `}
+                      </td>
+                      <td>
+                        ${isProc ? `<small>📅 ${fmtDate(l.processedAt)}<br/>بواسطة: <strong>${l.processedBy || '-'}</strong></small>` : '-'}
+                      </td>
+                      <td>
+                        <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                          ${canOperateLogs ? `
+                            ${!isProc ? `
+                              <button type="button" class="btn btn-sm btn-primary" style="padding:3px 8px;background:#7c3aed;border-color:#7c3aed;" onclick="toggleSingleLogProcessStatus('${l.id}', true)">
+                                ⚙️ تشغيل الجذع
+                              </button>
+                            ` : `
+                              <button type="button" class="btn btn-sm btn-outline" style="padding:3px 8px;" onclick="toggleSingleLogProcessStatus('${l.id}', false)" title="إلغاء التشغيل وإرجاع الجذع للرصيد المتاح">
+                                ↩️ إرجاع للمخزن
+                              </button>
+                            `}
+                          ` : ''}
+                          ${(canOperateLogs || hasPerm('warehouseIssueReceive')) ? `
+                            <button type="button" class="btn btn-sm btn-accent" style="padding:3px 7px;" onclick="openEditSingleLogModal('${l.id}')" title="تعديل السيريال أو المقاسات أو التكعيب">
+                              ✏️ تعديل
+                            </button>
+                          ` : ''}
+                          ${isFullAdmin(currentUser) ? `
+                            <button type="button" class="btn btn-sm btn-danger" style="padding:3px 7px;" onclick="deleteSingleLogItem('${l.id}')" title="حذف الجذع">
+                              🗑️
+                            </button>
+                          ` : ''}
+                        </div>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+// Lazy-load PDF.js from CDN to extract text directly from Supplier PDF files
+async function ensurePdfJsLoaded() {
+  if (window.pdfjsLib) return window.pdfjsLib;
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    script.onload = () => {
+      if (window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        resolve(window.pdfjsLib);
+      } else {
+        reject(new Error('تعذر تحميل مكتبة قراءة PDF'));
+      }
+    };
+    script.onerror = () => reject(new Error('تعذر الاتصال لتحميل قارئ PDF، يمكنك لصق النص أو الجدول مباشرة'));
+    document.head.appendChild(script);
+  });
+}
+
+// Smart parser that turns lines of PDF / Excel / Text into structured log rows { serialNumber, lengthM, diameterCm, volumeM3, notes }
+function parseSupplierLogsRawText(rawText) {
+  const norm = normalizeArabicAiText(rawText || '');
+  const lines = norm
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
+
+  const parsedRows = [];
+  let autoIndex = 1;
+
+  for (const line of lines) {
+    // Skip pure header lines without digits
+    if (!/\d/.test(line)) continue;
+    // Extract tokens (alphanumeric serials or numbers)
+    const tokens = line
+      .replace(/[|،,;؛\t]+/g, ' ')
+      .trim()
+      .split(/\s+/);
+
+    // Find numeric tokens and potential serial token
+    const numTokens = [];
+    let serialCandidate = '';
+
+    for (let i = 0; i < tokens.length; i++) {
+      const tk = tokens[i];
+      const cleanNum = Number(tk.replace(/[^0-9.]/g, ''));
+      if (/^[A-Za-z0-9\-_/]+$/.test(tk) && !serialCandidate && (i === 0 || (i === 1 && Number(tokens[0]) === autoIndex && tokens.length >= 3))) {
+        serialCandidate = tk;
+        continue;
+      }
+      if (!isNaN(cleanNum) && cleanNum > 0 && /[0-9]/.test(tk)) {
+        numTokens.push(cleanNum);
+      }
+    }
+
+    if (!serialCandidate && numTokens.length > 0) {
+      serialCandidate = String(numTokens.shift());
+    }
+    if (!serialCandidate) continue;
+
+    let lengthM = 0;
+    let diameterCm = 0;
+    let volumeM3 = 0;
+
+    if (numTokens.length === 1) {
+      // Only volume M3 provided (e.g. "SN-101 0.845")
+      volumeM3 = numTokens[0];
+    } else if (numTokens.length === 2) {
+      // Could be (Length, Volume) or (Length, Diameter)
+      const [a, b] = numTokens;
+      if (b < 8 && a >= 1.5 && b < a) {
+        // Likely Length + Volume M3 (e.g. Length 2.6m, Volume 0.720 m3)
+        lengthM = a;
+        volumeM3 = b;
+      } else {
+        // Length + Diameter -> compute volume
+        lengthM = a;
+        diameterCm = b;
+        volumeM3 = computeCylinderLogVolumeM3(lengthM, diameterCm);
+      }
+    } else if (numTokens.length >= 3) {
+      // Standard supplier manifest: Serial | Length | Diameter | Volume M3
+      lengthM = numTokens[0];
+      diameterCm = numTokens[1];
+      volumeM3 = numTokens[2];
+      // If the 3rd number looks like circumference/girth instead of volume (> 15), use 4th if present or compute
+      if (volumeM3 > 15 && numTokens[3] && numTokens[3] < 15) {
+        volumeM3 = numTokens[3];
+      } else if (volumeM3 > 15) {
+        volumeM3 = computeCylinderLogVolumeM3(lengthM, diameterCm);
+      }
+    }
+
+    if (volumeM3 <= 0 && lengthM > 0 && diameterCm > 0) {
+      volumeM3 = computeCylinderLogVolumeM3(lengthM, diameterCm);
+    }
+
+    if (volumeM3 > 0 || lengthM > 0 || diameterCm > 0) {
+      parsedRows.push({
+        id: uid('dlog'),
+        serialNumber: String(serialCandidate),
+        lengthM: lengthM || 2.6,
+        diameterCm: diameterCm || 50,
+        volumeM3: +(volumeM3 || computeCylinderLogVolumeM3(lengthM || 2.6, diameterCm || 50)).toFixed(4)
+      });
+      autoIndex++;
+    }
+  }
+
+  return parsedRows;
+}
+
+function openImportLogContainerPdfModal() {
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  const nextContainerNum = `CNT-2026-0${(state.logContainers?.length || 0) + 1}`;
+  if (draftImportedLogs.length === 0) {
+    draftImportedLogs = [
+      { id: uid('dlog'), serialNumber: 'LOG-1001', lengthM: 2.6, diameterCm: 55, volumeM3: 0.6177 },
+      { id: uid('dlog'), serialNumber: 'LOG-1002', lengthM: 2.6, diameterCm: 60, volumeM3: 0.7351 },
+      { id: uid('dlog'), serialNumber: 'LOG-1003', lengthM: 2.8, diameterCm: 52, volumeM3: 0.5946 }
+    ];
+  }
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:960px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title" style="color:var(--primary);">
+              📄 استيراد حاوية / رسالة جذوع أشجار بالسيريال (من ملف PDF أو لصق جماعي سريع مع إمكانية التعديل)
+            </div>
+            <small style="color:var(--text-muted);">
+              ارفع ملف الـ PDF المرسل من المورد (أو الصق جدول السيريالات والمقاسات والتكعيب دفعة واحدة) ليحوله النظام تلقائياً إلى جدول قابل للتعديل قبل الحفظ!
+            </small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <form onsubmit="submitImportLogContainerModal(event)">
+          <!-- Container Header Info + Density + Expected Yield % -->
+          <div class="form-grid" style="background:var(--bg-elevated);padding:12px 14px;border-radius:12px;margin-bottom:12px;border:1px solid var(--border-color);">
+            <div class="form-group">
+              <label style="font-weight:800;color:var(--primary);">🚢 رقم الحاوية / الرسالة</label>
+              <input id="imp-cnt-number" class="form-control" value="${nextContainerNum}" required style="font-weight:800;" />
+            </div>
+            <div class="form-group">
+              <label style="font-weight:800;">🤝 اسم المورد</label>
+              <input id="imp-cnt-supplier" class="form-control" value="مورد أخشاب مستوردة" placeholder="اسم المورد..." required />
+            </div>
+            <div class="form-group">
+              <label style="font-weight:800;">🌲 نوع الخشب</label>
+              <input id="imp-cnt-wood" class="form-control" value="${state.catalog?.woodTypes?.[0]?.name || 'جذوع خشب حور / كافور'}" required />
+            </div>
+            <div class="form-group">
+              <label style="font-weight:800;">📅 تاريخ وصول الحاوية</label>
+              <input id="imp-cnt-date" type="date" class="form-control" value="${todayStr()}" required />
+            </div>
+            <div class="form-group">
+              <label style="font-weight:800;color:#b45309;">⚖️ كثافة الخشب (طن لكل 1 م³) لحساب الهالك بالطن</label>
+              <input id="imp-cnt-density" type="number" step="0.01" min="0.1" max="2.5" class="form-control" value="0.75" oninput="recalcDraftImportLogsSummary()" required style="font-weight:800;border-color:#d97706;" />
+            </div>
+            <div class="form-group">
+              <label style="font-weight:800;color:var(--success);">📊 نسبة استخراج المنتج التام المتوقعة (%)</label>
+              <input id="imp-cnt-yield" type="number" step="0.5" min="5" max="98" class="form-control" value="65" oninput="recalcDraftImportLogsSummary()" required style="font-weight:800;border-color:var(--success);" />
+            </div>
+          </div>
+
+          <!-- PDF Upload + Fast Bulk Paste Box -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:12px;margin-bottom:12px;">
+            <div style="background:rgba(124,58,237,0.07);border:2px dashed #7c3aed;border-radius:12px;padding:12px;display:flex;flex-direction:column;justify-content:space-between;">
+              <div>
+                <div style="font-weight:900;color:#5b21b6;margin-bottom:4px;">1️⃣ رفع بيان المورد بصيغة PDF (تحويل مباشر):</div>
+                <small style="color:var(--text-muted);display:block;margin-bottom:8px;">
+                  اختر ملف الـ PDF الذي أرسله المورد؛ سيقرأ النظام جميع السيريالات والمقاسات والتكعيب منه تلقائياً ويعرضها في الجدول بالأسفل لتراجعها وتعدل أي رقم فيها:
+                </small>
+              </div>
+              <div>
+                <label for="supplier-pdf-file-input" class="btn btn-primary" style="width:100%;justify-content:center;background:linear-gradient(135deg,#7c3aed,#4f46e5);border:none;cursor:pointer;font-weight:900;">
+                  📂 اختر ملف بيان السيريالات (PDF / TXT / CSV)
+                </label>
+                <input id="supplier-pdf-file-input" type="file" accept=".pdf,.txt,.csv" style="display:none;" onchange="handleSupplierPdfUpload(event)" />
+                <div id="pdf-extract-status" style="font-size:0.78rem;margin-top:6px;font-weight:700;color:#5b21b6;"></div>
+              </div>
+            </div>
+
+            <div style="background:rgba(15,118,110,0.06);border:2px dashed var(--primary);border-radius:12px;padding:12px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                <span style="font-weight:900;color:var(--primary);">2️⃣ أو لصق سريع لبيان المورد (من إكسيل / واتساب / PDF):</span>
+                <button type="button" class="btn btn-sm btn-primary" style="padding:3px 9px;" onclick="parseFromBulkTextareaIntoDraft()">
+                  ⚡ تحويل النص للجدول فوراً
+                </button>
+              </div>
+              <textarea id="bulk-logs-paste-area" rows="3" class="form-control" style="font-size:0.78rem;font-family:monospace;" placeholder="الصق السطور هنا (في كل سطر: السيريال ثم الطول ثم القطر ثم التكعيب، أو السيريال والتكعيب مباشرة)&#10;مثال:&#10;1001  2.6  55  0.6177&#10;1002  2.6  60  0.7351"></textarea>
+            </div>
+          </div>
+
+          <!-- Editable Preview Table of Imported Logs -->
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
+            <div style="font-weight:900;color:var(--primary);font-size:0.9rem;">
+              3️⃣ جدول مراجعة وتعديل الجذوع المستوردة قبل الحفظ (يمكنك تعديل أي سيريال أو مقاس أو تكعيب):
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button type="button" class="btn btn-sm btn-outline" onclick="addEmptyDraftLogRow()">➕ إضافة سطر جذع</button>
+              <button type="button" class="btn btn-sm btn-outline" onclick="generateSequentialDraftSerials()">🔢 ترقيم سيريال متسلسل تلقائي</button>
+              <button type="button" class="btn btn-sm btn-danger" onclick="draftImportedLogs=[]; renderDraftImportLogsTable();">🧹 تفريغ الجدول</button>
+            </div>
+          </div>
+
+          <div id="draft-import-logs-table-box" class="table-responsive" style="max-height:240px;overflow-y:auto;border:1px solid var(--border-color);border-radius:10px;margin-bottom:10px;"></div>
+
+          <!-- Live Density, Yield %, and Scrap in Tons Preview -->
+          <div id="draft-import-logs-summary" class="calc-preview-box"></div>
+
+          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:14px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-primary" style="font-weight:900;padding:10px 22px;">
+              💾 حفظ الحاوية وجميع السيريالات وإضافتها لرصيد مخزن الخامات
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  renderDraftImportLogsTable();
+}
+
+async function handleSupplierPdfUpload(event) {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+  const statusEl = document.getElementById('pdf-extract-status');
+  if (statusEl) statusEl.textContent = '⏳ جاري قراءة الملف واستخراج السيريالات والمقاسات والتكعيب...';
+
+  try {
+    let extractedText = '';
+    if (file.name.toLowerCase().endsWith('.pdf')) {
+      const pdfjsLib = await ensurePdfJsLoaded();
+      const arrayBuf = await file.arrayBuffer();
+      const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuf }).promise;
+      const pageTexts = [];
+      for (let p = 1; p <= pdfDoc.numPages; p++) {
+        const page = await pdfDoc.getPage(p);
+        const textContent = await page.getTextContent();
+        // Group items by approximate Y coordinate to reconstruct table rows accurately
+        const rowMap = new Map();
+        for (const item of textContent.items) {
+          const yKey = Math.round((item.transform?.[5] || 0) / 4) * 4;
+          if (!rowMap.has(yKey)) rowMap.set(yKey, []);
+          rowMap.get(yKey).push({ x: item.transform?.[4] || 0, str: item.str });
+        }
+        const sortedYs = Array.from(rowMap.keys()).sort((a, b) => b - a);
+        for (const y of sortedYs) {
+          const rowItems = rowMap.get(y).sort((a, b) => a.x - b.x);
+          pageTexts.push(rowItems.map(r => r.str).join('   '));
+        }
+      }
+      extractedText = pageTexts.join('\n');
+    } else {
+      extractedText = await file.text();
+    }
+
+    const pasteArea = document.getElementById('bulk-logs-paste-area');
+    if (pasteArea) pasteArea.value = extractedText;
+
+    const rows = parseSupplierLogsRawText(extractedText);
+    if (rows.length > 0) {
+      draftImportedLogs = rows;
+      renderDraftImportLogsTable();
+      if (statusEl) {
+        statusEl.style.color = 'var(--success)';
+        statusEl.textContent = `✅ تم استخراج (${rows.length}) جذع بنجاح من الملف! يمكنك مراجعتها أو تعديل أي رقم في الجدول بالأسفل قبل الحفظ.`;
+      }
+    } else {
+      if (statusEl) {
+        statusEl.style.color = 'var(--danger)';
+        statusEl.textContent = '⚠️ تم قراءة الملف ولكن لم يتم العثور على جدول أرقام قياسي. يمكنك تعديل النص المستخرج في المربع بجانب هذا الزر ثم الضغط على (تحويل النص للجدول).';
+      }
+    }
+  } catch (err) {
+    if (statusEl) {
+      statusEl.style.color = 'var(--danger)';
+      statusEl.textContent = '⚠️ حدث تنبيه أثناء قراءة الـ PDF: ' + (err?.message || 'يمكنك نسخ النص من ملف الـ PDF ولصقه في المربع المقابل مباشرة.');
+    }
+  }
+}
+
+function parseFromBulkTextareaIntoDraft() {
+  const pasteArea = document.getElementById('bulk-logs-paste-area');
+  if (!pasteArea || !pasteArea.value.trim()) {
+    alert('يرجى لصق بيان السيريالات والتكعيب في المربع أولاً!');
+    return;
+  }
+  const rows = parseSupplierLogsRawText(pasteArea.value);
+  if (rows.length === 0) {
+    alert('لم يتم العثور على أرقام سيريال وتكعيب صالحة في النص الملصق!');
+    return;
+  }
+  draftImportedLogs = rows;
+  renderDraftImportLogsTable();
+}
+
+function addEmptyDraftLogRow() {
+  const nextIdx = draftImportedLogs.length + 1;
+  draftImportedLogs.push({
+    id: uid('dlog'),
+    serialNumber: `LOG-${1000 + nextIdx}`,
+    lengthM: 2.6,
+    diameterCm: 55,
+    volumeM3: computeCylinderLogVolumeM3(2.6, 55)
+  });
+  renderDraftImportLogsTable();
+}
+
+function generateSequentialDraftSerials() {
+  const prefix = prompt('اكتب بداية السيريال أو رقم أول سيريال (مثال: 1001 أو LOG-1):', '1001');
+  if (!prefix) return;
+  const numMatch = prefix.match(/^(.*?)(\d+)$/);
+  draftImportedLogs.forEach((r, idx) => {
+    if (numMatch) {
+      const baseStr = numMatch[1];
+      const startNum = Number(numMatch[2]);
+      r.serialNumber = `${baseStr}${startNum + idx}`;
+    } else {
+      r.serialNumber = `${prefix}-${idx + 1}`;
+    }
+  });
+  renderDraftImportLogsTable();
+}
+
+function updateDraftImportLogField(idx, field, val) {
+  const row = draftImportedLogs[idx];
+  if (!row) return;
+  if (field === 'serialNumber') {
+    row.serialNumber = String(val || '').trim();
+  } else if (field === 'lengthM') {
+    row.lengthM = Number(val || 0);
+    if (row.lengthM > 0 && row.diameterCm > 0) {
+      row.volumeM3 = computeCylinderLogVolumeM3(row.lengthM, row.diameterCm);
+      const vInput = document.getElementById(`dlog-vol-${idx}`);
+      if (vInput) vInput.value = row.volumeM3;
+    }
+  } else if (field === 'diameterCm') {
+    row.diameterCm = Number(val || 0);
+    if (row.lengthM > 0 && row.diameterCm > 0) {
+      row.volumeM3 = computeCylinderLogVolumeM3(row.lengthM, row.diameterCm);
+      const vInput = document.getElementById(`dlog-vol-${idx}`);
+      if (vInput) vInput.value = row.volumeM3;
+    }
+  } else if (field === 'volumeM3') {
+    row.volumeM3 = Math.max(0, Number(val || 0));
+  }
+  recalcDraftImportLogsSummary();
+}
+
+function removeDraftImportLogRow(idx) {
+  draftImportedLogs.splice(idx, 1);
+  renderDraftImportLogsTable();
+}
+
+function renderDraftImportLogsTable() {
+  const box = document.getElementById('draft-import-logs-table-box');
+  if (!box) return;
+  if (draftImportedLogs.length === 0) {
+    box.innerHTML = `<div style="padding:14px;text-align:center;color:var(--text-muted);">الجدول فارغ. ارفع ملف PDF أو الصق السيريالات أو اضغط "+ إضافة سطر جذع".</div>`;
+    recalcDraftImportLogsSummary();
+    return;
+  }
+
+  box.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th style="width:36px;">#</th>
+          <th>رقم السيريال (Serial)</th>
+          <th>طول الجذع (متر)</th>
+          <th>قطر الجذع (سم)</th>
+          <th>التكعيب بالمتر المكعب (م³)</th>
+          <th style="width:45px;">حذف</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${draftImportedLogs.map((r, idx) => `
+          <tr>
+            <td><strong>${idx + 1}</strong></td>
+            <td>
+              <input class="form-control" style="padding:4px 8px;font-weight:800;color:var(--primary);" value="${r.serialNumber}" oninput="updateDraftImportLogField(${idx}, 'serialNumber', this.value)" required />
+            </td>
+            <td>
+              <input type="number" step="0.01" min="0" class="form-control" style="padding:4px 8px;width:95px;" value="${r.lengthM}" oninput="updateDraftImportLogField(${idx}, 'lengthM', this.value)" />
+            </td>
+            <td>
+              <input type="number" step="0.5" min="0" class="form-control" style="padding:4px 8px;width:95px;" value="${r.diameterCm}" oninput="updateDraftImportLogField(${idx}, 'diameterCm', this.value)" />
+            </td>
+            <td>
+              <input id="dlog-vol-${idx}" type="number" step="0.0001" min="0.0001" class="form-control" style="padding:4px 8px;width:125px;font-weight:900;border-color:var(--primary);" value="${r.volumeM3}" oninput="updateDraftImportLogField(${idx}, 'volumeM3', this.value)" required />
+            </td>
+            <td>
+              <button type="button" class="btn btn-sm btn-danger" style="padding:2px 6px;" onclick="removeDraftImportLogRow(${idx})">✕</button>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+
+  recalcDraftImportLogsSummary();
+}
+
+function recalcDraftImportLogsSummary() {
+  const sumEl = document.getElementById('draft-import-logs-summary');
+  if (!sumEl) return;
+  const count = draftImportedLogs.length;
+  const totalM3 = +draftImportedLogs.reduce((s, r) => s + Number(r.volumeM3 || 0), 0).toFixed(4);
+  const density = Math.max(0.1, Number(document.getElementById('imp-cnt-density')?.value || 0.75));
+  const yieldPct = Math.min(100, Math.max(1, Number(document.getElementById('imp-cnt-yield')?.value || 65)));
+  const scrapPct = +(100 - yieldPct).toFixed(1);
+
+  const totalWeightTon = +(totalM3 * density).toFixed(3);
+  const expectedFinishedM3 = +(totalM3 * (yieldPct / 100)).toFixed(4);
+  const expectedFinishedTon = +(expectedFinishedM3 * density).toFixed(3);
+  const expectedScrapM3 = +Math.max(0, totalM3 - expectedFinishedM3).toFixed(4);
+  const expectedScrapTon = +(expectedScrapM3 * density).toFixed(3);
+
+  sumEl.innerHTML = `
+    <div class="calc-preview-item">
+      <span>عدد الجذوع بالحاوية</span>
+      <strong>${fmtNum(count, 0)} جذع بسيريال مستقل</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>إجمالي تكعيب الرسالة (م³)</span>
+      <strong style="color:var(--primary);font-size:1.05rem;">${fmtNum(totalM3, 4)} م³</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>إجمالي وزن الرسالة (عند كثافة ${density} طن/م³)</span>
+      <strong>${fmtNum(totalWeightTon, 3)} طن</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>المنتج التام المتوقع (${yieldPct}%)</span>
+      <strong style="color:var(--success);">${fmtNum(expectedFinishedM3, 3)} م³ (${fmtNum(expectedFinishedTon, 3)} طن)</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>الهالك المتوقع (${scrapPct}%) بالطن والمتر</span>
+      <strong style="color:var(--danger);">${fmtNum(expectedScrapTon, 3)} طن هالك (${fmtNum(expectedScrapM3, 3)} م³)</strong>
+    </div>
+  `;
+}
+
+function submitImportLogContainerModal(e) {
+  if (e) e.preventDefault();
+  if (draftImportedLogs.length === 0) {
+    alert('يرجى إضافة جذع واحد على الأقل في جدول الحاوية!');
+    return;
+  }
+
+  const containerNumber = (document.getElementById('imp-cnt-number')?.value || '').trim() || `CNT-${Date.now().toString().slice(-4)}`;
+  const supplierName = (document.getElementById('imp-cnt-supplier')?.value || 'مورد أخشاب').trim();
+  const woodTypeName = (document.getElementById('imp-cnt-wood')?.value || 'جذوع خشب').trim();
+  const arrivalDate = document.getElementById('imp-cnt-date')?.value || todayStr();
+  const densityTonPerM3 = Math.max(0.1, Number(document.getElementById('imp-cnt-density')?.value || 0.75));
+  const expectedYieldPct = Math.min(100, Math.max(1, Number(document.getElementById('imp-cnt-yield')?.value || 65)));
+  const now = getMonotonicIso();
+
+  const containerId = uid('lcnt');
+  const totalVol = +draftImportedLogs.reduce((s, r) => s + Number(r.volumeM3 || 0), 0).toFixed(4);
+
+  state.logContainers = state.logContainers || [];
+  state.logItems = state.logItems || [];
+
+  state.logContainers.unshift({
+    id: containerId,
+    containerNumber,
+    supplierName,
+    woodTypeName,
+    arrivalDate,
+    densityTonPerM3,
+    expectedYieldPct,
+    totalLogsCount: draftImportedLogs.length,
+    totalVolumeM3: totalVol,
+    createdBy: currentUser?.name || 'الإدارة',
+    createdAt: now,
+    updatedAt: now
+  });
+
+  for (const r of draftImportedLogs) {
+    state.logItems.push({
+      id: uid('logi'),
+      containerId,
+      containerNumber,
+      supplierName,
+      woodTypeName,
+      serialNumber: String(r.serialNumber || '').trim(),
+      lengthM: Number(r.lengthM || 0),
+      diameterCm: Number(r.diameterCm || 0),
+      volumeM3: +Number(r.volumeM3 || 0).toFixed(4),
+      status: 'in_stock',
+      arrivalDate,
+      createdAt: now,
+      updatedAt: now
+    });
+  }
+
+  // Also add or update the aggregate rawMaterials stock so the general raw warehouse stays synchronized
+  state.rawMaterials = state.rawMaterials || [];
+  let rawEntry = state.rawMaterials.find(rm => rm.unit === 'م³' && rm.name.includes(woodTypeName));
+  if (!rawEntry) {
+    rawEntry = {
+      id: uid('rm'),
+      code: `RAW-LOG-${(state.rawMaterials.length || 0) + 1}`,
+      name: `${woodTypeName} (جذوع بالحاويات والسيريال)`,
+      category: 'جذوع أشجار خام',
+      unit: 'م³',
+      quantity: totalVol,
+      minThreshold: 10,
+      costPerUnit: 0,
+      supplierName,
+      location: `حاوية ${containerNumber}`,
+      entryDate: arrivalDate,
+      updatedAt: now
+    };
+    state.rawMaterials.unshift(rawEntry);
+  } else {
+    rawEntry.quantity = +(Number(rawEntry.quantity || 0) + totalVol).toFixed(4);
+    rawEntry.updatedAt = now;
+  }
+
+  state.warehouseMovements = state.warehouseMovements || [];
+  state.warehouseMovements.unshift({
+    id: uid('mov'),
+    voucherNumber: `RCV-CNT-${Date.now().toString().slice(-4)}`,
+    date: arrivalDate,
+    warehouseType: 'raw_materials',
+    warehouseLabel: 'مخزن الخامات (الحاويات والجذوع)',
+    direction: 'in',
+    directionLabel: 'إذن استلام حاوية جذوع بالسيريال',
+    itemSummary: `حاوية (${containerNumber}) — ${woodTypeName} (${draftImportedLogs.length} جذع)`,
+    referenceCode: containerNumber,
+    quantitySummary: `${draftImportedLogs.length} جذع (${fmtNum(totalVol, 4)} م³)`,
+    performedBy: currentUser?.name || 'الإدارة',
+    approvedBy: currentUser?.name || 'الإدارة',
+    updatedAt: now
+  });
+
+  const savedCount = draftImportedLogs.length;
+  draftImportedLogs = [];
+  activeLogContainerFilter = containerId;
+  closeModal();
+  saveState(`🚢 استيراد وتسجيل حاوية جذوع (${containerNumber}) من المورد (${supplierName}) بعدد (${savedCount} جذع) وإجمالي تكعيب (${fmtNum(totalVol, 4)} م³)`);
+}
+
+// Inline and Modal Serial Execution for CEO, Projects Manager, Admin Manager
+function submitInlineLogSerialProcess(e) {
+  if (e) e.preventDefault();
+  if (!canManageLogSerialsAndProduction(currentUser)) {
+    alert('⛔ هذه الصلاحية مخصصة فقط للمدير التنفيذي ومدير المشروعات والمدير الإداري!');
+    return;
+  }
+  const input = document.getElementById('inline-log-serial-input');
+  if (!input || !input.value.trim()) return;
+  processLogSerialsBatchByString(input.value.trim());
+  input.value = '';
+}
+
+function processLogSerialsBatchByString(serialsStr) {
+  const tokens = normalizeArabicAiText(serialsStr)
+    .split(/[\s,،;؛\n]+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  if (tokens.length === 0) return;
+
+  const now = getMonotonicIso();
+  const matchedLogs = [];
+  const alreadyProcessed = [];
+  const notFound = [];
+
+  for (const tk of tokens) {
+    const logItem = (state.logItems || []).find(
+      l => String(l.serialNumber).toLowerCase() === tk.toLowerCase() &&
+      (activeLogContainerFilter === 'all' || l.containerId === activeLogContainerFilter)
+    ) || (state.logItems || []).find(l => String(l.serialNumber).toLowerCase() === tk.toLowerCase());
+
+    if (!logItem) {
+      notFound.push(tk);
+    } else if (logItem.status === 'processed') {
+      alreadyProcessed.push(logItem.serialNumber);
+    } else {
+      logItem.status = 'processed';
+      logItem.processedAt = now;
+      logItem.processedBy = currentUser?.name || 'الإدارة';
+      logItem.updatedAt = now;
+      matchedLogs.push(logItem);
+    }
+  }
+
+  if (matchedLogs.length > 0) {
+    const totalProcessedVol = +matchedLogs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0).toFixed(4);
+    // Deduct from aggregate rawMaterials if matching entry exists
+    for (const l of matchedLogs) {
+      const rm = (state.rawMaterials || []).find(r => r.unit === 'م³' && r.name.includes(l.woodTypeName || ''));
+      if (rm) {
+        rm.quantity = Math.max(0, +(Number(rm.quantity || 0) - Number(l.volumeM3 || 0)).toFixed(4));
+        rm.updatedAt = now;
+      }
+    }
+
+    state.warehouseMovements = state.warehouseMovements || [];
+    state.warehouseMovements.unshift({
+      id: uid('mov'),
+      voucherNumber: `ISS-LOG-${Date.now().toString().slice(-4)}`,
+      date: todayStr(),
+      warehouseType: 'raw_materials',
+      warehouseLabel: 'مخزن الخامات (تشغيل جذوع بالسيريال)',
+      direction: 'out',
+      directionLabel: 'إذن صرف وتشغيل جذوع بالسيريال',
+      itemSummary: `تشغيل (${matchedLogs.length}) جذع بالسيريال: [${matchedLogs.map(x => x.serialNumber).join(', ')}]`,
+      referenceCode: matchedLogs[0].containerNumber || 'LOG-SER',
+      quantitySummary: `${matchedLogs.length} جذع (${fmtNum(totalProcessedVol, 4)} م³)`,
+      performedBy: currentUser?.name || 'الإدارة',
+      approvedBy: currentUser?.name || 'الإدارة',
+      updatedAt: now
+    });
+
+    saveState(`⚙️ تشغيل (${matchedLogs.length}) جذع بالسيريال [${matchedLogs.map(x => x.serialNumber).join('، ')}] بإجمالي تكعيب (${fmtNum(totalProcessedVol, 4)} م³) بواسطة ${currentUser?.name}`);
+  }
+
+  let msg = '';
+  if (matchedLogs.length > 0) {
+    msg += `✅ تم تشغيل (${matchedLogs.length}) جذع بنجاح: [${matchedLogs.map(x => x.serialNumber).join('، ')}]\n`;
+  }
+  if (alreadyProcessed.length > 0) {
+    msg += `⚠️ جذوع تم تشغيلها مسبقاً: [${alreadyProcessed.join('، ')}]\n`;
+  }
+  if (notFound.length > 0) {
+    msg += `❌ أرقام سيريال غير موجودة: [${notFound.join('، ')}]`;
+  }
+  if (alreadyProcessed.length > 0 || notFound.length > 0) {
+    alert(msg.trim());
+  }
+}
+
+function toggleSingleLogProcessStatus(logId, markProcessed = true) {
+  if (!canManageLogSerialsAndProduction(currentUser)) {
+    alert('⛔ هذه الصلاحية مخصصة للمدير التنفيذي ومدير المشروعات والمدير الإداري فقط!');
+    return;
+  }
+  const logItem = (state.logItems || []).find(l => l.id === logId);
+  if (!logItem) return;
+  const now = getMonotonicIso();
+
+  if (markProcessed && logItem.status !== 'processed') {
+    logItem.status = 'processed';
+    logItem.processedAt = now;
+    logItem.processedBy = currentUser?.name || 'الإدارة';
+    logItem.updatedAt = now;
+
+    const rm = (state.rawMaterials || []).find(r => r.unit === 'م³' && r.name.includes(logItem.woodTypeName || ''));
+    if (rm) {
+      rm.quantity = Math.max(0, +(Number(rm.quantity || 0) - Number(logItem.volumeM3 || 0)).toFixed(4));
+      rm.updatedAt = now;
+    }
+
+    saveState(`⚙️ تشغيل الجذع سيريال (${logItem.serialNumber}) من الحاوية (${logItem.containerNumber}) بتكعيب (${fmtNum(logItem.volumeM3, 4)} م³) بواسطة ${currentUser?.name}`);
+  } else if (!markProcessed && logItem.status === 'processed') {
+    logItem.status = 'in_stock';
+    delete logItem.processedAt;
+    delete logItem.processedBy;
+    logItem.updatedAt = now;
+
+    const rm = (state.rawMaterials || []).find(r => r.unit === 'م³' && r.name.includes(logItem.woodTypeName || ''));
+    if (rm) {
+      rm.quantity = +(Number(rm.quantity || 0) + Number(logItem.volumeM3 || 0)).toFixed(4);
+      rm.updatedAt = now;
+    }
+
+    saveState(`↩️ إرجاع الجذع سيريال (${logItem.serialNumber}) إلى الرصيد المتاح بالمخزن (${fmtNum(logItem.volumeM3, 4)} م³) بواسطة ${currentUser?.name}`);
+  }
+}
+
+function openQuickLogSerialDispatchModal() {
+  if (!canManageLogSerialsAndProduction(currentUser)) return;
+  const modalRoot = document.getElementById('modal-root');
+  const availableLogs = (state.logItems || []).filter(l => l.status !== 'processed');
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:680px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title" style="color:#5b21b6;">⚙️ إدخال سيريال الجذوع للتشغيل (المدير التنفيذي / المشروعات / الإداري)</div>
+            <small style="color:var(--text-muted);">يمكنك كتابة أرقام السيريال مباشرة أو تحديد الجذوع من القائمة لتشغيلها فوراً</small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <form onsubmit="event.preventDefault(); const v=document.getElementById('modal-batch-serials').value; closeModal(); processLogSerialsBatchByString(v);">
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="font-weight:800;">اكتب رقم السيريال أو عدة أرقام سيريال (مفصولة بمسافة أو فاصلة أو سطر جديد):</label>
+            <textarea id="modal-batch-serials" rows="3" class="form-control" style="font-weight:800;border:2px solid #7c3aed;" placeholder="مثال: LOG-1001, LOG-1002" autofocus></textarea>
+          </div>
+
+          <div style="margin-bottom:12px;">
+            <div style="font-weight:800;font-size:0.84rem;margin-bottom:6px;color:var(--primary);">
+              أو اضغط على أي جذع متاح بالمخزن لإضافته للتشغيل (${availableLogs.length} جذع متاح):
+            </div>
+            <div style="max-height:210px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:6px;background:var(--bg-elevated);padding:10px;border-radius:10px;">
+              ${availableLogs.length === 0 ? `<span style="color:var(--text-muted);font-size:0.84rem;">لا توجد جذوع متاحة غير مشغلة حالياً.</span>` : availableLogs.map(l => `
+                <button type="button" class="btn btn-sm btn-outline" style="font-size:0.76rem;padding:4px 9px;" onclick="const ta=document.getElementById('modal-batch-serials'); ta.value = (ta.value ? ta.value + ', ' : '') + '${l.serialNumber}';">
+                  ➕ ${l.serialNumber} (${fmtNum(l.volumeM3, 3)} م³ — ${l.containerNumber})
+                </button>
+              `).join('')}
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;gap:10px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-primary" style="background:#7c3aed;border-color:#7c3aed;font-weight:900;">
+              ⚙️ تأكيد تشغيل الجذوع المحددة الآن
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+// Modal to Edit a Single Log (Serial, Dimensions, Volume, Status)
+function openEditSingleLogModal(logId) {
+  const l = (state.logItems || []).find(x => x.id === logId);
+  if (!l) return;
+  const modalRoot = document.getElementById('modal-root');
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:520px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">✏️ تعديل بيانات الجذع سيريال (${l.serialNumber})</div>
+            <small style="color:var(--text-muted);">الحاوية: ${l.containerNumber || '-'} | المورد: ${l.supplierName || '-'}</small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <form onsubmit="submitEditSingleLogModal(event, '${l.id}')">
+          <div class="form-grid">
+            <div class="form-group">
+              <label style="font-weight:800;">رقم السيريال (Serial Number)</label>
+              <input id="elog-serial" class="form-control" value="${l.serialNumber}" required style="font-weight:800;" />
+            </div>
+            <div class="form-group">
+              <label style="font-weight:800;">حالة التشغيل</label>
+              <select id="elog-status" class="form-control" style="font-weight:800;">
+                <option value="in_stock" ${l.status !== 'processed' ? 'selected' : ''}>⏳ لم يتم تشغيله (متاح بالمخزن)</option>
+                <option value="processed" ${l.status === 'processed' ? 'selected' : ''}>✅ تم تشغيله</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>طول الجذع (متر)</label>
+              <input id="elog-len" type="number" step="0.01" min="0" class="form-control" value="${l.lengthM || 0}" oninput="const v=computeCylinderLogVolumeM3(this.value, document.getElementById('elog-dia').value); if(v>0) document.getElementById('elog-vol').value=v;" />
+            </div>
+            <div class="form-group">
+              <label>قطر الجذع (سم)</label>
+              <input id="elog-dia" type="number" step="0.5" min="0" class="form-control" value="${l.diameterCm || 0}" oninput="const v=computeCylinderLogVolumeM3(document.getElementById('elog-len').value, this.value); if(v>0) document.getElementById('elog-vol').value=v;" />
+            </div>
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="font-weight:800;color:var(--primary);">التكعيب بالمتر المكعب (م³)</label>
+              <input id="elog-vol" type="number" step="0.0001" min="0.0001" class="form-control" value="${l.volumeM3}" required style="font-weight:900;border-color:var(--primary);" />
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-primary">💾 حفظ التعديلات</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function submitEditSingleLogModal(e, logId) {
+  if (e) e.preventDefault();
+  const l = (state.logItems || []).find(x => x.id === logId);
+  if (!l) return;
+  const now = getMonotonicIso();
+
+  l.serialNumber = (document.getElementById('elog-serial')?.value || l.serialNumber).trim();
+  const newStatus = document.getElementById('elog-status')?.value || l.status;
+  if (newStatus === 'processed' && l.status !== 'processed') {
+    l.processedAt = now;
+    l.processedBy = currentUser?.name || 'الإدارة';
+  } else if (newStatus !== 'processed') {
+    delete l.processedAt;
+    delete l.processedBy;
+  }
+  l.status = newStatus;
+  l.lengthM = Number(document.getElementById('elog-len')?.value || 0);
+  l.diameterCm = Number(document.getElementById('elog-dia')?.value || 0);
+  l.volumeM3 = +Number(document.getElementById('elog-vol')?.value || l.volumeM3).toFixed(4);
+  l.updatedAt = now;
+
+  closeModal();
+  saveState(`✏️ تعديل بيانات الجذع سيريال (${l.serialNumber}) في الحاوية (${l.containerNumber}) بواسطة ${currentUser?.name}`);
+}
+
+function deleteSingleLogItem(logId) {
+  if (!isFullAdmin(currentUser)) return;
+  const l = (state.logItems || []).find(x => x.id === logId);
+  if (!l) return;
+  if (!confirm(`⚠️ هل أنت متأكد من حذف الجذع سيريال (${l.serialNumber})؟`)) return;
+  markRecordIdDeleted(l.id);
+  state.logItems = (state.logItems || []).filter(x => x.id !== logId);
+  saveState(`🗑️ حذف الجذع سيريال (${l.serialNumber}) من الحاوية (${l.containerNumber})`);
+}
+
+function deleteLogContainerRecord(containerId) {
+  if (!isFullAdmin(currentUser)) return;
+  const c = (state.logContainers || []).find(x => x.id === containerId);
+  if (!c) return;
+  if (!confirm(`⚠️ هل أنت متأكد من حذف الحاوية (${c.containerNumber}) وجميع الجذوع التابعة لها؟`)) return;
+  markRecordIdDeleted(c.id);
+  const childLogs = (state.logItems || []).filter(l => l.containerId === containerId);
+  for (const cl of childLogs) markRecordIdDeleted(cl.id);
+  state.logContainers = (state.logContainers || []).filter(x => x.id !== containerId);
+  state.logItems = (state.logItems || []).filter(l => l.containerId !== containerId);
+  if (activeLogContainerFilter === containerId) activeLogContainerFilter = 'all';
+  saveState(`🗑️ حذف الحاوية (${c.containerNumber}) وجميع سيريالاتها بواسطة ${currentUser?.name}`);
+}
+
+// Modal for Container Density, Expected Yield %, Actual Finished Veneer, and Scrap in Tons Comparison
+function openContainerYieldDensityModal(containerId) {
+  const c = (state.logContainers || []).find(x => x.id === containerId);
+  if (!c) return;
+  const cm = getContainerMetrics(c);
+  const modalRoot = document.getElementById('modal-root');
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:740px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title" style="color:var(--primary);">
+              ⚖️ حساب الكثافة ونسبة استخراج المنتج التام والهالك بالطن — حاوية (${c.containerNumber})
+            </div>
+            <small style="color:var(--text-muted);">
+              المورد: <strong>${c.supplierName}</strong> | إجمالي الجذوع: <strong>${cm.totalLogsCount} جذع (${fmtNum(cm.totalVolumeM3, 4)} م³)</strong> | المُشغّل: <strong>${cm.processedLogsCount} جذع (${fmtNum(cm.processedVolumeM3, 4)} م³)</strong>
+            </small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <form onsubmit="submitContainerYieldDensityModal(event, '${c.id}')">
+          <div class="form-grid" style="margin-bottom:14px;">
+            <div class="form-group">
+              <label style="font-weight:800;color:#b45309;">⚖️ كثافة الخشب (طن لكل 1 متر مكعب)</label>
+              <input id="cy-density" type="number" step="0.01" min="0.1" max="2.5" class="form-control" value="${cm.densityTonPerM3}" oninput="recalcContainerYieldModalLive('${c.id}')" required style="font-weight:900;border-color:#d97706;" />
+              <small style="color:var(--text-muted);">تُستخدم لتحويل حجم الهالك والمنتج التام من م³ إلى طن</small>
+            </div>
+            <div class="form-group">
+              <label style="font-weight:800;color:var(--success);">📊 نسبة استخراج المنتج التام المتوقعة للرسالة (%)</label>
+              <input id="cy-yield-pct" type="number" step="0.5" min="1" max="99" class="form-control" value="${cm.expectedYieldPct}" oninput="recalcContainerYieldModalLive('${c.id}')" required style="font-weight:900;border-color:var(--success);" />
+              <small style="color:var(--text-muted);">الباقي (${fmtNum(100 - cm.expectedYieldPct, 1)}%) يُحسب هوالك بالطن</small>
+            </div>
+            <div class="form-group" style="grid-column: 1 / -1;background:rgba(124,58,237,0.06);padding:10px 12px;border-radius:10px;border:1px solid rgba(124,58,237,0.3);">
+              <label style="font-weight:800;color:#5b21b6;">🪵 حجم القشرة التامة الفعلي المستخرج من التشغيل بالمتر المكعب (اختياري لمقارنة المتوقع بالفعلي):</label>
+              <input id="cy-actual-fin-m3" type="number" step="0.001" min="0" class="form-control" value="${c.actualFinishedM3 !== undefined && c.actualFinishedM3 !== null ? c.actualFinishedM3 : ''}" placeholder="اتركه فارغاً للحساب التلقائي حسب النسبة، أو أدخل الـ م³ الفعلي للمنتج التام..." oninput="recalcContainerYieldModalLive('${c.id}')" style="font-weight:800;" />
+            </div>
+          </div>
+
+          <div id="cy-live-comparison-box" class="calc-preview-box" style="margin-bottom:14px;"></div>
+
+          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+            <button type="button" class="btn btn-accent" onclick="transferContainerScrapToWarehouse('${c.id}')">
+              ♻️ ترحيل كمية الهالك بالطن إلى مخزن الهالك الآن
+            </button>
+            <div style="display:flex;gap:8px;">
+              <button type="button" class="btn btn-outline" onclick="closeModal()">إغلاق</button>
+              <button type="submit" class="btn btn-primary" style="font-weight:900;">💾 حفظ الكثافة وحسابات الاستخراج والهالك</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  recalcContainerYieldModalLive(c.id);
+}
+
+function recalcContainerYieldModalLive(containerId) {
+  const c = (state.logContainers || []).find(x => x.id === containerId);
+  const box = document.getElementById('cy-live-comparison-box');
+  if (!c || !box) return;
+
+  const tempContainer = {
+    ...c,
+    densityTonPerM3: Number(document.getElementById('cy-density')?.value || c.densityTonPerM3 || 0.75),
+    expectedYieldPct: Number(document.getElementById('cy-yield-pct')?.value || c.expectedYieldPct || 65),
+    actualFinishedM3: document.getElementById('cy-actual-fin-m3')?.value
+  };
+  const cm = getContainerMetrics(tempContainer);
+
+  box.innerHTML = `
+    <div class="calc-preview-item">
+      <span>إجمالي تكعيب ووزن الرسالة</span>
+      <strong>${fmtNum(cm.totalVolumeM3, 4)} م³ = ${fmtNum(cm.totalWeightTon, 3)} طن</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>المُشغّل حتى الآن / المتبقي</span>
+      <strong>مُشغّل: ${fmtNum(cm.processedVolumeM3, 3)} م³ | متبقي: ${fmtNum(cm.remainingVolumeM3, 3)} م³</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>المنتج التام المتوقع (${cm.expectedYieldPct}%)</span>
+      <strong style="color:var(--success);">${fmtNum(cm.expectedFinishedM3, 3)} م³ (${fmtNum(cm.expectedFinishedTon, 3)} طن)</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>الهالك المتوقع (${cm.expectedScrapPct}%) بالطن</span>
+      <strong style="color:var(--danger);">${fmtNum(cm.expectedScrapTon, 3)} طن (${fmtNum(cm.expectedScrapM3, 3)} م³)</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>المنتج التام الفعلي ونسبة الاستخراج الفعلية</span>
+      <strong style="color:#7c3aed;">${fmtNum(cm.actualFinishedM3, 3)} م³ (${fmtNum(cm.actualYieldPctOnProcessed, 1)}%)</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>الهالك الفعلي بالطن والفرق عن المتوقع</span>
+      <strong style="color:var(--danger);">${fmtNum(cm.actualScrapTon, 3)} طن (${cm.scrapDiffTon > 0 ? '+' : ''}${fmtNum(cm.scrapDiffTon, 3)} طن)</strong>
+    </div>
+  `;
+}
+
+function submitContainerYieldDensityModal(e, containerId) {
+  if (e) e.preventDefault();
+  const c = (state.logContainers || []).find(x => x.id === containerId);
+  if (!c) return;
+  c.densityTonPerM3 = Math.max(0.1, Number(document.getElementById('cy-density')?.value || 0.75));
+  c.expectedYieldPct = Math.min(100, Math.max(1, Number(document.getElementById('cy-yield-pct')?.value || 65)));
+  const actVal = document.getElementById('cy-actual-fin-m3')?.value;
+  c.actualFinishedM3 = (actVal !== undefined && actVal !== '') ? Number(actVal) : null;
+  c.updatedAt = getMonotonicIso();
+
+  closeModal();
+  saveState(`⚖️ تحديث الكثافة (${c.densityTonPerM3} طن/م³) ونسبة الاستخراج (${c.expectedYieldPct}%) للحاوية (${c.containerNumber})`);
+}
+
+function transferContainerScrapToWarehouse(containerId) {
+  const c = (state.logContainers || []).find(x => x.id === containerId);
+  if (!c) return;
+  const tempContainer = {
+    ...c,
+    densityTonPerM3: Number(document.getElementById('cy-density')?.value || c.densityTonPerM3 || 0.75),
+    expectedYieldPct: Number(document.getElementById('cy-yield-pct')?.value || c.expectedYieldPct || 65),
+    actualFinishedM3: document.getElementById('cy-actual-fin-m3')?.value
+  };
+  const cm = getContainerMetrics(tempContainer);
+  const scrapTonToRecord = cm.actualScrapTon > 0 ? cm.actualScrapTon : cm.expectedScrapTon;
+
+  if (scrapTonToRecord <= 0) {
+    alert('لا توجد كمية هالك محسوبة لترحيلها!');
+    return;
+  }
+
+  const now = getMonotonicIso();
+  state.scrapItems = state.scrapItems || [];
+  state.scrapItems.unshift({
+    id: uid('sc'),
+    code: `SCR-${c.containerNumber}`,
+    name: `هوالك تقشير جذوع حاوية (${c.containerNumber}) — كثافة ${cm.densityTonPerM3} طن/م³`,
+    woodTypeName: c.woodTypeName || 'خشب خام',
+    category: 'هوالك تقشير جذوع (بالطن)',
+    unit: 'طن',
+    quantity: scrapTonToRecord,
+    estimatedPricePerUnit: 0,
+    notes: `نسبة استخراج المنتج التام: ${cm.actualYieldPctOnProcessed}% | حجم الهالك: ${fmtNum(cm.actualScrapM3, 3)} م³ × كثافة ${cm.densityTonPerM3} = ${fmtNum(scrapTonToRecord, 3)} طن`,
+    updatedAt: now
+  });
+
+  closeModal();
+  saveState(`♻️ ترحيل هالك الحاوية (${c.containerNumber}) بكمية (${fmtNum(scrapTonToRecord, 3)} طن) إلى مخزن الهالك والقصاقيص`);
+  alert(`✅ تم تسجيل (${fmtNum(scrapTonToRecord, 3)} طن) في مخزن الهالك والقصاقيص بنجاح!`);
+}
+
+function printLogContainersAndSerialsReportPdf() {
+  const containers = state.logContainers || [];
+  const allLogs = state.logItems || [];
+  const rowsHtml = allLogs
+    .filter(l => activeLogContainerFilter === 'all' || l.containerId === activeLogContainerFilter)
+    .map((l, idx) => {
+      const parentCont = containers.find(c => c.id === l.containerId);
+      const dens = Number(parentCont?.densityTonPerM3 || 0.75);
+      const weightTon = +(Number(l.volumeM3 || 0) * dens).toFixed(3);
+      return `
+        <tr>
+          <td>${idx + 1}</td>
+          <td><strong>${l.serialNumber}</strong></td>
+          <td>${l.containerNumber || '-'}</td>
+          <td>${l.supplierName || '-'}</td>
+          <td>الطول: ${l.lengthM || '-'} م | القطر: ${l.diameterCm || '-'} سم</td>
+          <td><strong>${fmtNum(l.volumeM3, 4)} م³</strong></td>
+          <td>${fmtNum(weightTon, 3)} طن</td>
+          <td>${l.status === 'processed' ? `✅ تم تشغيله (${fmtDate(l.processedAt)} - ${l.processedBy || ''})` : '⏳ لم يتم تشغيله (متبقي بالمخزن)'}</td>
+        </tr>
+      `;
+    }).join('');
+
+  const containersSummaryHtml = containers.map(c => {
+    const cm = getContainerMetrics(c);
+    return `
+      <tr>
+        <td><strong>${c.containerNumber}</strong></td>
+        <td>${c.supplierName || '-'} (${c.woodTypeName || ''})</td>
+        <td>${cm.totalLogsCount} جذع (${fmtNum(cm.totalVolumeM3, 4)} م³)</td>
+        <td>${cm.processedLogsCount} جذع (${fmtNum(cm.processedVolumeM3, 4)} م³)</td>
+        <td><strong>${cm.remainingLogsCount} جذع (${fmtNum(cm.remainingVolumeM3, 4)} م³)</strong></td>
+        <td>${cm.densityTonPerM3} طن/م³ (${fmtNum(cm.totalWeightTon, 3)} طن)</td>
+        <td>${cm.expectedYieldPct}% (${fmtNum(cm.expectedFinishedM3, 3)} م³)</td>
+        <td><strong>${fmtNum(cm.expectedScrapTon, 3)} طن (${fmtNum(cm.expectedScrapM3, 3)} م³)</strong></td>
+      </tr>
+    `;
+  }).join('');
+
+  triggerOfficialReportPdf(
+    '🚢 تقرير حاويات وسيريالات جذوع الأشجار ونسب الاستخراج والهالك بالطن',
+    'بيان شامل لما تم تشغيله وما لم يتم تشغيله من سيريالات الجذوع وحسابات الكثافة والهالك بالطن',
+    `
+      <h3 style="margin:10px 0 6px 0;">1️⃣ ملخص الحاويات والكثافة ونسبة استخراج المنتج التام والهالك بالطن:</h3>
+      <table class="pdf-report-table">
+        <thead>
+          <tr>
+            <th>رقم الحاوية</th>
+            <th>المورد والخشب</th>
+            <th>إجمالي الجذوع والتكعيب</th>
+            <th>تم تشغيله</th>
+            <th>متبقي بالمخزن</th>
+            <th>الكثافة والوزن</th>
+            <th>المنتج التام المتوقع</th>
+            <th>الهالك بالطن والمتر</th>
+          </tr>
+        </thead>
+        <tbody>${containersSummaryHtml || '<tr><td colspan="8">لا توجد حاويات مسجلة</td></tr>'}</tbody>
+      </table>
+
+      <h3 style="margin:16px 0 6px 0;">2️⃣ بيان سيريالات الجذوع (ما تم تشغيله وما لم يتم تشغيله):</h3>
+      <table class="pdf-report-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>رقم السيريال</th>
+            <th>الحاوية</th>
+            <th>المورد</th>
+            <th>المقاسات</th>
+            <th>التكعيب (م³)</th>
+            <th>الوزن (طن)</th>
+            <th>حالة التشغيل</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml || '<tr><td colspan="8">لا توجد جذوع مسجلة</td></tr>'}</tbody>
+      </table>
+    `,
+    true
+  );
 }
 
 // Initialize
