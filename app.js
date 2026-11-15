@@ -3750,7 +3750,11 @@ function renderWarehouseMovements() {
                 <td>${m.performedBy}</td>
                 <td>
                   <div style="display:flex;gap:5px;flex-wrap:wrap;">
-                    <button class="btn btn-sm btn-outline" onclick="printWarehouseVoucher('${m.id}')">🖨️ طباعة إذن</button>
+                    ${String(m.voucherNumber || '').startsWith('CAR-') || String(m.directionLabel || '').includes('سيارة') || String(m.warehouseLabel || '').includes('سيارة') ? `
+                      <button class="btn btn-sm btn-success" onclick="printWarehouseVoucher('${m.id}')">🚚 طباعة إذن السيارة</button>
+                    ` : `
+                      <button class="btn btn-sm btn-outline" onclick="printWarehouseVoucher('${m.id}')">🖨️ طباعة إذن</button>
+                    `}
                     ${isFullAdmin(currentUser) ? `
                       <button class="btn btn-sm btn-accent" onclick="openEditWarehouseMovementModal('${m.id}')">✏️ تعديل البيان والرصيد</button>
                       <button class="btn btn-sm btn-danger" onclick="deleteWarehouseMovementWithRestore('${m.id}')">🗑️ حذف وإرجاع الرصيد</button>
@@ -4227,6 +4231,9 @@ function renderApprovals() {
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${releaseOrders.some(o => o.carDispatchVoucher) ? `
+            <button class="btn btn-success" onclick="printVehicleDispatchVoucher('${releaseOrders.find(o => o.carDispatchVoucher).id}')">🚚 طباعة إذن صرف السيارة المعتمد</button>
+          ` : ''}
           <button class="btn btn-outline" onclick="printAllApprovalsDispatchReportPdf()">🖨️ طباعة سجل أذون الصرف والسيارات PDF</button>
           <button class="btn btn-primary" onclick="setTab('production')">📋 عرض جميع أوامر تجهيز الطلبيات</button>
         </div>
@@ -6040,6 +6047,18 @@ function openClientOrderStatementModal(orderId) {
           <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
         </div>
 
+        ${ord.carDispatchVoucher ? `
+          <div style="background:rgba(16,185,129,0.12);border:2px solid #10b981;padding:10px 14px;border-radius:10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+            <div style="font-size:0.85rem;">
+              🚚 <strong>تم إصدار إذن صرف وتحميل السيارة (${ord.carDispatchVoucher.voucherNo || 'CAR-' + ord.orderNumber}):</strong>
+              سيارة رقم <strong>(${ord.carDispatchVoucher.carPlateNumber || '-'})</strong> — السائق: <strong>${ord.carDispatchVoucher.driverName || '-'}</strong>
+            </div>
+            <button type="button" class="btn btn-sm btn-success" style="font-weight:800;" onclick="printVehicleDispatchVoucher('${ord.id}')">
+              🚚 طباعة إذن صرف السيارة (${ord.carDispatchVoucher.carPlateNumber || ord.orderNumber})
+            </button>
+          </div>
+        ` : ''}
+
         ${ord.stage === 'completed' && isExec ? `
           <div style="background:rgba(2,132,199,0.1);border:2px solid #0284c7;padding:10px 14px;border-radius:10px;margin-bottom:12px;font-size:0.85rem;">
             🔄 <strong>صلاحية المدير التنفيذي / مدير المشروعات (تعديل مع إرجاع أرصدة المخازن تلقائياً):</strong><br/>
@@ -6190,6 +6209,11 @@ function openClientOrderStatementModal(orderId) {
               <button type="button" class="btn btn-accent" onclick="printClientOrderStatement('${ord.id}')">
                 🖨️ طباعة بيان الطلبية للعميل (رسمي)
               </button>
+              ${ord.carDispatchVoucher ? `
+                <button type="button" class="btn btn-success" onclick="printVehicleDispatchVoucher('${ord.id}')">
+                  🚚 طباعة إذن صرف السيارة (${ord.carDispatchVoucher.carPlateNumber || ord.orderNumber})
+                </button>
+              ` : ''}
               ${isExec ? `
                 <button type="button" class="btn btn-danger" onclick="deleteOrderWithStockRestore('${ord.id}')">
                   🗑️ حذف البيان بالكامل وإرجاع أرصدة المخازن
@@ -6738,7 +6762,8 @@ function openVehicleDispatchVoucherModal(orderId) {
   const ord = (state.productionOrders || []).find(o => o.id === orderId);
   if (!ord) return;
   const modalRoot = document.getElementById('modal-root');
-  const defaultPallets = Math.max(1, Math.ceil(Number(ord.totalSheetsCount || 400) / 400));
+  const existingCar = ord.carDispatchVoucher || null;
+  const defaultPallets = existingCar ? Number(existingCar.palletsDeliveredCount ?? 1) : Math.max(1, Math.ceil(Number(ord.totalSheetsCount || 400) / 400));
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
@@ -6768,19 +6793,19 @@ function openVehicleDispatchVoucherModal(orderId) {
           <div class="form-grid">
             <div class="form-group">
               <label>تاريخ التحميل وإذن صرف السيارة</label>
-              <input id="car-date" type="date" class="form-control" value="${todayStr()}" required />
+              <input id="car-date" type="date" class="form-control" value="${existingCar?.dispatchDate || todayStr()}" required />
             </div>
             <div class="form-group">
               <label>🚚 رقم السيارة / اللوحة المعدنية</label>
-              <input id="car-plate" class="form-control" placeholder="مثال: ط د أ - 4582" required autofocus style="font-weight:800;border-color:var(--primary);" />
+              <input id="car-plate" class="form-control" value="${existingCar?.carPlateNumber || ''}" placeholder="مثال: ط د أ - 4582" required autofocus style="font-weight:800;border-color:var(--primary);" />
             </div>
             <div class="form-group">
               <label>👤 اسم سائق السيارة المستلم</label>
-              <input id="car-driver" class="form-control" placeholder="اسم السائق ثلاثي..." required />
+              <input id="car-driver" class="form-control" value="${existingCar?.driverName || ''}" placeholder="اسم السائق ثلاثي..." required />
             </div>
             <div class="form-group">
               <label>📞 رقم تليفون السائق</label>
-              <input id="car-phone" class="form-control" placeholder="010xxxxxxxx" />
+              <input id="car-phone" class="form-control" value="${existingCar?.driverPhone || ''}" placeholder="010xxxxxxxx" />
             </div>
             <div class="form-group">
               <label style="color:var(--accent);font-weight:800;">🪵 عدد البالتات الخشبية المسلمة للعميل مع البضاعة</label>
@@ -6788,17 +6813,24 @@ function openVehicleDispatchVoucherModal(orderId) {
             </div>
             <div class="form-group">
               <label style="color:var(--success);font-weight:800;">🪵 عدد البالتات الخشبية المستلمة/المرتجعة من العميل مع السيارة (إن وجد)</label>
-              <input id="car-pallets-in" type="number" min="0" class="form-control" value="0" required />
+              <input id="car-pallets-in" type="number" min="0" class="form-control" value="${existingCar?.palletsReceivedCount ?? 0}" required />
             </div>
             <div class="form-group" style="grid-column: 1 / -1;">
               <label>ملاحظات التحميل وأمن البوابة</label>
-              <input id="car-notes" class="form-control" placeholder="مثال: تم التحميل والتأمين بحزام شداد بحضور أمين المخزن..." />
+              <input id="car-notes" class="form-control" value="${existingCar?.notes || ''}" placeholder="مثال: تم التحميل والتأمين بحزام شداد بحضور أمين المخزن..." />
             </div>
           </div>
 
-          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
-            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
-            <button type="submit" class="btn btn-danger">🚚 تأكيد صرف الطلبية وخصم المخزن وطباعة إذن صرف السيارة</button>
+          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:16px;">
+            <div>
+              ${existingCar ? `
+                <button type="button" class="btn btn-success" onclick="printVehicleDispatchVoucher('${ord.id}')">🖨️ طباعة إذن صرف السيارة الحالي فوراً</button>
+              ` : ''}
+            </div>
+            <div style="display:flex;gap:10px;">
+              <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+              <button type="submit" class="btn btn-danger">🚚 تأكيد صرف الطلبية وخصم المخزن وطباعة إذن صرف السيارة</button>
+            </div>
           </div>
         </form>
       </div>
@@ -9372,6 +9404,12 @@ function buildStandalonePrintHtml(docHtml, docTitle, landscape) {
       padding: 12px !important;
       direction: rtl !important;
       text-align: right !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+    }
+    #standalone-print-body, #standalone-print-body * {
+      visibility: visible !important;
+      opacity: 1 !important;
     }
     table {
       width: 100%;
@@ -9423,9 +9461,16 @@ function buildStandalonePrintHtml(docHtml, docTitle, landscape) {
       html, body {
         padding: 0 !important;
         margin: 0 !important;
+        background: #ffffff !important;
+        color: #000000 !important;
       }
       .no-print-bar {
         display: none !important;
+      }
+      #standalone-print-body {
+        display: block !important;
+        visibility: visible !important;
+        width: 100% !important;
       }
     }
   </style>
@@ -9434,7 +9479,7 @@ function buildStandalonePrintHtml(docHtml, docTitle, landscape) {
   <div class="no-print-bar" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:#0f172a;color:#fff;padding:10px 16px;border-radius:10px;margin-bottom:14px;">
     <strong style="font-size:14px;color:#fbbf24;">🖨️ ${docTitle}</strong>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      <button type="button" onclick="window.focus(); window.print();" style="background:#10b981;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">🖨️ فتح صفحة الطابعة الآن</button>
+      <button type="button" onclick="window.focus(); window.print();" style="background:#10b981;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">🖨️ فتح صفحة الطابعة الآن / حفظ PDF</button>
       <button type="button" onclick="window.close();" style="background:#ef4444;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">✕ إغلاق النافذة</button>
     </div>
   </div>
@@ -9444,21 +9489,46 @@ function buildStandalonePrintHtml(docHtml, docTitle, landscape) {
   <script>
     (function() {
       var printed = false;
-      function runPrintNow() {
+      function firePrintAfterPaint() {
         if (printed) return;
         printed = true;
-        try {
-          window.focus();
-          window.print();
-        } catch (e) {}
+        setTimeout(function() {
+          try {
+            if (document.body) void document.body.offsetHeight;
+            window.focus();
+            window.print();
+          } catch (e) {}
+        }, 120);
       }
-      if (document.readyState === 'complete') {
-        setTimeout(runPrintNow, 180);
-      } else {
-        window.addEventListener('load', function() {
-          setTimeout(runPrintNow, 180);
+      function waitForImagesThenPrint() {
+        var imgs = Array.prototype.slice.call(document.images || []);
+        if (imgs.length === 0) {
+          firePrintAfterPaint();
+          return;
+        }
+        var remaining = imgs.length;
+        var doneOne = function() {
+          remaining--;
+          if (remaining <= 0) firePrintAfterPaint();
+        };
+        imgs.forEach(function(img) {
+          if (img.decode) {
+            img.decode().then(doneOne).catch(doneOne);
+          } else if (img.complete) {
+            doneOne();
+          } else {
+            img.addEventListener('load', doneOne, { once: true });
+            img.addEventListener('error', doneOne, { once: true });
+          }
         });
-        setTimeout(runPrintNow, 450);
+        setTimeout(firePrintAfterPaint, 240);
+      }
+      if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        waitForImagesThenPrint();
+      } else {
+        window.addEventListener('DOMContentLoaded', waitForImagesThenPrint, { once: true });
+        window.addEventListener('load', waitForImagesThenPrint, { once: true });
+        setTimeout(firePrintAfterPaint, 320);
       }
     })();
   </script>
@@ -9488,23 +9558,7 @@ function triggerDirectIframePrint(fullHtml) {
     iDoc.open();
     iDoc.write(fullHtml);
     iDoc.close();
-    if (iDoc.body) {
-      void iDoc.body.offsetHeight;
-    }
-    if (iframe.contentWindow && typeof iframe.contentWindow.print === 'function') {
-      const t0 = Date.now();
-      iframe.contentWindow.focus();
-      iframe.contentWindow.print();
-      if (Date.now() - t0 < 80) {
-        setTimeout(() => {
-          try {
-            iframe.contentWindow.focus();
-            iframe.contentWindow.print();
-          } catch (_) {}
-        }, 120);
-      }
-      return true;
-    }
+    return true;
   } catch (_) {}
   return false;
 }
@@ -9512,32 +9566,23 @@ function triggerDirectIframePrint(fullHtml) {
 function openStandalonePrintPopup() {
   if (!_lastPrintDocumentHtml) return;
   const fullHtml = buildStandalonePrintHtml(_lastPrintDocumentHtml, _lastPrintDocumentTitle, _lastPrintLandscape);
-  const w = typeof window.open === 'function' ? window.open('', '_blank') : null;
+  let w = null;
+  try {
+    w = typeof window.open === 'function' ? window.open('', '_blank') : null;
+  } catch (_) {}
   if (!w || !w.document) {
-    if (!triggerDirectIframePrint(fullHtml)) {
-      window.focus();
-      window.print();
-    }
+    window.focus();
+    window.print();
     return;
   }
-  w.document.open();
-  w.document.write(fullHtml);
-  w.document.close();
-  if (w.document.body) {
-    void w.document.body.offsetHeight;
-  }
-  const t0 = Date.now();
   try {
+    w.document.open();
+    w.document.write(fullHtml);
+    w.document.close();
     w.focus();
-    w.print();
-  } catch (_) {}
-  if (Date.now() - t0 < 80) {
-    setTimeout(() => {
-      try {
-        w.focus();
-        w.print();
-      } catch (_) {}
-    }, 150);
+  } catch (_) {
+    window.focus();
+    window.print();
   }
 }
 
@@ -9546,6 +9591,12 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
   _lastPrintDocumentTitle = docTitle;
   _lastPrintLandscape = Boolean(landscape);
   window._isPrintingActive = true;
+
+  // Close any open modal so it never overlaps or blocks the print preview
+  const modalRoot = document.getElementById('modal-root');
+  if (modalRoot) {
+    modalRoot.innerHTML = '';
+  }
 
   const printEl = document.getElementById('print-area');
   if (!printEl) return;
@@ -9652,14 +9703,14 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
     <div class="no-print-bar" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:#0f172a;color:#fff;padding:12px 18px;border-radius:10px;margin-bottom:16px;font-family:'Cairo',sans-serif;direction:rtl;">
       <div>
         <strong style="font-size:15px;color:#fbbf24;">🖨️ معاينة الطباعة الرسمية: ${docTitle}</strong>
-        <div style="font-size:12px;color:#cbd5e1;">جاري فتح نافذة الطابعة تلقائياً — ويمكنك أيضاً الضغط على زر الطباعة بالأسفل في أي وقت</div>
+        <div style="font-size:12px;color:#cbd5e1;">المستند جاهز للطباعة — يمكنك الضغط على (طباعة الآن) أو (فتح في نافذة مستقلة)</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button type="button" onclick="window.focus(); window.print();" style="background:#10b981;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
           🖨️ طباعة الآن / حفظ كـ PDF
         </button>
         <button type="button" onclick="openStandalonePrintPopup()" style="background:#2563eb;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
-          🗔 فتح في نافذة مستقلة
+          🗔 فتح في نافذة طباعة مستقلة
         </button>
         <button type="button" onclick="closeUniversalPrintView()" style="background:#ef4444;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
           🔙 العودة للنظام وإغلاق شاشة الطباعة
@@ -9676,13 +9727,38 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
   }
   void printEl.offsetHeight;
 
-  // Give the browser 180ms to paint the #print-area DOM and Base64 logo image BEFORE freezing the renderer with window.print()
-  setTimeout(() => {
-    try {
-      if (typeof window.focus === 'function') window.focus();
-      window.print();
-    } catch (_) {}
-  }, 180);
+  // Open dedicated standalone print page synchronously on user click so it never gets blocked by popup blockers,
+  // and let its internal script wait for all images + 2x requestAnimationFrame BEFORE calling window.print()!
+  let popupOpened = false;
+  try {
+    const fullHtml = buildStandalonePrintHtml(docHtml, docTitle, landscape);
+    const popupWin = typeof window.open === 'function' ? window.open('', '_blank') : null;
+    if (popupWin && popupWin.document) {
+      popupWin.document.open();
+      popupWin.document.write(fullHtml);
+      popupWin.document.close();
+      popupWin.focus();
+      popupOpened = true;
+    }
+  } catch (_) {}
+
+  // If popup was blocked (e.g., inside an embedded mobile webview), wait for images inside #print-area to decode, then trigger window.print()
+  if (!popupOpened) {
+    const imgs = Array.from(printEl.querySelectorAll('img'));
+    const decodePromises = imgs.map(img => (img.decode ? img.decode().catch(() => {}) : Promise.resolve()));
+    Promise.race([
+      Promise.all(decodePromises),
+      new Promise(res => setTimeout(res, 220))
+    ]).then(() => {
+      setTimeout(() => {
+        try {
+          void printEl.offsetHeight;
+          if (typeof window.focus === 'function') window.focus();
+          window.print();
+        } catch (_) {}
+      }, 120);
+    });
+  }
 }
 
 // ============================================================================
@@ -9801,13 +9877,33 @@ function printApprovalDispatchOrder(reqId) {
 }
 
 function printWarehouseVoucher(movId) {
-  const m = state.warehouseMovements.find(x => x.id === movId);
+  const m = (state.warehouseMovements || []).find(x => x.id === movId);
   if (!m) return;
+
+  // If this warehouse movement is a Vehicle Dispatch Voucher (CAR-...) or linked to a client order car dispatch, print the official Vehicle Dispatch Voucher!
+  const vNum = String(m.voucherNumber || '').trim();
+  const isCarMovement = vNum.startsWith('CAR-') || String(m.directionLabel || '').includes('سيارة') || String(m.warehouseLabel || '').includes('سيارة');
+  const linkedOrder = (state.productionOrders || []).find(o => {
+    const carVo = o.carDispatchVoucher?.voucherNo || `CAR-${o.orderNumber}`;
+    return (vNum && (carVo === vNum || o.orderNumber === vNum)) || (isCarMovement && m.referenceCode && o.carDispatchVoucher?.carPlateNumber === m.referenceCode);
+  });
+
+  if (linkedOrder) {
+    printVehicleDispatchVoucher(linkedOrder.id, m.id);
+    return;
+  }
+  if (isCarMovement) {
+    const carHtml = buildVehicleDispatchVoucherPrintHtml(null, m);
+    openUniversalPrintDocument(carHtml, `إذن صرف سيارة ${m.referenceCode || m.voucherNumber || ''}`, false);
+    return;
+  }
+
+  const factoryName = state.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة';
   const html = `
     <div style="border:2px solid #000;padding:28px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #000;padding-bottom:12px;margin-bottom:16px;">
         <div>
-          <h2 style="margin:0;">${state.factoryInfo.name}</h2>
+          <h2 style="margin:0;">${factoryName}</h2>
           <h3 style="margin:4px 0 0;">${m.directionLabel} — رقم: ${m.voucherNumber || '-'}</h3>
         </div>
         ${getPrintTopLeftLogoHtml(`<div><strong>التاريخ:</strong> ${fmtDate(m.date)}</div>`)}
@@ -9818,8 +9914,8 @@ function printWarehouseVoucher(movId) {
       <p><strong>الكمية:</strong> ${sanitizeTextForWarehouseKeeper(m.quantitySummary)}</p>
       <p><strong>المرجع:</strong> ${m.referenceCode || '-'}</p>
       <div style="display:flex;justify-content:space-between;margin-top:45px;font-weight:700;">
-        <span>أمين المخزن: ${m.performedBy}</span>
-        <span>اعتماد الإدارة: ${m.approvedBy}</span>
+        <span>أمين المخزن: ${m.performedBy || '-'}</span>
+        <span>اعتماد الإدارة: ${m.approvedBy || '-'}</span>
       </div>
     </div>
   `;
@@ -9835,11 +9931,13 @@ function printClientOrderStatement(orderId) {
   if (!ord) return;
   const items = Array.isArray(ord.items) ? ord.items : [];
   const showPrices = canSeeFinancialPrices();
+  const car = ord.carDispatchVoucher || null;
+  const factoryName = state.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة';
   const html = `
     <div style="border:3px solid #000;padding:24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #000;padding-bottom:12px;margin-bottom:16px;">
         <div>
-          <h1 style="margin:0;font-size:22px;">${state.factoryInfo.name}</h1>
+          <h1 style="margin:0;font-size:22px;">${factoryName}</h1>
           <p style="margin:4px 0 0;font-size:14px;">بيان طلبية وأمر تجهيز قشرة خشبية للعميل (المقاس المعتمد 125×250 سم أو مقاس خاص)</p>
         </div>
         ${getPrintTopLeftLogoHtml(`
@@ -9888,10 +9986,10 @@ function printClientOrderStatement(orderId) {
         </tbody>
       </table>
 
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
         <div>
           <p style="margin:4px 0;"><strong>إجمالي عدد القطع:</strong> ${fmtNum(ord.totalSheetsCount, 0)} قطعة | <strong>إجمالي الحجم:</strong> ${fmtNum(ord.totalVolumeM3, 4)} م³</p>
-          ${ord.notes ? `<p style="margin:4px 0;"><strong>ملاحظات:</strong> ${ord.notes}</p>` : ''}
+          ${ord.notes ? `<p style="margin:4px 0;"><strong>ملاحظات الطلبية:</strong> ${ord.notes}</p>` : ''}
         </div>
         ${showPrices ? `
         <div style="border:2px solid #000;padding:10px 16px;border-radius:8px;min-width:250px;">
@@ -9911,48 +10009,115 @@ function printClientOrderStatement(orderId) {
         ` : ''}
       </div>
 
-      <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:14px;margin-top:30px;text-align:center;font-weight:700;font-size:13px;">
+      ${car ? `
+      <div style="border:2px solid #000;background:#f8fafc;padding:10px 14px;border-radius:8px;margin-bottom:16px;font-size:13px;">
+        <div style="font-weight:900;font-size:14px;margin-bottom:6px;">🚚 بيانات إذن صرف وتحميل السيارة المعتمد (${car.voucherNo || 'CAR-' + ord.orderNumber}):</div>
+        <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;">
+          <div><strong>رقم السيارة:</strong> ${car.carPlateNumber || '-'}</div>
+          <div><strong>اسم السائق:</strong> ${car.driverName || '-'} ${car.driverPhone ? '(' + car.driverPhone + ')' : ''}</div>
+          <div><strong>تاريخ التحميل:</strong> ${car.dispatchDate || ord.date || '-'}</div>
+          <div><strong>البالتات:</strong> مسلم (${car.palletsDeliveredCount ?? 0}) | مستلم (${car.palletsReceivedCount ?? 0})</div>
+        </div>
+        ${car.notes ? `<div style="margin-top:6px;"><strong>ملاحظات التحميل وأمن البوابة:</strong> ${car.notes}</div>` : ''}
+      </div>
+      ` : ''}
+
+      <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:14px;margin-top:26px;text-align:center;font-weight:700;font-size:13px;">
         <div>إعداد المحاسب<br/><br/>${ord.requestedBy || '................'}</div>
         <div>اعتماد المدير التنفيذي/المشروعات<br/><br/>${ord.executiveApprovedBy || '................'}</div>
         <div>موافقة المدير الإداري/أمين المخزن<br/><br/>${ord.warehousePrepApprovedBy || '................'}</div>
-        <div>توقيع العميل<br/><br/>................</div>
+        <div>توقيع العميل / المستلم<br/><br/>${car?.driverName || '................'}</div>
       </div>
     </div>
   `;
   openUniversalPrintDocument(html, `بيان طلبية ${ord.orderNumber} - ${ord.clientName}`, false);
 }
 
-function printVehicleDispatchVoucher(orderId) {
-  const ord = (state.productionOrders || []).find(x => x.id === orderId);
-  if (!ord) return;
+function buildVehicleDispatchVoucherPrintHtml(ord, movFallback = null) {
+  const factoryName = state.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة';
+  const actorName = currentUser?.name || 'إدارة المخازن';
+
+  if (!ord && movFallback) {
+    return `
+      <div style="border:3px solid #000;padding:24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
+        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #000;padding-bottom:12px;margin-bottom:16px;">
+          <div>
+            <h1 style="margin:0;font-size:22px;">${factoryName}</h1>
+            <h2 style="margin:6px 0 0;font-size:17px;">🚚 إذن صرف وتحميل سيارة بالبضاعة (معتمد للخروج من البوابة)</h2>
+          </div>
+          ${getPrintTopLeftLogoHtml(`
+            <div style="border:2px solid #000;padding:5px 10px;border-radius:8px;">
+              <div><strong>رقم إذن السيارة:</strong> ${movFallback.voucherNumber || '-'}</div>
+              <div><strong>رقم السيارة:</strong> ${movFallback.referenceCode || '-'}</div>
+              <div><strong>تاريخ التحميل:</strong> ${fmtDate(movFallback.date)}</div>
+            </div>
+          `)}
+        </div>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:14px;">
+          <tr>
+            <td style="border:1px solid #000;padding:8px;background:#f1f5f9;font-weight:700;">المخزن المنصرف منه:</td>
+            <td style="border:1px solid #000;padding:8px;font-weight:800;">${movFallback.warehouseLabel || 'مخزن القشرة التامة'}</td>
+            <td style="border:1px solid #000;padding:8px;background:#f1f5f9;font-weight:700;">رقم السيارة المحملة:</td>
+            <td style="border:1px solid #000;padding:8px;font-weight:900;font-size:17px;">${movFallback.referenceCode || '-'}</td>
+          </tr>
+          <tr>
+            <td style="border:1px solid #000;padding:8px;background:#f1f5f9;font-weight:700;">بيان البضاعة المحملة:</td>
+            <td colspan="3" style="border:1px solid #000;padding:8px;font-weight:800;">${sanitizeTextForWarehouseKeeper(movFallback.itemSummary || '-')}</td>
+          </tr>
+          <tr>
+            <td style="border:1px solid #000;padding:8px;background:#f1f5f9;font-weight:700;">إجمالي الكمية المحملة:</td>
+            <td colspan="3" style="border:1px solid #000;padding:8px;font-weight:800;">${sanitizeTextForWarehouseKeeper(movFallback.quantitySummary || '-')}</td>
+          </tr>
+        </table>
+        <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:14px;margin-top:35px;text-align:center;font-weight:700;font-size:13px;">
+          <div>اعتماد المحاسب للصرف<br/><br/>${movFallback.approvedBy || '................'}</div>
+          <div>أمين المخزن / المدير الإداري<br/><br/>${movFallback.performedBy || actorName}</div>
+          <div>توقيع سائق السيارة بالاستلام<br/><br/>................</div>
+          <div>مسؤول أمن البوابة<br/><br/>................</div>
+        </div>
+      </div>
+    `;
+  }
+
   const car = ord.carDispatchVoucher || {};
   const items = Array.isArray(ord.items) ? ord.items : [];
-  const html = `
-    <div style="border:3px solid #000;padding:24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
+  const totalSheets = items.reduce((s, i) => s + Number(i.sheetsCount || 0), 0) || Number(ord.totalSheetsCount || 0);
+  const totalAreaM2 = items.reduce((s, i) => {
+    const sh = Number(i.sheetsCount || 0);
+    const len = Number(i.lengthCm || 250);
+    const wid = Number(i.widthCm || 125);
+    const area = Number(i.areaM2 || (sh * (len / 100) * (wid / 100)));
+    return s + area;
+  }, 0);
+  const totalVolM3 = items.reduce((s, i) => s + Number(i.volumeM3 || 0), 0) || Number(ord.totalVolumeM3 || 0);
+  const combinedNotes = [car.notes, ord.notes].filter(Boolean).join(' — ');
+
+  return `
+    <div class="vehicle-dispatch-voucher-box" style="border:3px solid #000;padding:24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;page-break-inside:avoid;">
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #000;padding-bottom:12px;margin-bottom:16px;">
         <div>
-          <h1 style="margin:0;font-size:22px;">${state.factoryInfo.name}</h1>
-          <h2 style="margin:6px 0 0;font-size:17px;">🚚 إذن صرف وتحميل سيارة بالبضاعة (معتمد للخروج من البوابة)</h2>
+          <h1 style="margin:0;font-size:22px;color:#000;">${factoryName}</h1>
+          <h2 style="margin:6px 0 0;font-size:17px;color:#000;">🚚 إذن صرف وتحميل سيارة بالبضاعة (معتمد للخروج من البوابة)</h2>
         </div>
         ${getPrintTopLeftLogoHtml(`
-          <div style="border:2px solid #000;padding:5px 10px;border-radius:8px;">
+          <div style="border:2px solid #000;padding:5px 10px;border-radius:8px;background:#fff;color:#000;">
             <div><strong>رقم إذن السيارة:</strong> ${car.voucherNo || 'CAR-' + ord.orderNumber}</div>
             <div><strong>رقم الطلبية:</strong> ${ord.orderNumber}</div>
-            <div><strong>تاريخ التحميل:</strong> ${car.dispatchDate || ord.date}</div>
+            <div><strong>تاريخ التحميل:</strong> ${car.dispatchDate || ord.date || todayStr()}</div>
           </div>
         `)}
       </div>
 
       <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:14px;">
         <tr>
-          <td style="border:1px solid #000;padding:8px;background:#f1f5f9;font-weight:700;">اسم العميل وكوده:</td>
-          <td style="border:1px solid #000;padding:8px;font-weight:800;">[${ord.clientCode || 'CL'}] ${ord.clientName}</td>
-          <td style="border:1px solid #000;padding:8px;background:#f1f5f9;font-weight:700;">رقم السيارة المحملة:</td>
-          <td style="border:1px solid #000;padding:8px;font-weight:900;font-size:17px;">${car.carPlateNumber || '-'}</td>
+          <td style="border:1px solid #000;padding:8px;background:#f1f5f9;font-weight:700;width:18%;">اسم العميل وكوده:</td>
+          <td style="border:1px solid #000;padding:8px;font-weight:800;width:32%;">[${ord.clientCode || 'CL'}] ${ord.clientName}</td>
+          <td style="border:1px solid #000;padding:8px;background:#f1f5f9;font-weight:700;width:18%;">رقم السيارة المحملة:</td>
+          <td style="border:1px solid #000;padding:8px;font-weight:900;font-size:17px;width:32%;">${car.carPlateNumber || movFallback?.referenceCode || 'خروج من المخزن'}</td>
         </tr>
         <tr>
           <td style="border:1px solid #000;padding:8px;background:#f1f5f9;font-weight:700;">اسم سائق السيارة:</td>
-          <td style="border:1px solid #000;padding:8px;font-weight:800;">${car.driverName || '-'} (${car.driverPhone || ''})</td>
+          <td style="border:1px solid #000;padding:8px;font-weight:800;">${car.driverName || '-'}${car.driverPhone ? ' (' + car.driverPhone + ')' : ''}</td>
           <td style="border:1px solid #000;padding:8px;background:#f1f5f9;font-weight:700;">حساب البالتات مع السيارة:</td>
           <td style="border:1px solid #000;padding:8px;font-weight:800;">
             بالتات مسلمة للعميل: (${car.palletsDeliveredCount ?? 0}) | مستلمة منه: (${car.palletsReceivedCount ?? 0})
@@ -9960,8 +10125,8 @@ function printVehicleDispatchVoucher(orderId) {
         </tr>
       </table>
 
-      <h3 style="margin:0 0 8px;font-size:15px;">بيان أصناف القشرة الخشبية المحملة على السيارة:</h3>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:14px;">
+      <h3 style="margin:0 0 8px;font-size:15px;color:#000;">📦 بيان أصناف القشرة الخشبية المحملة على السيارة:</h3>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:14px;">
         <thead>
           <tr style="background:#e2e8f0;">
             <th style="border:1px solid #000;padding:7px;">#</th>
@@ -9974,41 +10139,78 @@ function printVehicleDispatchVoucher(orderId) {
           </tr>
         </thead>
         <tbody>
-          ${items.map((it, idx) => `
-            <tr>
-              <td style="border:1px solid #000;padding:7px;text-align:center;">${idx + 1}</td>
-              <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.thicknessMm} مم (${it.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص'})</td>
-              <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.gradeName}</td>
-              <td style="border:1px solid #000;padding:7px;font-weight:700;">${formatVeneerDimensions(it.lengthCm, it.widthCm, true)}</td>
-              <td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtNum(it.sheetsCount, 0)} قطعة</td>
-              <td style="border:1px solid #000;padding:7px;">${fmtNum(it.areaM2, 2)} م²</td>
-              <td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtNum(it.volumeM3, 4)} م³</td>
-            </tr>
-          `).join('')}
+          ${items.map((it, idx) => {
+            const sh = Number(it.sheetsCount || 0);
+            const len = Number(it.lengthCm || 250);
+            const wid = Number(it.widthCm || 125);
+            const area = Number(it.areaM2 || (sh * (len / 100) * (wid / 100)));
+            const vol = Number(it.volumeM3 || (area * (Number(it.thicknessMm || 0) / 1000)));
+            return `
+              <tr>
+                <td style="border:1px solid #000;padding:7px;text-align:center;">${idx + 1}</td>
+                <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.thicknessMm} مم (${it.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص'})</td>
+                <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.gradeName || '-'}</td>
+                <td style="border:1px solid #000;padding:7px;font-weight:700;">${formatVeneerDimensions(len, wid, true)}</td>
+                <td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtNum(sh, 0)} قطعة</td>
+                <td style="border:1px solid #000;padding:7px;">${fmtNum(area, 2)} م²</td>
+                <td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtNum(vol, 4)} م³</td>
+              </tr>
+            `;
+          }).join('')}
         </tbody>
+        <tfoot>
+          <tr style="background:#f1f5f9;font-weight:900;">
+            <td colspan="4" style="border:1px solid #000;padding:8px;text-align:center;">الإجمالي الكلي المحمل على السيارة</td>
+            <td style="border:1px solid #000;padding:8px;text-align:center;">${fmtNum(totalSheets, 0)} قطعة</td>
+            <td style="border:1px solid #000;padding:8px;text-align:center;">${fmtNum(totalAreaM2, 2)} م²</td>
+            <td style="border:1px solid #000;padding:8px;text-align:center;">${fmtNum(totalVolM3, 4)} م³</td>
+          </tr>
+        </tfoot>
       </table>
 
-      <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:14px;margin-top:35px;text-align:center;font-weight:700;font-size:13px;">
+      ${combinedNotes ? `
+        <div style="border:2px solid #000;background:#f8fafc;padding:9px 12px;border-radius:6px;margin-bottom:16px;font-size:13.5px;">
+          <strong>📌 ملاحظات التحميل وأمن البوابة:</strong> ${combinedNotes}
+        </div>
+      ` : ''}
+
+      <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:14px;margin-top:30px;text-align:center;font-weight:700;font-size:13px;">
         <div>اعتماد المحاسب للصرف<br/><br/>${ord.accountantReleaseBy || '................'}</div>
-        <div>أمين المخزن / المدير الإداري<br/><br/>${car.dispatchedBy || currentUser.name}</div>
+        <div>أمين المخزن / المدير الإداري<br/><br/>${car.dispatchedBy || ord.warehousePrepApprovedBy || actorName}</div>
         <div>توقيع سائق السيارة بالاستلام<br/><br/>${car.driverName || '................'}</div>
         <div>مسؤول أمن البوابة<br/><br/>................</div>
       </div>
     </div>
   `;
-  openUniversalPrintDocument(html, `إذن صرف سيارة ${car.carPlateNumber || ord.orderNumber}`, false);
+}
+
+function printVehicleDispatchVoucher(orderId, movId = null) {
+  let ord = (state.productionOrders || []).find(x => x.id === orderId || x.orderNumber === orderId);
+  const mov = movId ? (state.warehouseMovements || []).find(x => x.id === movId) : null;
+  if (!ord && mov) {
+    ord = (state.productionOrders || []).find(o => {
+      const carVo = o.carDispatchVoucher?.voucherNo || `CAR-${o.orderNumber}`;
+      return carVo === mov.voucherNumber || o.orderNumber === mov.voucherNumber;
+    });
+  }
+  if (!ord && !mov) return;
+  const car = ord?.carDispatchVoucher || {};
+  const html = buildVehicleDispatchVoucherPrintHtml(ord, mov);
+  const titleLabel = car.carPlateNumber || ord?.orderNumber || mov?.voucherNumber || '';
+  openUniversalPrintDocument(html, `إذن صرف سيارة ${titleLabel}`, false);
 }
 
 function printClientFullStatement(clientId) {
   const pt = (state.partners || []).find(p => p.id === clientId);
   if (!pt) return;
   const m = computeClientMetrics(pt);
+  const factoryName = state.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة';
   const html = `
     <div style="border:3px solid #000;padding:24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #000;padding-bottom:12px;margin-bottom:16px;">
         <div>
-          <h1 style="margin:0;font-size:21px;">${state.factoryInfo.name}</h1>
-          <p style="margin:4px 0 0;font-size:14px;">بيان كشف حساب عميل شامل (الطلبيات الفائتة + المديونيات والمستحقات + حساب البالتات)</p>
+          <h1 style="margin:0;font-size:21px;">${factoryName}</h1>
+          <p style="margin:4px 0 0;font-size:14px;">بيان كشف حساب عميل شامل (الطلبيات الفائتة + أذون السيارات + المديونيات والمستحقات + حساب البالتات)</p>
         </div>
         ${getPrintTopLeftLogoHtml(`
           <div><strong>كود العميل:</strong> ${pt.code || 'CL'}</div>
@@ -10033,32 +10235,36 @@ function printClientFullStatement(clientId) {
         </tr>
       </table>
 
-      <h3 style="margin:12px 0 6px;font-size:14px;">1. بيان الطلبيات (${m.orders.length} طلبية):</h3>
+      <h3 style="margin:12px 0 6px;font-size:14px;">1. بيان الطلبيات وأذون صرف السيارات (${m.orders.length} طلبية):</h3>
       <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:12.5px;">
         <thead>
           <tr style="background:#e2e8f0;">
             <th style="border:1px solid #000;padding:6px;">رقم الطلبية</th>
             <th style="border:1px solid #000;padding:6px;">التاريخ</th>
             <th style="border:1px solid #000;padding:6px;">الأصناف (التخانات والجودات)</th>
+            <th style="border:1px solid #000;padding:6px;">إذن السيارة والسائق</th>
             <th style="border:1px solid #000;padding:6px;">الخصم</th>
             <th style="border:1px solid #000;padding:6px;">الصافي</th>
           </tr>
         </thead>
         <tbody>
-          ${m.orders.map(o => `
+          ${m.orders.map(o => {
+            const car = o.carDispatchVoucher || {};
+            return `
             <tr>
-              <td style="border:1px solid #000;padding:6px;">${o.orderNumber}</td>
+              <td style="border:1px solid #000;padding:6px;font-weight:700;">${o.orderNumber}</td>
               <td style="border:1px solid #000;padding:6px;">${o.date}</td>
               <td style="border:1px solid #000;padding:6px;">${(o.items || []).map(i => `${i.thicknessMm}مم (${i.direction === 'sada' ? 'سدا' : 'قص'}) ${i.gradeName} [${formatVeneerDimensions(i.lengthCm, i.widthCm, false)}]: ${i.sheetsCount} ق`).join(' + ')}</td>
+              <td style="border:1px solid #000;padding:6px;">${car.carPlateNumber ? `سيارة: <strong>${car.carPlateNumber}</strong><br/>سائق: ${car.driverName || '-'}<br/>بالتات: +${car.palletsDeliveredCount ?? 0}/-${car.palletsReceivedCount ?? 0}` : '-'}</td>
               <td style="border:1px solid #000;padding:6px;">${fmtMoney(o.discountAmount || 0)}</td>
               <td style="border:1px solid #000;padding:6px;font-weight:700;">${fmtMoney(o.netTotalAmount || 0)}</td>
             </tr>
-          `).join('')}
+          `;}).join('')}
         </tbody>
       </table>
 
       <div style="display:flex;justify-content:space-between;margin-top:30px;font-weight:700;font-size:13px;">
-        <span>إعداد الحسابات: ${currentUser.name}</span>
+        <span>إعداد الحسابات: ${currentUser?.name || '-'}</span>
         <span>اعتماد مدير الحسابات / المدير التنفيذي: ....................</span>
         <span>توقيع ومصادقة العميل: ....................</span>
       </div>
@@ -10605,6 +10811,11 @@ function printAllApprovalsDispatchReportPdf() {
     const st = o.stage || o.status;
     return st === 'pending_accountant_release' || st === 'ready_for_car_dispatch' || st === 'completed';
   });
+  const carVouchersHtml = releaseOrders
+    .filter(o => o.carDispatchVoucher || o.stage === 'completed')
+    .map(o => `<div style="margin-top:18px;">${buildVehicleDispatchVoucherPrintHtml(o)}</div>`)
+    .join('');
+
   const bodyHtml = `
     <table class="pdf-report-table">
       <thead>
@@ -10640,8 +10851,9 @@ function printAllApprovalsDispatchReportPdf() {
         }).join('')}
       </tbody>
     </table>
+    ${carVouchersHtml}
   `;
-  triggerOfficialReportPdf('✅ تقرير أذون الصرف المعتمدة وأوامر تحميل السيارات', `إجمالي الأذون: ${releaseOrders.length}`, bodyHtml, true);
+  triggerOfficialReportPdf('✅ تقرير أذون الصرف المعتمدة وأوامر تحميل السيارات', `إجمالي الأذون: ${releaseOrders.length}`, bodyHtml, false);
 }
 
 function printAllClientsAccountingReportPdf() {

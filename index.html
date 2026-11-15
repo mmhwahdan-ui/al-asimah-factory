@@ -15,10 +15,10 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./icons/logo.svg" />
   <link rel="apple-touch-icon" href="./icons/logo.svg" />
-  <link rel="stylesheet" href="./styles.css?v=31" />
+  <link rel="stylesheet" href="./styles.css?v=32" />
   <script>
     (function() {
-      var TARGET_VER = 'v31';
+      var TARGET_VER = 'v32';
       var rawState = localStorage.getItem('al_asimah_factory_v1_state') || '';
       if (rawState.indexOf('\uFFFD') !== -1) {
         localStorage.removeItem('al_asimah_factory_v1_state');
@@ -49,16 +49,16 @@
   <div id="modal-root"></div>
   <div id="print-area"></div>
 
-  <script src="./app.js?v=31"></script>
+  <script src="./app.js?v=32"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.addEventListener('message', (e) => {
-        if (e.data && e.data.type === 'FORCE_RELOAD_V31') {
+        if (e.data && typeof e.data.type === 'string' && e.data.type.indexOf('FORCE_RELOAD_') === 0) {
           window.location.reload();
         }
       });
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js?v=31').then(reg => {
+        navigator.serviceWorker.register('./sw.js?v=32').then(reg => {
           reg.update();
         }).catch(() => {});
       });
