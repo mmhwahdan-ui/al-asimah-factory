@@ -900,7 +900,8 @@ body.is-printing-mode {
 body.is-printing-mode #app,
 body.is-printing-mode #modal-root,
 body.is-printing-mode .live-alert-banner,
-body.is-printing-mode .floating-chat-fab {
+body.is-printing-mode .floating-chat-fab,
+body.is-printing-mode .floating-smart-dock {
   display: none !important;
 }
 
@@ -935,6 +936,7 @@ body.is-printing-mode #print-area {
   #modal-root,
   .live-alert-banner,
   .floating-chat-fab,
+  .floating-smart-dock,
   .no-print-bar {
     display: none !important;
   }

@@ -6911,10 +6911,10 @@ function submitVehicleDispatchVoucher(e, orderId) {
   ord.updatedAt = now;
 
   closeModal();
+  // Set _isPrintingActive BEFORE saveState so the synchronous render() inside saveState doesn't flash or block the print view
+  window._isPrintingActive = true;
+  printVehicleDispatchVoucher(ord.id);
   saveState(`🚚 تم صرف الطلبية (${ord.orderNumber}) للعميل ${ord.clientName} وتحميل السيارة رقم (${carPlateNumber}) وتسليم (${palletsDeliveredCount}) بالتة وخصم الأرصدة من المخزن فوراً`);
-  setTimeout(() => {
-    printVehicleDispatchVoucher(ord.id);
-  }, 250);
 }
 
 // Raw Materials, Scrap & Spare Parts Quick Stock Actions (Mobile-Friendly HTML Modals)
@@ -9441,6 +9441,27 @@ function buildStandalonePrintHtml(docHtml, docTitle, landscape) {
   <div id="standalone-print-body">
     ${docHtml}
   </div>
+  <script>
+    (function() {
+      var printed = false;
+      function runPrintNow() {
+        if (printed) return;
+        printed = true;
+        try {
+          window.focus();
+          window.print();
+        } catch (e) {}
+      }
+      if (document.readyState === 'complete') {
+        setTimeout(runPrintNow, 180);
+      } else {
+        window.addEventListener('load', function() {
+          setTimeout(runPrintNow, 180);
+        });
+        setTimeout(runPrintNow, 450);
+      }
+    })();
+  </script>
 </body>
 </html>`;
 }
@@ -9544,7 +9565,8 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
       body.is-printing-mode #app,
       body.is-printing-mode #modal-root,
       body.is-printing-mode .live-alert-banner,
-      body.is-printing-mode .floating-chat-fab {
+      body.is-printing-mode .floating-chat-fab,
+      body.is-printing-mode .floating-smart-dock {
         display: none !important;
       }
       body.is-printing-mode #print-area {
@@ -9567,7 +9589,7 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
           -webkit-print-color-adjust: exact !important;
           print-color-adjust: exact !important;
         }
-        #app, #modal-root, .live-alert-banner, .floating-chat-fab, .no-print-bar, #direct-print-iframe {
+        #app, #modal-root, .live-alert-banner, .floating-chat-fab, .floating-smart-dock, .no-print-bar, #direct-print-iframe {
           display: none !important;
         }
         #print-area, #print-area * {
@@ -9630,14 +9652,14 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
     <div class="no-print-bar" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:#0f172a;color:#fff;padding:12px 18px;border-radius:10px;margin-bottom:16px;font-family:'Cairo',sans-serif;direction:rtl;">
       <div>
         <strong style="font-size:15px;color:#fbbf24;">🖨️ معاينة الطباعة الرسمية: ${docTitle}</strong>
-        <div style="font-size:12px;color:#cbd5e1;">تم فتح صفحة الطابعة تلقائياً — يمكنك أيضاً الضغط على زر الطباعة بالأسفل</div>
+        <div style="font-size:12px;color:#cbd5e1;">جاري فتح نافذة الطابعة تلقائياً — ويمكنك أيضاً الضغط على زر الطباعة بالأسفل في أي وقت</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button type="button" onclick="openStandalonePrintPopup()" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
-          🖨️ فتح في صفحة الطابعة الآن
+        <button type="button" onclick="window.focus(); window.print();" style="background:#10b981;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
+          🖨️ طباعة الآن / حفظ كـ PDF
         </button>
-        <button type="button" onclick="window.focus(); window.print();" style="background:#2563eb;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
-          🖨️ طباعة مباشرة من نفس الشاشة
+        <button type="button" onclick="openStandalonePrintPopup()" style="background:#2563eb;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
+          🗔 فتح في نافذة مستقلة
         </button>
         <button type="button" onclick="closeUniversalPrintView()" style="background:#ef4444;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
           🔙 العودة للنظام وإغلاق شاشة الطباعة
@@ -9654,41 +9676,13 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
   }
   void printEl.offsetHeight;
 
-  // Open clean dedicated print window synchronously on user click so the Printer Dialog opens immediately with 100% visible content
-  const fullStandaloneHtml = buildStandalonePrintHtml(docHtml, docTitle, landscape);
-  const popupWin = typeof window.open === 'function' ? window.open('', '_blank') : null;
-  if (popupWin && popupWin.document) {
-    popupWin.document.open();
-    popupWin.document.write(fullStandaloneHtml);
-    popupWin.document.close();
-    if (popupWin.document.body) {
-      void popupWin.document.body.offsetHeight;
-    }
-    const t0 = Date.now();
+  // Give the browser 180ms to paint the #print-area DOM and Base64 logo image BEFORE freezing the renderer with window.print()
+  setTimeout(() => {
     try {
-      popupWin.focus();
-      popupWin.print();
-    } catch (_) {}
-    if (Date.now() - t0 < 80) {
-      setTimeout(() => {
-        try {
-          popupWin.focus();
-          popupWin.print();
-        } catch (_) {}
-      }, 150);
-    }
-    return;
-  }
-
-  // Fallback if popup is blocked (e.g. PWA or strict browser): synchronous print on visible #print-area
-  const t0 = Date.now();
-  if (typeof window.focus === 'function') window.focus();
-  window.print();
-  if (Date.now() - t0 < 80) {
-    setTimeout(() => {
+      if (typeof window.focus === 'function') window.focus();
       window.print();
-    }, 150);
-  }
+    } catch (_) {}
+  }, 180);
 }
 
 // ============================================================================
