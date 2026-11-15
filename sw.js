@@ -1,9 +1,10 @@
-const CACHE_NAME = 'al-asimah-factory-v33';
+const CACHE_NAME = 'al-asimah-factory-v34';
 const ASSETS = [
   './',
   './index.html',
-  './styles.css?v=33',
-  './app.js?v=33',
+  './print.html',
+  './styles.css?v=34',
+  './app.js?v=34',
   './manifest.webmanifest',
   './icons/logo.svg'
 ];
@@ -30,6 +31,7 @@ self.addEventListener('activate', (event) => {
             client.postMessage({ type: 'FORCE_RELOAD_V31' });
             client.postMessage({ type: 'FORCE_RELOAD_V32' });
             client.postMessage({ type: 'FORCE_RELOAD_V33' });
+            client.postMessage({ type: 'FORCE_RELOAD_V34' });
             if (client.navigate) {
               await client.navigate(client.url);
             }

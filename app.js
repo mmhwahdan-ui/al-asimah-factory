@@ -9368,6 +9368,21 @@ function submitPasswordsManagerModal(e) {
 let _lastPrintDocumentHtml = '';
 let _lastPrintDocumentTitle = 'طباعة مستند رسمي - مصنع العاصمة';
 let _lastPrintLandscape = false;
+let _lastPrintExtraOptions = null;
+let _lastPrintUrl = '';
+
+function encodeUtf8ToBase64Url(str) {
+  try {
+    const bytes = new TextEncoder().encode(String(str || ''));
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  } catch (_) {
+    return '';
+  }
+}
 
 function closeUniversalPrintView() {
   window._isPrintingActive = false;
@@ -9382,214 +9397,111 @@ function closeUniversalPrintView() {
   render();
 }
 
-function buildStandalonePrintHtml(docHtml, docTitle, landscape) {
-  return `<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${docTitle}</title>
-  <style>
-    @page { size: ${landscape ? 'A4 landscape' : 'A4 portrait'}; margin: 7mm; }
-    * {
-      box-sizing: border-box;
-      font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-    }
-    html, body {
-      background: #ffffff !important;
-      color: #000000 !important;
-      margin: 0 !important;
-      padding: 12px !important;
-      direction: rtl !important;
-      text-align: right !important;
-      visibility: visible !important;
-      opacity: 1 !important;
-    }
-    #standalone-print-body, #standalone-print-body * {
-      visibility: visible !important;
-      opacity: 1 !important;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-    .pdf-report-wrap {
-      border: 2px solid #0f172a;
-      border-radius: 8px;
-      padding: 14px 16px;
-      direction: rtl;
-      color: #0f172a;
-      background: #ffffff;
-    }
-    .pdf-report-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 2px solid #0f172a;
-      padding-bottom: 8px;
-      margin-bottom: 10px;
-    }
-    .pdf-report-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 11px;
-      margin-bottom: 10px;
-    }
-    .pdf-report-table th, .pdf-report-table td {
-      border: 1px solid #334155;
-      padding: 4px 6px;
-      text-align: center;
-      vertical-align: middle;
-    }
-    .pdf-report-table th {
-      background: #e2e8f0;
-      font-weight: 800;
-      color: #0f172a;
-    }
-    .pdf-report-footer {
-      display: flex;
-      justify-content: space-between;
-      margin-top: 16px;
-      padding-top: 8px;
-      border-top: 1px dashed #64748b;
-      font-size: 11px;
-      font-weight: 700;
-    }
-    @media print {
-      html, body {
-        padding: 0 !important;
-        margin: 0 !important;
-        background: #ffffff !important;
-        color: #000000 !important;
-      }
-      .no-print-bar {
-        display: none !important;
-      }
-      #standalone-print-body {
-        display: block !important;
-        visibility: visible !important;
-        width: 100% !important;
-      }
-    }
-  </style>
-</head>
-<body>
-  <div class="no-print-bar" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:#0f172a;color:#fff;padding:10px 16px;border-radius:10px;margin-bottom:14px;">
-    <strong style="font-size:14px;color:#fbbf24;">🖨️ ${docTitle}</strong>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      <button type="button" onclick="window.focus(); window.print();" style="background:#10b981;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">🖨️ فتح صفحة الطابعة الآن / حفظ PDF</button>
-      <button type="button" onclick="window.close();" style="background:#ef4444;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">✕ إغلاق النافذة</button>
-    </div>
-  </div>
-  <div id="standalone-print-body">
-    ${docHtml}
-  </div>
-  <script>
-    (function() {
-      var printed = false;
-      function firePrintAfterPaint() {
-        if (printed) return;
-        printed = true;
-        setTimeout(function() {
-          try {
-            if (document.body) void document.body.offsetHeight;
-            window.focus();
-            window.print();
-          } catch (e) {}
-        }, 120);
-      }
-      function waitForImagesThenPrint() {
-        var imgs = Array.prototype.slice.call(document.images || []);
-        if (imgs.length === 0) {
-          firePrintAfterPaint();
-          return;
-        }
-        var remaining = imgs.length;
-        var doneOne = function() {
-          remaining--;
-          if (remaining <= 0) firePrintAfterPaint();
-        };
-        imgs.forEach(function(img) {
-          if (img.decode) {
-            img.decode().then(doneOne).catch(doneOne);
-          } else if (img.complete) {
-            doneOne();
-          } else {
-            img.addEventListener('load', doneOne, { once: true });
-            img.addEventListener('error', doneOne, { once: true });
-          }
-        });
-        setTimeout(firePrintAfterPaint, 240);
-      }
-      if (document.readyState === 'complete' || document.readyState === 'interactive') {
-        waitForImagesThenPrint();
-      } else {
-        window.addEventListener('DOMContentLoaded', waitForImagesThenPrint, { once: true });
-        window.addEventListener('load', waitForImagesThenPrint, { once: true });
-        setTimeout(firePrintAfterPaint, 320);
-      }
-    })();
-  </script>
-</body>
-</html>`;
-}
-
-function triggerDirectIframePrint(fullHtml) {
-  try {
-    let iframe = document.getElementById('direct-print-iframe');
-    if (iframe && iframe.parentNode) {
-      iframe.parentNode.removeChild(iframe);
-    }
-    iframe = document.createElement('iframe');
-    iframe.id = 'direct-print-iframe';
-    iframe.style.position = 'fixed';
-    iframe.style.right = '0';
-    iframe.style.bottom = '0';
-    iframe.style.width = '1px';
-    iframe.style.height = '1px';
-    iframe.style.border = '0';
-    iframe.style.opacity = '0.01';
-    document.body.appendChild(iframe);
-
-    const iDoc = iframe.contentWindow ? iframe.contentWindow.document : iframe.contentDocument;
-    if (!iDoc) return false;
-    iDoc.open();
-    iDoc.write(fullHtml);
-    iDoc.close();
-    return true;
-  } catch (_) {}
-  return false;
-}
-
-function openStandalonePrintPopup() {
-  if (!_lastPrintDocumentHtml) return;
-  const fullHtml = buildStandalonePrintHtml(_lastPrintDocumentHtml, _lastPrintDocumentTitle, _lastPrintLandscape);
-  let w = null;
-  try {
-    w = typeof window.open === 'function' ? window.open('', '_blank') : null;
-  } catch (_) {}
-  if (!w || !w.document) {
+function downloadInPagePdfFile() {
+  const contentEl = document.getElementById('print-document-content');
+  if (!contentEl || !contentEl.innerHTML.trim()) return;
+  if (typeof window.html2pdf !== 'function') {
     window.focus();
     window.print();
     return;
   }
+  const safeName = (_lastPrintDocumentTitle || 'مستند_مصنع_العاصمة').replace(/[\\/:*?"<>|]/g, '_') + '.pdf';
+  window.html2pdf().set({
+    margin: 7,
+    filename: safeName,
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: _lastPrintLandscape ? 'landscape' : 'portrait' }
+  }).from(contentEl).save().catch(() => {
+    window.focus();
+    window.print();
+  });
+}
+
+function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null) {
+  const jobId = `pj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const compactHtml = String(docHtml || '').split(DEFAULT_FACTORY_LOGO_DATA_URL).join('__CSI_DEFAULT_LOGO__');
+  const jobPayload = {
+    jobId,
+    title: docTitle || 'طباعة مستند رسمي - مصنع العاصمة',
+    landscape: Boolean(landscape),
+    html: compactHtml,
+    createdAt: Date.now()
+  };
+
   try {
-    w.document.open();
-    w.document.write(fullHtml);
-    w.document.close();
-    w.focus();
-  } catch (_) {
+    localStorage.setItem('al_asimah_last_print_job', JSON.stringify(jobPayload));
+  } catch (_) {}
+
+  const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname.startsWith('192.168.');
+  if (isLocal) {
+    try {
+      fetch('/api/print-job', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(jobPayload),
+        keepalive: true
+      }).catch(() => {});
+    } catch (_) {}
+  }
+
+  try {
+    const fbJobsBase = 'https://elite-grand-8a6c3-default-rtdb.firebaseio.com/al_asimah_print_jobs';
+    fetch(`${fbJobsBase}/${encodeURIComponent(jobId)}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(jobPayload),
+      keepalive: true
+    }).catch(() => {});
+    fetch(`${fbJobsBase}/latest.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(jobPayload),
+      keepalive: true
+    }).catch(() => {});
+  } catch (_) {}
+
+  const urlObj = new URL('./print.html', window.location.href);
+  urlObj.searchParams.set('job', jobId);
+  urlObj.searchParams.set('v', '34');
+  if (landscape) urlObj.searchParams.set('l', '1');
+  if (extraOptions && extraOptions.orderId) {
+    urlObj.searchParams.set('orderId', extraOptions.orderId);
+  }
+
+  if (extraOptions && extraOptions.compactCarJson) {
+    const dB64 = encodeUtf8ToBase64Url(JSON.stringify(extraOptions.compactCarJson));
+    if (dB64 && (urlObj.href.length + dB64.length) < 1850) {
+      urlObj.hash = `d=${dB64}`;
+      return urlObj.href;
+    }
+  }
+
+  const hB64 = encodeUtf8ToBase64Url(compactHtml);
+  if (hB64 && (urlObj.href.length + hB64.length) < 1850) {
+    urlObj.hash = `h=${hB64}`;
+  }
+  return urlObj.href;
+}
+
+function openStandalonePrintPopup() {
+  if (!_lastPrintDocumentHtml) return;
+  const targetUrl = _lastPrintUrl || buildRealPrintPageUrl(_lastPrintDocumentHtml, _lastPrintDocumentTitle, _lastPrintLandscape, _lastPrintExtraOptions);
+  let w = null;
+  try {
+    w = typeof window.open === 'function' ? window.open(targetUrl, '_blank') : null;
+  } catch (_) {}
+  if (!w) {
     window.focus();
     window.print();
   }
 }
 
-function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند رسمي - مصنع العاصمة', landscape = false) {
+function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند رسمي - مصنع العاصمة', landscape = false, extraOptions = null) {
   _lastPrintDocumentHtml = docHtml;
   _lastPrintDocumentTitle = docTitle;
   _lastPrintLandscape = Boolean(landscape);
+  _lastPrintExtraOptions = extraOptions;
   window._isPrintingActive = true;
 
   // Close any open modal so it never overlaps or blocks the print preview
@@ -9630,26 +9542,39 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
         padding: 14px !important;
       }
       @media print {
-        html, body {
+        html, body, body.is-printing-mode {
+          display: block !important;
           background: #ffffff !important;
           color: #000000 !important;
           margin: 0 !important;
           padding: 0 !important;
           height: auto !important;
+          min-height: 0 !important;
+          max-height: none !important;
           overflow: visible !important;
+          overflow-x: visible !important;
+          overflow-y: visible !important;
           -webkit-print-color-adjust: exact !important;
           print-color-adjust: exact !important;
         }
-        #app, #modal-root, .live-alert-banner, .floating-chat-fab, .floating-smart-dock, .no-print-bar, #direct-print-iframe {
+        #app, body.is-printing-mode #app,
+        #modal-root, body.is-printing-mode #modal-root,
+        .live-alert-banner, .floating-chat-fab, .floating-smart-dock, .no-print-bar, #direct-print-iframe {
           display: none !important;
         }
-        #print-area, #print-area * {
+        #print-area, body.is-printing-mode #print-area, #print-area * {
           visibility: visible !important;
+          opacity: 1 !important;
         }
-        #print-area {
+        #print-area, body.is-printing-mode #print-area {
           display: block !important;
           position: static !important;
+          z-index: auto !important;
           width: 100% !important;
+          height: auto !important;
+          min-height: 0 !important;
+          max-height: none !important;
+          overflow: visible !important;
           background: #ffffff !important;
           color: #000000 !important;
           padding: 0 !important;
@@ -9703,14 +9628,17 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
     <div class="no-print-bar" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:#0f172a;color:#fff;padding:12px 18px;border-radius:10px;margin-bottom:16px;font-family:'Cairo',sans-serif;direction:rtl;">
       <div>
         <strong style="font-size:15px;color:#fbbf24;">🖨️ معاينة الطباعة الرسمية: ${docTitle}</strong>
-        <div style="font-size:12px;color:#cbd5e1;">المستند جاهز للطباعة — يمكنك الضغط على (طباعة الآن) أو (فتح في نافذة مستقلة)</div>
+        <div style="font-size:12px;color:#cbd5e1;">المستند جاهز للطباعة الفورية أو التحميل كملف PDF مباشر</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button type="button" onclick="window.focus(); window.print();" style="background:#10b981;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
           🖨️ طباعة الآن / حفظ كـ PDF
         </button>
+        <button type="button" onclick="downloadInPagePdfFile()" style="background:#7c3aed;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
+          📥 تحميل كملف PDF مباشر
+        </button>
         <button type="button" onclick="openStandalonePrintPopup()" style="background:#2563eb;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
-          🗔 فتح في نافذة طباعة مستقلة
+          🗔 فتح في صفحة طباعة مستقلة
         </button>
         <button type="button" onclick="closeUniversalPrintView()" style="background:#ef4444;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
           🔙 العودة للنظام وإغلاق شاشة الطباعة
@@ -9727,22 +9655,17 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
   }
   void printEl.offsetHeight;
 
-  // Open dedicated standalone print page synchronously on user click so it never gets blocked by popup blockers,
-  // and let its internal script wait for all images + 2x requestAnimationFrame BEFORE calling window.print()!
+  // Build real committed URL to ./print.html (NEVER about:blank!)
+  _lastPrintUrl = buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions);
   let popupOpened = false;
   try {
-    const fullHtml = buildStandalonePrintHtml(docHtml, docTitle, landscape);
-    const popupWin = typeof window.open === 'function' ? window.open('', '_blank') : null;
-    if (popupWin && popupWin.document) {
-      popupWin.document.open();
-      popupWin.document.write(fullHtml);
-      popupWin.document.close();
-      popupWin.focus();
+    const popupWin = typeof window.open === 'function' ? window.open(_lastPrintUrl, '_blank') : null;
+    if (popupWin) {
       popupOpened = true;
     }
   } catch (_) {}
 
-  // If popup was blocked (e.g., inside an embedded mobile webview), wait for images inside #print-area to decode, then trigger window.print()
+  // Also trigger in-page print after images decode if popup did not open
   if (!popupOpened) {
     const imgs = Array.from(printEl.querySelectorAll('img'));
     const decodePromises = imgs.map(img => (img.decode ? img.decode().catch(() => {}) : Promise.resolve()));
@@ -9756,7 +9679,7 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
           if (typeof window.focus === 'function') window.focus();
           window.print();
         } catch (_) {}
-      }, 120);
+      }, 150);
     });
   }
 }
@@ -10093,7 +10016,7 @@ function buildVehicleDispatchVoucherPrintHtml(ord, movFallback = null) {
   const combinedNotes = [car.notes, ord.notes].filter(Boolean).join(' — ');
 
   return `
-    <div class="vehicle-dispatch-voucher-box" style="border:3px solid #000;padding:24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;page-break-inside:avoid;">
+    <div class="vehicle-dispatch-voucher-box" style="border:3px solid #000;padding:24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #000;padding-bottom:12px;margin-bottom:16px;">
         <div>
           <h1 style="margin:0;font-size:22px;color:#000;">${factoryName}</h1>
@@ -10197,7 +10120,44 @@ function printVehicleDispatchVoucher(orderId, movId = null) {
   const car = ord?.carDispatchVoucher || {};
   const html = buildVehicleDispatchVoucherPrintHtml(ord, mov);
   const titleLabel = car.carPlateNumber || ord?.orderNumber || mov?.voucherNumber || '';
-  openUniversalPrintDocument(html, `إذن صرف سيارة ${titleLabel}`, false);
+  const compactCarJson = ord ? {
+    t: 'car',
+    fn: state.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة',
+    vn: car.voucherNo || ('CAR-' + ord.orderNumber),
+    on: ord.orderNumber || '',
+    dt: car.dispatchDate || ord.date || todayStr(),
+    cc: ord.clientCode || 'CL',
+    cn: ord.clientName || '',
+    cp: car.carPlateNumber || mov?.referenceCode || 'خروج من المخزن',
+    dn: car.driverName || '',
+    dp: car.driverPhone || '',
+    po: car.palletsDeliveredCount ?? 0,
+    pi: car.palletsReceivedCount ?? 0,
+    nt: [car.notes, ord.notes].filter(Boolean).join(' — '),
+    ab: ord.accountantReleaseBy || '',
+    wb: car.dispatchedBy || ord.warehousePrepApprovedBy || currentUser?.name || '',
+    it: (ord.items || []).map(it => {
+      const sh = Number(it.sheetsCount || 0);
+      const len = Number(it.lengthCm || 250);
+      const wid = Number(it.widthCm || 125);
+      const area = Number(it.areaM2 || (sh * (len / 100) * (wid / 100)));
+      const vol = Number(it.volumeM3 || (area * (Number(it.thicknessMm || 0) / 1000)));
+      return {
+        th: it.thicknessMm,
+        dr: it.direction,
+        gr: it.gradeName || '-',
+        l: len,
+        w: wid,
+        sh,
+        a: Number(area.toFixed(2)),
+        v: Number(vol.toFixed(4))
+      };
+    })
+  } : null;
+  openUniversalPrintDocument(html, `إذن صرف سيارة ${titleLabel}`, false, {
+    orderId: ord?.id || '',
+    compactCarJson
+  });
 }
 
 function printClientFullStatement(clientId) {

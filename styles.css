@@ -919,34 +919,50 @@ body.is-printing-mode #print-area {
 
 @media print {
   @page {
+    size: A4 portrait;
     margin: 8mm;
   }
-  html, body {
+  html, body, body.is-printing-mode {
     background: #ffffff !important;
     color: #000000 !important;
     margin: 0 !important;
     padding: 0 !important;
     height: auto !important;
     min-height: 0 !important;
+    max-height: none !important;
     overflow: visible !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
   #app,
+  body.is-printing-mode #app,
   #modal-root,
+  body.is-printing-mode #modal-root,
   .live-alert-banner,
+  body.is-printing-mode .live-alert-banner,
   .floating-chat-fab,
+  body.is-printing-mode .floating-chat-fab,
   .floating-smart-dock,
-  .no-print-bar {
+  body.is-printing-mode .floating-smart-dock,
+  .no-print-bar,
+  body.is-printing-mode .no-print-bar {
     display: none !important;
   }
-  #print-area, #print-area * {
+  #print-area,
+  body.is-printing-mode #print-area,
+  #print-area *,
+  body.is-printing-mode #print-area * {
     visibility: visible !important;
   }
-  #print-area {
+  #print-area,
+  body.is-printing-mode #print-area {
     display: block !important;
     position: static !important;
     width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
     background: #ffffff !important;
     color: #000000 !important;
     padding: 0 !important;
