@@ -50,8 +50,19 @@ let quickCalc = {
   thicknessMm: 1.5,
   sheetsPerPallet: 400,
   palletsCount: 1,
-  pricePerM3: 22000
+  pricePerM3: 22000,
+  woodenPalletUnitPrice: 0
 };
+
+function getWoodenPalletUnitPrice(clientObj = null, recordObj = null) {
+  if (recordObj && recordObj.palletUnitPrice !== undefined && recordObj.palletUnitPrice !== null && recordObj.palletUnitPrice !== '' && Number(recordObj.palletUnitPrice) > 0) {
+    return Number(recordObj.palletUnitPrice);
+  }
+  if (clientObj && clientObj.palletUnitPrice !== undefined && clientObj.palletUnitPrice !== null && clientObj.palletUnitPrice !== '' && Number(clientObj.palletUnitPrice) > 0) {
+    return Number(clientObj.palletUnitPrice);
+  }
+  return Number(state?.catalog?.woodenPalletUnitPrice || quickCalc.woodenPalletUnitPrice || 0);
+}
 
 // Utility functions
 function uid(prefix = 'id') {
@@ -968,6 +979,12 @@ function smartMergeClientState(current, incoming) {
     factoryInfo: { ...(current.factoryInfo || {}), ...(incoming.factoryInfo || {}) },
     treasuryBalances: { ...(current.treasuryBalances || {}), ...(incoming.treasuryBalances || {}) },
     catalog: {
+      ...(current.catalog || {}),
+      ...(incoming.catalog || {}),
+      woodenPalletUnitPrice: Number(incoming.catalog?.woodenPalletUnitPriceUpdatedAt || 0) >= Number(current.catalog?.woodenPalletUnitPriceUpdatedAt || 0)
+        ? Number(incoming.catalog?.woodenPalletUnitPrice ?? current.catalog?.woodenPalletUnitPrice ?? 0)
+        : Number(current.catalog?.woodenPalletUnitPrice ?? incoming.catalog?.woodenPalletUnitPrice ?? 0),
+      woodenPalletUnitPriceUpdatedAt: Math.max(Number(current.catalog?.woodenPalletUnitPriceUpdatedAt || 0), Number(incoming.catalog?.woodenPalletUnitPriceUpdatedAt || 0)),
       woodTypes: smartMergeListClient(current.catalog?.woodTypes, incoming.catalog?.woodTypes, delSet, 0),
       thicknesses: smartMergeListClient(current.catalog?.thicknesses, incoming.catalog?.thicknesses, delSet, 0),
       grades: smartMergeListClient(current.catalog?.grades, incoming.catalog?.grades, delSet, 0),
@@ -2315,7 +2332,9 @@ function renderDashboard() {
   const qcSingleSheetVolM3 = qcMetrics.sheetAreaM2 * (Number(quickCalc.thicknessMm || 0) / 1000);
   const qcSheetsPerM3 = qcSingleSheetVolM3 > 0 ? (1 / qcSingleSheetVolM3) : 0;
   const qcSheetPrice = qcSingleSheetVolM3 * Number(quickCalc.pricePerM3 || 0);
+  const qcSinglePalletValue = qcSingleSheetVolM3 * Number(quickCalc.sheetsPerPallet || 0) * Number(quickCalc.pricePerM3 || 0);
   const qcTotalValue = qcMetrics.totalVolumeM3 * Number(quickCalc.pricePerM3 || 0);
+  const avgPalletStockValue = totalPallets > 0 ? (totalVeneerValue / totalPallets) : 0;
 
   return `
     ${pendingSalesReturns.length > 0 && canApproveSalesReturn(currentUser) ? `
@@ -2443,9 +2462,9 @@ function renderDashboard() {
       </div>
 
       <div class="stat-card accent">
-        <span class="stat-title">${canSeeFinancialPrices() ? 'قيمة مخزون القشرة الجاهزة' : 'إجمالي المساحة والحجم للقشرة بالمخزن'}</span>
+        <span class="stat-title">${canSeeFinancialPrices() ? 'قيمة البالتة وإجمالي قيمة مخزون البالتات' : 'إجمالي المساحة والحجم للقشرة بالمخزن'}</span>
         <div class="stat-value">${canSeeFinancialPrices() ? fmtMoney(totalVeneerValue) : fmtNum(totalAreaM2, 2) + ' م²'}</div>
-        <div class="stat-sub">مصنفة حسب التخانة (قص / سدا) ودرجة الجودة (A, B, C)</div>
+        <div class="stat-sub">${canSeeFinancialPrices() ? `عدد البالتات: <strong>${totalPallets} بالتة</strong> | متوسط قيمة البالتة: <strong>${fmtMoney(avgPalletStockValue)}</strong>` : 'مصنفة حسب التخانة (قص / سدا) ودرجة الجودة (A, B, C)'}</div>
       </div>
 
       <div class="stat-card info">
@@ -2541,6 +2560,10 @@ function renderDashboard() {
           <label>💰 سعر الفرخ الواحد (القطعة) بالجنيه</label>
           <input id="qc-sheet-price-input" type="text" inputmode="decimal" dir="ltr" style="text-align:center;font-weight:900;font-size:1rem;border-color:#16a34a;color:#15803d;background:rgba(22,163,74,0.06);" class="form-control" value="${fmtNum(qcSheetPrice, 2)}" oninput="onQuickCalcSheetPriceInput(this.value)" onclick="this.select()" title="يتحدث تلقائياً عند إدخال سعر المتر المكعب (أو اكتب سعر الفرخ لحساب سعر المتر)" />
         </div>
+        <div class="form-group">
+          <label>📦 قيمة البالتة الواحدة (${quickCalc.sheetsPerPallet} فرخ) بالجنيه</label>
+          <input id="qc-pallet-value-input" type="text" inputmode="decimal" dir="ltr" style="text-align:center;font-weight:900;font-size:1rem;border-color:#d97706;color:#b45309;background:rgba(217,119,6,0.08);" class="form-control" value="${fmtNum(qcSinglePalletValue, 2)}" oninput="onQuickCalcSinglePalletValueInput(this.value)" onclick="this.select()" title="يتحدث تلقائياً (أو اكتب قيمة البالتة لحساب سعر الفرخ وإجمالي قيمة البالتات)" />
+        </div>
         ` : ''}
       </div>
 
@@ -2554,14 +2577,22 @@ function renderDashboard() {
           <span style="color:#15803d;font-weight:800;">💰 سعر الفرخ الواحد (من سعر الـ م³)</span>
           <strong style="color:#16a34a;font-size:1.18rem;">${fmtMoney(qcSheetPrice)} <small style="font-size:0.75rem;color:var(--text-muted);">(${fmtNum(qcSheetPrice, 3)} ج.م/فرخ)</small></strong>
         </div>
+        <div class="calc-preview-item" style="border:1.5px solid #d97706;background:rgba(217,119,6,0.08);border-radius:10px;padding:8px 12px;">
+          <span style="color:#b45309;font-weight:800;">📦 قيمة البالتة الواحدة (${fmtNum(quickCalc.sheetsPerPallet, 0)} فرخ)</span>
+          <strong style="color:#d97706;font-size:1.18rem;">${fmtMoney(qcSinglePalletValue)}</strong>
+        </div>
+        <div class="calc-preview-item" style="border:2px solid #7c3aed;background:rgba(124,58,237,0.09);border-radius:10px;padding:8px 12px;">
+          <span style="color:#6d28d9;font-weight:800;">💎 إجمالي قيمة البالتات (${fmtNum(quickCalc.palletsCount, 0)} بالتة = ${fmtNum(qcTotalSheets, 0)} فرخ)</span>
+          <strong style="color:#7c3aed;font-size:1.22rem;">${fmtMoney(qcTotalValue)}</strong>
+        </div>
         ` : ''}
         <div class="calc-preview-item">
           <span>مساحة وحجم الفرخ الواحد</span>
           <strong>${fmtNum(qcMetrics.sheetAreaM2, 4)} م² <small style="color:var(--text-muted);">(${fmtNum(qcSingleSheetVolM3, 6)} م³)</small></strong>
         </div>
         <div class="calc-preview-item">
-          <span>إجمالي عدد الأفرخ للبالتات</span>
-          <strong>${fmtNum(qcTotalSheets, 0)} فرخ</strong>
+          <span>عدد البالتات × الأفرخ للبالتات</span>
+          <strong>${fmtNum(quickCalc.palletsCount, 0)} بالتة (${fmtNum(qcTotalSheets, 0)} فرخ)</strong>
         </div>
         <div class="calc-preview-item">
           <span>إجمالي المساحة (م²)</span>
@@ -2571,12 +2602,6 @@ function renderDashboard() {
           <span>إجمالي الحجم الفعلي (م³)</span>
           <strong>${fmtNum(qcMetrics.totalVolumeM3, 4)} م³</strong>
         </div>
-        ${canSeeFinancialPrices() ? `
-        <div class="calc-preview-item">
-          <span>القيمة الإجمالية للبالتات (${fmtNum(qcTotalSheets, 0)} فرخ)</span>
-          <strong style="color:var(--primary);">${fmtMoney(qcTotalValue)}</strong>
-        </div>
-        ` : ''}
       </div>
     </div>
 
@@ -2702,6 +2727,23 @@ function onQuickCalcSheetPriceInput(rawVal) {
   updateQuickCalcPreview(false);
 }
 
+function onQuickCalcSinglePalletValueInput(rawVal) {
+  const cleaned = normalizeNumericInputString(rawVal);
+  const palletVal = cleaned === '' ? 0 : (Number(cleaned) || 0);
+  const sheetsPerPal = Math.max(1, Number(quickCalc.sheetsPerPallet || 400));
+  const sheetPrice = palletVal / sheetsPerPal;
+  const sheetAreaM2 = (Number(quickCalc.lengthCm || 0) / 100) * (Number(quickCalc.widthCm || 0) / 100);
+  const singleSheetVolM3 = sheetAreaM2 * (Number(quickCalc.thicknessMm || 0) / 1000);
+  if (singleSheetVolM3 > 0) {
+    quickCalc.pricePerM3 = +(sheetPrice / singleSheetVolM3).toFixed(2);
+    const prEl = document.getElementById('qc-price-input');
+    if (prEl) prEl.value = quickCalc.pricePerM3;
+  }
+  const shPrEl = document.getElementById('qc-sheet-price-input');
+  if (shPrEl) shPrEl.value = +sheetPrice.toFixed(2);
+  updateQuickCalcPreview(false, false);
+}
+
 function setQuickCalcDims(lenCm, widCm) {
   quickCalc.lengthCm = Number(lenCm || 250);
   quickCalc.widthCm = Number(widCm || 125);
@@ -2726,7 +2768,8 @@ function resetQuickCalcValues() {
     thicknessMm: 1.5,
     sheetsPerPallet: 400,
     palletsCount: 1,
-    pricePerM3: 22000
+    pricePerM3: 22000,
+    woodenPalletUnitPrice: 0
   };
   const lenEl = document.getElementById('qc-len-input');
   const widEl = document.getElementById('qc-wid-input');
@@ -2743,7 +2786,7 @@ function resetQuickCalcValues() {
   updateQuickCalcPreview(true);
 }
 
-function updateQuickCalcPreview(syncSheetPriceInput = true) {
+function updateQuickCalcPreview(syncSheetPriceInput = true, syncPalletValInput = true) {
   const qcTotalSheets = Number(quickCalc.sheetsPerPallet || 0) * Number(quickCalc.palletsCount || 0);
   const qcMetrics = calculateVeneerMetrics(
     Number(quickCalc.lengthCm || 0),
@@ -2754,12 +2797,19 @@ function updateQuickCalcPreview(syncSheetPriceInput = true) {
   const qcSingleSheetVolM3 = qcMetrics.sheetAreaM2 * (Number(quickCalc.thicknessMm || 0) / 1000);
   const qcSheetsPerM3 = qcSingleSheetVolM3 > 0 ? (1 / qcSingleSheetVolM3) : 0;
   const qcSheetPrice = qcSingleSheetVolM3 * Number(quickCalc.pricePerM3 || 0);
+  const qcSinglePalletValue = qcSingleSheetVolM3 * Number(quickCalc.sheetsPerPallet || 0) * Number(quickCalc.pricePerM3 || 0);
   const qcTotalValue = qcMetrics.totalVolumeM3 * Number(quickCalc.pricePerM3 || 0);
 
   if (syncSheetPriceInput) {
     const shPrEl = document.getElementById('qc-sheet-price-input');
     if (shPrEl && document.activeElement !== shPrEl) {
       shPrEl.value = +qcSheetPrice.toFixed(2);
+    }
+  }
+  if (syncPalletValInput) {
+    const palValEl = document.getElementById('qc-pallet-value-input');
+    if (palValEl && document.activeElement !== palValEl) {
+      palValEl.value = +qcSinglePalletValue.toFixed(2);
     }
   }
 
@@ -2775,14 +2825,22 @@ function updateQuickCalcPreview(syncSheetPriceInput = true) {
         <span style="color:#15803d;font-weight:800;">💰 سعر الفرخ الواحد (من سعر الـ م³)</span>
         <strong style="color:#16a34a;font-size:1.18rem;">${fmtMoney(qcSheetPrice)} <small style="font-size:0.75rem;color:var(--text-muted);">(${fmtNum(qcSheetPrice, 3)} ج.م/فرخ)</small></strong>
       </div>
+      <div class="calc-preview-item" style="border:1.5px solid #d97706;background:rgba(217,119,6,0.08);border-radius:10px;padding:8px 12px;">
+        <span style="color:#b45309;font-weight:800;">📦 قيمة البالتة الواحدة (${fmtNum(quickCalc.sheetsPerPallet, 0)} فرخ)</span>
+        <strong style="color:#d97706;font-size:1.18rem;">${fmtMoney(qcSinglePalletValue)}</strong>
+      </div>
+      <div class="calc-preview-item" style="border:2px solid #7c3aed;background:rgba(124,58,237,0.09);border-radius:10px;padding:8px 12px;">
+        <span style="color:#6d28d9;font-weight:800;">💎 إجمالي قيمة البالتات (${fmtNum(quickCalc.palletsCount, 0)} بالتة = ${fmtNum(qcTotalSheets, 0)} فرخ)</span>
+        <strong style="color:#7c3aed;font-size:1.22rem;">${fmtMoney(qcTotalValue)}</strong>
+      </div>
       ` : ''}
       <div class="calc-preview-item">
         <span>مساحة وحجم الفرخ الواحد</span>
         <strong>${fmtNum(qcMetrics.sheetAreaM2, 4)} م² <small style="color:var(--text-muted);">(${fmtNum(qcSingleSheetVolM3, 6)} م³)</small></strong>
       </div>
       <div class="calc-preview-item">
-        <span>إجمالي عدد الأفرخ للبالتات</span>
-        <strong>${fmtNum(qcTotalSheets, 0)} فرخ</strong>
+        <span>عدد البالتات × الأفرخ للبالتات</span>
+        <strong>${fmtNum(quickCalc.palletsCount, 0)} بالتة (${fmtNum(qcTotalSheets, 0)} فرخ)</strong>
       </div>
       <div class="calc-preview-item">
         <span>إجمالي المساحة (م²)</span>
@@ -2792,12 +2850,6 @@ function updateQuickCalcPreview(syncSheetPriceInput = true) {
         <span>إجمالي الحجم الفعلي (م³)</span>
         <strong>${fmtNum(qcMetrics.totalVolumeM3, 4)} م³</strong>
       </div>
-      ${canSeeFinancialPrices() ? `
-      <div class="calc-preview-item">
-        <span>القيمة الإجمالية للبالتات (${fmtNum(qcTotalSheets, 0)} فرخ)</span>
-        <strong style="color:var(--primary);">${fmtMoney(qcTotalValue)}</strong>
-      </div>
-      ` : ''}
     `;
   }
 }
@@ -3863,7 +3915,7 @@ function handleOrderModalClientSearch(val) {
 }
 
 function computeClientMetrics(pt) {
-  if (!pt) return { orders: [], txs: [], palletMoves: [], totalInvoiced: 0, totalPaid: 0, netDebt: 0, palletsDelivered: 0, palletsReceived: 0, netPalletsAtClient: 0 };
+  if (!pt) return { orders: [], txs: [], palletMoves: [], totalInvoiced: 0, totalPaid: 0, netDebt: 0, palletsDelivered: 0, palletsReceived: 0, netPalletsAtClient: 0, palletUnitPrice: 0, palletsDeliveredValue: 0, palletsReceivedValue: 0, netPalletsValue: 0 };
 
   const orders = (state.productionOrders || []).filter(
     o => (o.clientId && o.clientId === pt.id) || (o.clientName && o.clientName.trim() === pt.name.trim())
@@ -3900,9 +3952,20 @@ function computeClientMetrics(pt) {
   // netDebt < 0 means client has credit/receivables with the factory (مستحقات للعميل)
   const netDebt = +(totalDebit - totalCredit).toFixed(2);
 
+  const palletUnitPrice = getWoodenPalletUnitPrice(pt);
   const palletsDelivered = Number(pt.openingPalletsDelivered || 0) + palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0), 0);
   const palletsReceived = Number(pt.openingPalletsReceived || 0) + palletMoves.reduce((s, pm) => s + Number(pm.receivedCount || 0), 0);
   const netPalletsAtClient = palletsDelivered - palletsReceived;
+
+  const palletsDeliveredValue = +(
+    Number(pt.openingPalletsDelivered || 0) * palletUnitPrice +
+    palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0) * getWoodenPalletUnitPrice(pt, pm), 0)
+  ).toFixed(2);
+  const palletsReceivedValue = +(
+    Number(pt.openingPalletsReceived || 0) * palletUnitPrice +
+    palletMoves.reduce((s, pm) => s + Number(pm.receivedCount || 0) * getWoodenPalletUnitPrice(pt, pm), 0)
+  ).toFixed(2);
+  const netPalletsValue = +(palletsDeliveredValue - palletsReceivedValue).toFixed(2);
 
   return {
     orders,
@@ -3917,7 +3980,11 @@ function computeClientMetrics(pt) {
     netDebt,
     palletsDelivered,
     palletsReceived,
-    netPalletsAtClient
+    netPalletsAtClient,
+    palletUnitPrice,
+    palletsDeliveredValue,
+    palletsReceivedValue,
+    netPalletsValue
   };
 }
 
@@ -4296,6 +4363,11 @@ function renderApprovals() {
                         <small style="font-size:0.7rem;">${car.driverName}</small><br/>
                         <span class="badge badge-warning">🪵 مسلم: ${car.palletsDeliveredCount}</span>
                         ${car.palletsReceivedCount > 0 ? `<span class="badge badge-success">مستلم: ${car.palletsReceivedCount}</span>` : ''}
+                        ${canSeeFinancialPrices() ? (() => {
+                          const pPrice = getWoodenPalletUnitPrice(state.partners?.find(p => p.id === ord.clientId), car);
+                          const pTotal = Number(car.palletsDeliveredCount || 0) * pPrice;
+                          return pPrice > 0 ? `<div style="font-size:0.68rem;margin-top:2px;color:var(--primary);font-weight:700;">سعر البالتة: ${fmtMoney(pPrice)}<br/>إجمالي البالتات: ${fmtMoney(pTotal)}</div>` : '';
+                        })() : ''}
                       ` : '<span style="color:var(--text-muted);font-size:0.72rem;">لم تحمل بعد</span>'}
                     </td>
                     <td>${getOrderStageBadge(ord)}</td>
@@ -4376,6 +4448,10 @@ function renderAccounting() {
   const totalPalletsDeliveredAll = enrichedClients.reduce((s, x) => s + x.metrics.palletsDelivered, 0);
   const totalPalletsReceivedAll = enrichedClients.reduce((s, x) => s + x.metrics.palletsReceived, 0);
   const totalNetPalletsOut = totalPalletsDeliveredAll - totalPalletsReceivedAll;
+  const defaultPalletPrice = getWoodenPalletUnitPrice();
+  const totalPalletsDeliveredValueAll = enrichedClients.reduce((s, x) => s + x.metrics.palletsDeliveredValue, 0);
+  const totalPalletsReceivedValueAll = enrichedClients.reduce((s, x) => s + x.metrics.palletsReceivedValue, 0);
+  const totalNetPalletsOutValue = enrichedClients.reduce((s, x) => s + x.metrics.netPalletsValue, 0);
 
   return `
     <!-- Top Financial & Pallets Summary Cards -->
@@ -4393,9 +4469,16 @@ function renderAccounting() {
       </div>
 
       <div class="stat-card accent">
-        <span class="stat-title">حساب البالتات الخشبية طرف العملاء</span>
-        <div class="stat-value">${fmtNum(totalNetPalletsOut, 0)} بالتة بالخارج</div>
-        <div class="stat-sub">مسلم للعملاء: <strong>${totalPalletsDeliveredAll}</strong> | مستلم منهم: <strong>${totalPalletsReceivedAll}</strong></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+          <span class="stat-title">حساب البالتات الخشبية وقيمتها طرف العملاء</span>
+          <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.7rem;border-color:var(--accent);color:var(--accent);font-weight:800;" onclick="openSetDefaultPalletPriceModal()">
+            💰 تحديد قيمة البالتة (${fmtNum(defaultPalletPrice, 0)} ج)
+          </button>
+        </div>
+        <div class="stat-value">${fmtNum(totalNetPalletsOut, 0)} بالتة | <span style="color:var(--primary);font-size:1.15rem;">${fmtMoney(totalNetPalletsOutValue)}</span></div>
+        <div class="stat-sub">
+          قيمة البالتة: <strong>${fmtMoney(defaultPalletPrice)}</strong> | مسلم: <strong>${totalPalletsDeliveredAll}</strong> (${fmtMoney(totalPalletsDeliveredValueAll)}) | مستلم: <strong>${totalPalletsReceivedAll}</strong> (${fmtMoney(totalPalletsReceivedValueAll)})
+        </div>
       </div>
 
       <div class="stat-card success">
@@ -4409,14 +4492,15 @@ function renderAccounting() {
     <div class="card">
       <div class="card-header">
         <div>
-          <div class="card-title">🤝 حسابات ومبيعات العملاء (الأكواد، الطلبيات الفائتة، بيان المديونيات والمستحقات، وحسابات البالتات)</div>
+          <div class="card-title">🤝 حسابات ومبيعات العملاء (الأكواد، الطلبيات الفائتة، بيان المديونيات والمستحقات، وحسابات وقيمة البالتات)</div>
           <small style="color:var(--text-muted);">
-            اضغط على <strong>"📂 كشف حساب والطلبيات الفائتة"</strong> لأي عميل لمراجعة كافة طلبياته السابقة، وحركة المديونية، وحركة البالتات المسلمة له والمستلمة منه
+            اضغط على <strong>"📂 كشف الحساب"</strong> لأي عميل لمراجعة كافة طلبياته السابقة، وحركة المديونية، وعدد وقيمة البالتات المسلمة له والمستلمة منه
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-primary" onclick="openNewPartnerModal()">➕ إضافة عميل جديد بالكود</button>
           <button class="btn btn-accent" onclick="openNewClientOrderPrepModal()">📋 إنشاء أمر تجهيز طلبية لعميل</button>
+          <button class="btn btn-outline" style="border-color:#d97706;color:#b45309;font-weight:800;" onclick="openSetDefaultPalletPriceModal()">🪵 تحديد قيمة البالتة (${fmtMoney(defaultPalletPrice)})</button>
           <button class="btn btn-outline" onclick="openNewFinancialTxModal()">💵 تسجيل سند مالي عام بالخزينة</button>
           <button class="btn btn-outline" onclick="printAllClientsAccountingReportPdf()">🖨️ طباعة كشف حسابات جميع العملاء PDF</button>
         </div>
@@ -4444,7 +4528,7 @@ function renderAccounting() {
               <th>المسحوبات</th>
               <th>المدفوعات</th>
               <th>صافي المديونية</th>
-              <th>البالتات</th>
+              <th>البالتات (العدد + القيمة)</th>
               <th>إجراءات العميل</th>
             </tr>
           </thead>
@@ -4490,12 +4574,16 @@ function renderAccounting() {
                     `}
                   </td>
                   <td>
-                    <div style="font-size:0.72rem;line-height:1.4;">
+                    <div style="font-size:0.72rem;line-height:1.45;">
                       <span>مسلم: <strong>${m.palletsDelivered}</strong></span> |
                       <span>مستلم: <strong style="color:var(--success);">${m.palletsReceived}</strong></span><br/>
                       <span class="badge ${m.netPalletsAtClient > 0 ? 'badge-warning' : 'badge-success'}">
-                        🪵 طرفه: ${m.netPalletsAtClient}
+                        🪵 طرفه: ${m.netPalletsAtClient} بالتة
                       </span>
+                      <div style="margin-top:3px;padding-top:2px;border-top:1px dashed var(--border-color);font-size:0.68rem;">
+                        <div>قيمة البالتة: <strong>${fmtMoney(m.palletUnitPrice)}</strong></div>
+                        <div>إجمالي قيمة البالتات: <strong style="color:var(--primary);">${fmtMoney(m.netPalletsValue)}</strong></div>
+                      </div>
                     </div>
                   </td>
                   <td>
@@ -4577,8 +4665,11 @@ function renderAccounting() {
 
       <div class="card">
         <div class="card-header">
-          <div class="card-title">🪵 سجل حركة البالتات المسلمة للعملاء والمستلمة منهم</div>
-          <button class="btn btn-sm btn-outline" onclick="printAllPalletMovementsReportPdf()">🖨️ طباعة سجل البالتات PDF</button>
+          <div class="card-title">🪵 سجل حركة البالتات المسلمة للعملاء والمستلمة منهم (العدد + قيمة البالتة + الإجمالي)</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-outline" style="border-color:#d97706;color:#b45309;font-weight:800;" onclick="openSetDefaultPalletPriceModal()">💰 قيمة البالتة (${fmtNum(defaultPalletPrice, 0)} ج)</button>
+            <button class="btn btn-sm btn-outline" onclick="printAllPalletMovementsReportPdf()">🖨️ طباعة سجل البالتات PDF</button>
+          </div>
         </div>
         <div class="table-responsive">
           <table>
@@ -4588,19 +4679,32 @@ function renderAccounting() {
                 <th>العميل وكوده</th>
                 <th>مسلم للعميل</th>
                 <th>مستلم من العميل</th>
+                <th>قيمة البالتة</th>
+                <th>إجمالي قيمة البالتات</th>
                 <th>السيارة / البيان</th>
                 ${isFullAdmin(currentUser) ? '<th>تعديل / حذف</th>' : ''}
               </tr>
             </thead>
             <tbody>
               ${(state.palletMovements || []).length === 0 ? `
-                <tr><td colspan="${isFullAdmin(currentUser) ? 6 : 5}" style="text-align:center;padding:20px;color:var(--text-muted);">لا توجد حركات بالتات مسجلة بعد.</td></tr>
-              ` : (state.palletMovements || []).slice(0, 25).map(pm => `
+                <tr><td colspan="${isFullAdmin(currentUser) ? 8 : 7}" style="text-align:center;padding:20px;color:var(--text-muted);">لا توجد حركات بالتات مسجلة بعد.</td></tr>
+              ` : (state.palletMovements || []).slice(0, 25).map(pm => {
+                const ptObj = (state.partners || []).find(p => p.id === pm.clientId || p.name === pm.clientName);
+                const pmUnitPrice = getWoodenPalletUnitPrice(ptObj, pm);
+                const delVal = +(Number(pm.deliveredCount || 0) * pmUnitPrice).toFixed(2);
+                const recVal = +(Number(pm.receivedCount || 0) * pmUnitPrice).toFixed(2);
+                const totalMoveVal = delVal > 0 ? delVal : recVal;
+                return `
                 <tr>
                   <td>${pm.date}</td>
                   <td><strong>${pm.clientName}</strong> <small style="color:var(--text-muted);">(${pm.clientCode || ''})</small></td>
                   <td><span class="badge badge-warning">+${pm.deliveredCount || 0} بالتة مسلمة</span></td>
                   <td><span class="badge badge-success">-${pm.receivedCount || 0} بالتة مستلمة</span></td>
+                  <td><strong>${fmtMoney(pmUnitPrice)}</strong></td>
+                  <td>
+                    <strong style="color:${delVal >= recVal ? 'var(--primary)' : 'var(--success)'};">${fmtMoney(totalMoveVal)}</strong>
+                    ${delVal > 0 && recVal > 0 ? `<br/><small style="font-size:0.65rem;color:var(--text-muted);">مسلم: ${fmtMoney(delVal)} | مستلم: ${fmtMoney(recVal)}</small>` : ''}
+                  </td>
                   <td>${pm.notes || pm.carPlateNumber || '-'}</td>
                   ${isFullAdmin(currentUser) ? `
                     <td>
@@ -4611,7 +4715,7 @@ function renderAccounting() {
                     </td>
                   ` : ''}
                 </tr>
-              `).join('')}
+              `;}).join('')}
             </tbody>
           </table>
         </div>
@@ -6763,11 +6867,13 @@ function openVehicleDispatchVoucherModal(orderId) {
   if (!ord) return;
   const modalRoot = document.getElementById('modal-root');
   const existingCar = ord.carDispatchVoucher || null;
+  const clientObj = (state.partners || []).find(p => p.id === ord.clientId || p.name === ord.clientName);
   const defaultPallets = existingCar ? Number(existingCar.palletsDeliveredCount ?? 1) : Math.max(1, Math.ceil(Number(ord.totalSheetsCount || 400) / 400));
+  const defaultPalletPrice = getWoodenPalletUnitPrice(clientObj, existingCar);
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box" style="max-width:720px;">
+      <div class="modal-box" style="max-width:740px;">
         <div class="card-header">
           <div>
             <div class="card-title">🚚 صرف الطلبية وعمل إذن صرف للسيارة المحملة بالبضاعة (${ord.orderNumber})</div>
@@ -6809,12 +6915,22 @@ function openVehicleDispatchVoucherModal(orderId) {
             </div>
             <div class="form-group">
               <label style="color:var(--accent);font-weight:800;">🪵 عدد البالتات الخشبية المسلمة للعميل مع البضاعة</label>
-              <input id="car-pallets-out" type="number" min="0" class="form-control" value="${defaultPallets}" required style="font-weight:800;border-color:var(--accent);" />
+              <input id="car-pallets-out" type="number" min="0" class="form-control" value="${defaultPallets}" oninput="updateCarPalletsValueLive()" required style="font-weight:800;border-color:var(--accent);" />
             </div>
             <div class="form-group">
               <label style="color:var(--success);font-weight:800;">🪵 عدد البالتات الخشبية المستلمة/المرتجعة من العميل مع السيارة (إن وجد)</label>
-              <input id="car-pallets-in" type="number" min="0" class="form-control" value="${existingCar?.palletsReceivedCount ?? 0}" required />
+              <input id="car-pallets-in" type="number" min="0" class="form-control" value="${existingCar?.palletsReceivedCount ?? 0}" oninput="updateCarPalletsValueLive()" required />
             </div>
+            ${canSeeFinancialPrices() ? `
+            <div class="form-group">
+              <label style="color:#b45309;font-weight:800;">💰 قيمة البالتة الواحدة (ج.م)</label>
+              <input id="car-pallet-price" type="number" step="0.5" min="0" class="form-control" value="${defaultPalletPrice}" oninput="updateCarPalletsValueLive()" style="font-weight:800;border-color:#d97706;" placeholder="مثال: 250" />
+            </div>
+            <div class="form-group">
+              <label style="color:#7c3aed;font-weight:800;">💎 إجمالي قيمة البالتات المسلمة مع السيارة</label>
+              <input id="car-pallet-total-readonly" type="text" class="form-control" value="${fmtMoney(defaultPallets * defaultPalletPrice)}" readonly style="font-weight:900;color:#7c3aed;background:rgba(124,58,237,0.08);border-color:#7c3aed;" />
+            </div>
+            ` : `<input id="car-pallet-price" type="hidden" value="${defaultPalletPrice}" />`}
             <div class="form-group" style="grid-column: 1 / -1;">
               <label>ملاحظات التحميل وأمن البوابة</label>
               <input id="car-notes" class="form-control" value="${existingCar?.notes || ''}" placeholder="مثال: تم التحميل والتأمين بحزام شداد بحضور أمين المخزن..." />
@@ -6838,6 +6954,15 @@ function openVehicleDispatchVoucherModal(orderId) {
   `;
 }
 
+function updateCarPalletsValueLive() {
+  const outCount = Math.max(0, Number(document.getElementById('car-pallets-out')?.value || 0));
+  const unitPrice = Math.max(0, Number(document.getElementById('car-pallet-price')?.value || 0));
+  const totEl = document.getElementById('car-pallet-total-readonly');
+  if (totEl) {
+    totEl.value = fmtMoney(outCount * unitPrice);
+  }
+}
+
 function submitVehicleDispatchVoucher(e, orderId) {
   e.preventDefault();
   const ord = (state.productionOrders || []).find(o => o.id === orderId);
@@ -6849,9 +6974,24 @@ function submitVehicleDispatchVoucher(e, orderId) {
   const driverPhone = (document.getElementById('car-phone')?.value || '').trim();
   const palletsDeliveredCount = Math.max(0, Number(document.getElementById('car-pallets-out')?.value || 0));
   const palletsReceivedCount = Math.max(0, Number(document.getElementById('car-pallets-in')?.value || 0));
+  const clientObj = (state.partners || []).find(p => p.id === ord.clientId || p.name === ord.clientName);
+  const palletUnitPrice = Math.max(0, Number(document.getElementById('car-pallet-price')?.value ?? getWoodenPalletUnitPrice(clientObj, ord.carDispatchVoucher)));
+  const palletsDeliveredValue = +(palletsDeliveredCount * palletUnitPrice).toFixed(2);
+  const palletsReceivedValue = +(palletsReceivedCount * palletUnitPrice).toFixed(2);
   const carNotes = (document.getElementById('car-notes')?.value || '').trim();
   const now = getMonotonicIso(ord.updatedAt);
   const carVoucherNo = `CAR-${ord.orderNumber}`;
+
+  if (palletUnitPrice > 0) {
+    state.catalog = state.catalog || {};
+    if (!state.catalog.woodenPalletUnitPrice) {
+      state.catalog.woodenPalletUnitPrice = palletUnitPrice;
+      state.catalog.woodenPalletUnitPriceUpdatedAt = Date.now();
+    }
+    if (clientObj && !clientObj.palletUnitPrice) {
+      clientObj.palletUnitPrice = palletUnitPrice;
+    }
+  }
 
   // If stock was not yet deducted in earlier stage, deduct it now; otherwise update existing CAR movement details with vehicle & driver info
   if (!ord.stockDeducted) {
@@ -6907,23 +7047,40 @@ function submitVehicleDispatchVoucher(e, orderId) {
   // Record Wooden Pallets Delivered / Received in Client's Pallet Ledger
   if (palletsDeliveredCount > 0 || palletsReceivedCount > 0) {
     state.palletMovements = state.palletMovements || [];
-    state.palletMovements.unshift({
-      id: uid('plm'),
-      voucherNo: carVoucherNo,
-      date: dispatchDate,
-      clientId: ord.clientId,
-      clientCode: ord.clientCode || 'CL',
-      clientName: ord.clientName,
-      orderId: ord.id,
-      orderNumber: ord.orderNumber,
-      deliveredCount: palletsDeliveredCount,
-      receivedCount: palletsReceivedCount,
-      carPlateNumber,
-      driverName,
-      notes: `مع تحميل الطلبية ${ord.orderNumber} — سيارة ${carPlateNumber} ${carNotes ? '(' + carNotes + ')' : ''}`,
-      createdBy: currentUser.name,
-      updatedAt: now
-    });
+    const existingPm = state.palletMovements.find(pm => pm.orderId === ord.id || pm.voucherNo === carVoucherNo);
+    if (existingPm) {
+      existingPm.date = dispatchDate;
+      existingPm.deliveredCount = palletsDeliveredCount;
+      existingPm.receivedCount = palletsReceivedCount;
+      existingPm.palletUnitPrice = palletUnitPrice;
+      existingPm.totalDeliveredValue = palletsDeliveredValue;
+      existingPm.totalReceivedValue = palletsReceivedValue;
+      existingPm.carPlateNumber = carPlateNumber;
+      existingPm.driverName = driverName;
+      existingPm.notes = `مع تحميل الطلبية ${ord.orderNumber} — سيارة ${carPlateNumber} ${carNotes ? '(' + carNotes + ')' : ''}`;
+      existingPm.updatedAt = now;
+    } else {
+      state.palletMovements.unshift({
+        id: uid('plm'),
+        voucherNo: carVoucherNo,
+        date: dispatchDate,
+        clientId: ord.clientId,
+        clientCode: ord.clientCode || 'CL',
+        clientName: ord.clientName,
+        orderId: ord.id,
+        orderNumber: ord.orderNumber,
+        deliveredCount: palletsDeliveredCount,
+        receivedCount: palletsReceivedCount,
+        palletUnitPrice,
+        totalDeliveredValue: palletsDeliveredValue,
+        totalReceivedValue: palletsReceivedValue,
+        carPlateNumber,
+        driverName,
+        notes: `مع تحميل الطلبية ${ord.orderNumber} — سيارة ${carPlateNumber} ${carNotes ? '(' + carNotes + ')' : ''}`,
+        createdBy: currentUser.name,
+        updatedAt: now
+      });
+    }
   }
 
   ord.stage = 'completed';
@@ -6936,6 +7093,9 @@ function submitVehicleDispatchVoucher(e, orderId) {
     driverPhone,
     palletsDeliveredCount,
     palletsReceivedCount,
+    palletUnitPrice,
+    palletsDeliveredValue,
+    palletsReceivedValue,
     notes: carNotes,
     dispatchedBy: currentUser.name,
     dispatchedAt: now
@@ -7409,6 +7569,10 @@ function openNewPartnerModal(returnToOrderModal = false) {
               <label style="color:var(--success);font-weight:800;">🪵 بالتات خشبية مستلمة من العميل سابقاً (عدد)</label>
               <input id="pt-open-plt-rec" type="number" min="0" class="form-control" value="0" />
             </div>
+            <div class="form-group">
+              <label style="color:#b45309;font-weight:800;">💰 قيمة البالتة الواحدة للعميل (ج.م)</label>
+              <input id="pt-plt-price" type="number" step="0.5" min="0" class="form-control" value="${getWoodenPalletUnitPrice()}" placeholder="مثال: 250" />
+            </div>
 
             <div class="form-group" style="grid-column: 1 / -1;">
               <label>ملاحظات إضافية على حساب العميل</label>
@@ -7438,8 +7602,17 @@ function submitNewPartnerModal(e, returnToOrderModal = false) {
   const openingCredit = Math.max(0, Number(document.getElementById('pt-open-credit')?.value || 0));
   const openingPalletsDelivered = Math.max(0, Number(document.getElementById('pt-open-plt-del')?.value || 0));
   const openingPalletsReceived = Math.max(0, Number(document.getElementById('pt-open-plt-rec')?.value || 0));
+  const palletUnitPrice = Math.max(0, Number(document.getElementById('pt-plt-price')?.value ?? getWoodenPalletUnitPrice()));
   const notes = (document.getElementById('pt-notes')?.value || '').trim();
   const now = new Date().toISOString();
+
+  if (palletUnitPrice > 0) {
+    state.catalog = state.catalog || {};
+    if (!state.catalog.woodenPalletUnitPrice) {
+      state.catalog.woodenPalletUnitPrice = palletUnitPrice;
+      state.catalog.woodenPalletUnitPriceUpdatedAt = Date.now();
+    }
+  }
 
   const newClient = {
     id: uid('pt'),
@@ -7454,6 +7627,7 @@ function submitNewPartnerModal(e, returnToOrderModal = false) {
     openingCredit,
     openingPalletsDelivered,
     openingPalletsReceived,
+    palletUnitPrice,
     balance: +(openingDebit - openingCredit).toFixed(2),
     creditLimit: 500000,
     notes,
@@ -7512,10 +7686,12 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
             </div>
           </div>
           <div style="background:var(--bg-elevated);padding:12px;border-radius:10px;border-right:4px solid #d97706;">
-            <small style="color:var(--text-muted);">رصيد البالتات الخشبية</small>
-            <div style="font-weight:900;font-size:0.95rem;">
+            <small style="color:var(--text-muted);">رصيد وقيمة البالتات الخشبية</small>
+            <div style="font-weight:900;font-size:0.9rem;">
               مسلم له: ${m.palletsDelivered} | مستلم منه: ${m.palletsReceived}<br/>
-              <span style="color:#d97706;">متبقي طرف العميل: ${m.netPalletsAtClient} بالتة</span>
+              <span style="color:#d97706;">متبقي طرف العميل: ${m.netPalletsAtClient} بالتة</span><br/>
+              <span style="font-size:0.78rem;color:var(--text-muted);">قيمة البالتة: <strong>${fmtMoney(m.palletUnitPrice)}</strong></span><br/>
+              <span style="color:var(--primary);">إجمالي قيمة البالتات: ${fmtMoney(m.netPalletsValue)}</span>
             </div>
           </div>
         </div>
@@ -7636,7 +7812,7 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
 
           <!-- 3. Wooden Pallets Delivered & Received Ledger -->
           <div>
-            <h4 style="margin-bottom:8px;color:var(--primary);">3️⃣ حساب البالتات الخشبية المسلمة للعميل والمستلمة منه (${m.palletMoves.length} حركة):</h4>
+            <h4 style="margin-bottom:8px;color:var(--primary);">3️⃣ حساب البالتات الخشبية المسلمة للعميل والمستلمة منه وقيمتها (${m.palletMoves.length} حركة):</h4>
             <div class="table-responsive">
               <table>
                 <thead>
@@ -7645,6 +7821,8 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
                     <th>التاريخ</th>
                     <th>بالتات مسلمة للعميل (+)</th>
                     <th>بالتات مستلمة من العميل (-)</th>
+                    <th>قيمة البالتة</th>
+                    <th>إجمالي قيمة البالتات</th>
                     <th>رقم السيارة / السائق / البيان</th>
                     ${isFullAdmin(currentUser) ? '<th>تعديل / حذف</th>' : ''}
                   </tr>
@@ -7656,16 +7834,25 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
                       <td>${pt.entryDate || '-'}</td>
                       <td><strong>+${pt.openingPalletsDelivered || 0} بالتة</strong></td>
                       <td><strong>-${pt.openingPalletsReceived || 0} بالتة</strong></td>
+                      <td><strong>${fmtMoney(m.palletUnitPrice)}</strong></td>
+                      <td><strong style="color:var(--primary);">${fmtMoney((Number(pt.openingPalletsDelivered || 0) - Number(pt.openingPalletsReceived || 0)) * m.palletUnitPrice)}</strong></td>
                       <td>رصيد بالتات افتتاحي</td>
                       ${isFullAdmin(currentUser) ? `<td><button class="btn btn-sm btn-outline" onclick="openEditPartnerModal('${pt.id}')">✏️ تعديل</button></td>` : ''}
                     </tr>
                   ` : ''}
-                  ${m.palletMoves.map(pm => `
+                  ${m.palletMoves.map(pm => {
+                    const pmUnitPrice = getWoodenPalletUnitPrice(pt, pm);
+                    const delVal = +(Number(pm.deliveredCount || 0) * pmUnitPrice).toFixed(2);
+                    const recVal = +(Number(pm.receivedCount || 0) * pmUnitPrice).toFixed(2);
+                    const moveTotalVal = delVal > 0 ? delVal : recVal;
+                    return `
                     <tr>
                       <td><strong>${pm.voucherNo || '-'}</strong></td>
                       <td>${pm.date}</td>
                       <td><span class="badge badge-warning">+${pm.deliveredCount || 0} بالتة مسلمة</span></td>
                       <td><span class="badge badge-success">-${pm.receivedCount || 0} بالتة مستلمة</span></td>
+                      <td><strong>${fmtMoney(pmUnitPrice)}</strong></td>
+                      <td><strong style="color:${delVal >= recVal ? 'var(--primary)' : 'var(--success)'};">${fmtMoney(moveTotalVal)}</strong></td>
                       <td>${pm.notes || pm.carPlateNumber || '-'}</td>
                       ${isFullAdmin(currentUser) ? `
                         <td>
@@ -7676,8 +7863,18 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
                         </td>
                       ` : ''}
                     </tr>
-                  `).join('')}
+                  `;}).join('')}
                 </tbody>
+                <tfoot>
+                  <tr style="background:var(--bg-elevated);font-weight:900;">
+                    <td colspan="2">الإجمالي الصافي طرف العميل</td>
+                    <td>+${m.palletsDelivered} بالتة (${fmtMoney(m.palletsDeliveredValue)})</td>
+                    <td>-${m.palletsReceived} بالتة (${fmtMoney(m.palletsReceivedValue)})</td>
+                    <td>${fmtMoney(m.palletUnitPrice)}</td>
+                    <td style="color:var(--primary);font-size:0.95rem;">صافي (${m.netPalletsAtClient} بالتة) = ${fmtMoney(m.netPalletsValue)}</td>
+                    <td colspan="${isFullAdmin(currentUser) ? 2 : 1}"></td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           </div>
@@ -7820,16 +8017,18 @@ function openClientPalletMovementModal(clientId) {
   const pt = (state.partners || []).find(p => p.id === clientId);
   if (!pt) return;
   const m = computeClientMetrics(pt);
+  const defaultUnitPrice = getWoodenPalletUnitPrice(pt);
+  const defaultRecCount = m.netPalletsAtClient > 0 ? m.netPalletsAtClient : 2;
   const modalRoot = document.getElementById('modal-root');
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box" style="max-width:560px;">
+      <div class="modal-box" style="max-width:620px;">
         <div class="card-header">
           <div>
-            <div class="card-title">🪵 حساب البالتات للعميل: [${pt.code || 'CL'}] ${pt.name}</div>
+            <div class="card-title">🪵 حساب وقيمة البالتات للعميل: [${pt.code || 'CL'}] ${pt.name}</div>
             <small style="color:var(--text-muted);">
-              إجمالي مسلم له: <strong>${m.palletsDelivered}</strong> | مستلم منه: <strong>${m.palletsReceived}</strong> | المتبقي طرفه الآن: <strong>${m.netPalletsAtClient} بالتة</strong>
+              إجمالي مسلم له: <strong>${m.palletsDelivered}</strong> | مستلم منه: <strong>${m.palletsReceived}</strong> | المتبقي طرفه الآن: <strong>${m.netPalletsAtClient} بالتة (${fmtMoney(m.netPalletsValue)})</strong>
             </small>
           </div>
           <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
@@ -7847,11 +8046,19 @@ function openClientPalletMovementModal(clientId) {
             </div>
             <div class="form-group">
               <label style="color:var(--accent);font-weight:800;">📤 عدد البالتات المسلمة للعميل (+)</label>
-              <input id="pm-del" type="number" min="0" class="form-control" value="0" required />
+              <input id="pm-del" type="number" min="0" class="form-control" value="0" oninput="updatePalletModalLiveCalc(${m.netPalletsAtClient})" required />
             </div>
             <div class="form-group">
               <label style="color:var(--success);font-weight:800;">📥 عدد البالتات المستلمة/المرتجعة من العميل (-)</label>
-              <input id="pm-rec" type="number" min="0" class="form-control" value="${m.netPalletsAtClient > 0 ? m.netPalletsAtClient : 2}" required autofocus style="font-weight:800;border-color:var(--success);" />
+              <input id="pm-rec" type="number" min="0" class="form-control" value="${defaultRecCount}" oninput="updatePalletModalLiveCalc(${m.netPalletsAtClient})" required autofocus style="font-weight:800;border-color:var(--success);" />
+            </div>
+            <div class="form-group">
+              <label style="color:#b45309;font-weight:800;">💰 قيمة البالتة الواحدة (ج.م)</label>
+              <input id="pm-price" type="number" step="0.5" min="0" class="form-control" value="${defaultUnitPrice}" oninput="updatePalletModalLiveCalc(${m.netPalletsAtClient})" style="font-weight:800;border-color:#d97706;" placeholder="مثال: 250" required />
+            </div>
+            <div class="form-group">
+              <label style="color:#7c3aed;font-weight:800;">💎 إجمالي قيمة البالتات في هذه الحركة</label>
+              <input id="pm-total-readonly" type="text" class="form-control" value="${fmtMoney(defaultRecCount * defaultUnitPrice)}" readonly style="font-weight:900;color:#7c3aed;background:rgba(124,58,237,0.08);border-color:#7c3aed;" />
             </div>
             <div class="form-group" style="grid-column: 1 / -1;">
               <label>ملاحظات حركة البالتات</label>
@@ -7859,14 +8066,41 @@ function openClientPalletMovementModal(clientId) {
             </div>
           </div>
 
+          <div id="pm-live-preview" class="calc-preview-box" style="margin-top:10px;"></div>
+
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
             <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
-            <button type="submit" class="btn btn-primary">🪵 حفظ حركة البالتات في حساب العميل</button>
+            <button type="submit" class="btn btn-primary">🪵 حفظ حركة وقيمة البالتات في حساب العميل</button>
           </div>
         </form>
       </div>
     </div>
   `;
+  updatePalletModalLiveCalc(m.netPalletsAtClient);
+}
+
+function updatePalletModalLiveCalc(prevNetPallets = 0) {
+  const delCount = Math.max(0, Number(document.getElementById('pm-del')?.value || 0));
+  const recCount = Math.max(0, Number(document.getElementById('pm-rec')?.value || 0));
+  const unitPrice = Math.max(0, Number(document.getElementById('pm-price')?.value || 0));
+  const delVal = +(delCount * unitPrice).toFixed(2);
+  const recVal = +(recCount * unitPrice).toFixed(2);
+  const activeVal = delVal > 0 ? delVal : recVal;
+  const newNetCount = Number(prevNetPallets || 0) + delCount - recCount;
+  const newNetVal = +(newNetCount * unitPrice).toFixed(2);
+
+  const totEl = document.getElementById('pm-total-readonly');
+  if (totEl) totEl.value = fmtMoney(activeVal);
+
+  const box = document.getElementById('pm-live-preview');
+  if (box) {
+    box.innerHTML = `
+      <div class="calc-preview-item"><span>قيمة البالتة الواحدة</span><strong>${fmtMoney(unitPrice)}</strong></div>
+      <div class="calc-preview-item"><span>إجمالي قيمة المسلم (${delCount})</span><strong style="color:var(--accent);">${fmtMoney(delVal)}</strong></div>
+      <div class="calc-preview-item"><span>إجمالي قيمة المستلم (${recCount})</span><strong style="color:var(--success);">${fmtMoney(recVal)}</strong></div>
+      <div class="calc-preview-item"><span>صافي البالتات طرف العميل بعد الحركة</span><strong style="color:var(--primary);">${newNetCount} بالتة (${fmtMoney(newNetVal)})</strong></div>
+    `;
+  }
 }
 
 function submitClientPalletMovement(e, clientId) {
@@ -7878,11 +8112,21 @@ function submitClientPalletMovement(e, clientId) {
   const carPlateNumber = (document.getElementById('pm-car')?.value || '').trim();
   const deliveredCount = Math.max(0, Number(document.getElementById('pm-del')?.value || 0));
   const receivedCount = Math.max(0, Number(document.getElementById('pm-rec')?.value || 0));
+  const palletUnitPrice = Math.max(0, Number(document.getElementById('pm-price')?.value ?? getWoodenPalletUnitPrice(pt)));
+  const totalDeliveredValue = +(deliveredCount * palletUnitPrice).toFixed(2);
+  const totalReceivedValue = +(receivedCount * palletUnitPrice).toFixed(2);
   const notes = (document.getElementById('pm-notes')?.value || '').trim();
 
   if (deliveredCount === 0 && receivedCount === 0) {
     alert('يرجى إدخال عدد البالتات المسلمة أو المستلمة!');
     return;
+  }
+
+  if (palletUnitPrice > 0) {
+    pt.palletUnitPrice = palletUnitPrice;
+    state.catalog = state.catalog || {};
+    state.catalog.woodenPalletUnitPrice = palletUnitPrice;
+    state.catalog.woodenPalletUnitPriceUpdatedAt = Date.now();
   }
 
   state.palletMovements = state.palletMovements || [];
@@ -7895,6 +8139,9 @@ function submitClientPalletMovement(e, clientId) {
     clientName: pt.name,
     deliveredCount,
     receivedCount,
+    palletUnitPrice,
+    totalDeliveredValue,
+    totalReceivedValue,
     carPlateNumber,
     notes: notes || (receivedCount > 0 ? `استلام ${receivedCount} بالتة من العميل` : `تسليم ${deliveredCount} بالتة للعميل`),
     createdBy: currentUser.name,
@@ -7902,7 +8149,89 @@ function submitClientPalletMovement(e, clientId) {
   });
 
   closeModal();
-  saveState(`🪵 تسجيل حركة بالتات للعميل (${pt.code || ''} - ${pt.name}): مسلم له (${deliveredCount}) / مستلم منه (${receivedCount}) بتاريخ ${opDate}`);
+  saveState(`🪵 تسجيل حركة بالتات للعميل (${pt.code || ''} - ${pt.name}): مسلم له (${deliveredCount}) / مستلم منه (${receivedCount}) — قيمة البالتة: ${fmtMoney(palletUnitPrice)} بتاريخ ${opDate}`);
+}
+
+function openSetDefaultPalletPriceModal() {
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  const curPrice = getWoodenPalletUnitPrice();
+  const allClients = (state.partners || []).filter(p => p.type !== 'supplier');
+  const totalNetPallets = allClients.reduce((s, c) => s + computeClientMetrics(c).netPalletsAtClient, 0);
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:500px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">💰 تحديد قيمة البالتة الخشبية الواحدة وحساب إجمالي البالتات</div>
+            <small style="color:var(--text-muted);">يتم تطبيق قيمة البالتة لحساب إجمالي قيمة البالتات لكل عميل ولجميع أذون السيارات وحركات البالتات</small>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+        <form onsubmit="submitSetDefaultPalletPriceModal(event)">
+          <div class="form-group" style="margin-bottom:12px;">
+            <label style="color:#b45309;font-weight:800;">🪵 قيمة البالتة الواحدة بالجنيه (ج.م)</label>
+            <input id="sys-pallet-unit-price" type="number" step="0.5" min="0" class="form-control" value="${curPrice}" oninput="document.getElementById('sys-pallet-total-preview').textContent = fmtMoney(Number(this.value || 0) * ${totalNetPallets})" required autofocus style="font-weight:900;font-size:1.1rem;border-color:#d97706;" placeholder="مثال: 250" />
+          </div>
+          <div style="background:var(--bg-elevated);padding:12px 14px;border-radius:10px;margin-bottom:14px;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+              <span>إجمالي عدد البالتات طرف العملاء حالياً:</span>
+              <strong>${fmtNum(totalNetPallets, 0)} بالتة</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:1.05rem;">
+              <span>💎 إجمالي قيمة البالتات طرف العملاء:</span>
+              <strong id="sys-pallet-total-preview" style="color:var(--primary);">${fmtMoney(curPrice * totalNetPallets)}</strong>
+            </div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;font-weight:700;cursor:pointer;margin-bottom:14px;">
+            <input id="sys-pallet-apply-all" type="checkbox" checked />
+            <span>تطبيق هذه القيمة على جميع العملاء وحركات البالتات الحالية</span>
+          </label>
+          <div style="display:flex;justify-content:flex-end;gap:10px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-primary">💾 حفظ قيمة البالتة وتحديث الإجماليات</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function submitSetDefaultPalletPriceModal(e) {
+  e.preventDefault();
+  const newPrice = Math.max(0, Number(document.getElementById('sys-pallet-unit-price')?.value || 0));
+  const applyAll = Boolean(document.getElementById('sys-pallet-apply-all')?.checked);
+  const nowIso = new Date().toISOString();
+
+  state.catalog = state.catalog || {};
+  state.catalog.woodenPalletUnitPrice = newPrice;
+  state.catalog.woodenPalletUnitPriceUpdatedAt = Date.now();
+  quickCalc.woodenPalletUnitPrice = newPrice;
+
+  if (applyAll) {
+    (state.partners || []).forEach(pt => {
+      pt.palletUnitPrice = newPrice;
+      pt.updatedAt = nowIso;
+    });
+    (state.palletMovements || []).forEach(pm => {
+      pm.palletUnitPrice = newPrice;
+      pm.totalDeliveredValue = +(Number(pm.deliveredCount || 0) * newPrice).toFixed(2);
+      pm.totalReceivedValue = +(Number(pm.receivedCount || 0) * newPrice).toFixed(2);
+      pm.updatedAt = nowIso;
+    });
+    (state.productionOrders || []).forEach(ord => {
+      if (ord.carDispatchVoucher) {
+        ord.carDispatchVoucher.palletUnitPrice = newPrice;
+        ord.carDispatchVoucher.palletsDeliveredValue = +(Number(ord.carDispatchVoucher.palletsDeliveredCount || 0) * newPrice).toFixed(2);
+        ord.carDispatchVoucher.palletsReceivedValue = +(Number(ord.carDispatchVoucher.palletsReceivedCount || 0) * newPrice).toFixed(2);
+        ord.updatedAt = nowIso;
+      }
+    });
+  }
+
+  closeModal();
+  saveState(`💰 تحديد قيمة البالتة الخشبية الواحدة بمبلغ (${fmtMoney(newPrice)}) وتحديث إجمالي قيمة البالتات في النظام`);
 }
 
 // Dynamic Catalog & Users Permissions Actions
@@ -10189,9 +10518,12 @@ function printClientFullStatement(clientId) {
           </td>
         </tr>
         <tr>
-          <td style="border:1px solid #000;padding:8px;"><strong>بالتات مسلمة للعميل:</strong> ${m.palletsDelivered} بالتة</td>
-          <td style="border:1px solid #000;padding:8px;"><strong>بالتات مستلمة من العميل:</strong> ${m.palletsReceived} بالتة</td>
-          <td style="border:1px solid #000;padding:8px;font-size:15px;"><strong>صافي البالتات طرف العميل:</strong> ${m.netPalletsAtClient} بالتة</td>
+          <td style="border:1px solid #000;padding:8px;"><strong>بالتات مسلمة للعميل:</strong> ${m.palletsDelivered} بالتة (${fmtMoney(m.palletsDeliveredValue || 0)})</td>
+          <td style="border:1px solid #000;padding:8px;"><strong>بالتات مستلمة من العميل:</strong> ${m.palletsReceived} بالتة (${fmtMoney(m.palletsReceivedValue || 0)})</td>
+          <td style="border:1px solid #000;padding:8px;font-size:14px;">
+            <strong>صافي البالتات طرف العميل:</strong> ${m.netPalletsAtClient} بالتة<br/>
+            <span style="font-size:12px;">قيمة البالتة: <strong>${fmtMoney(m.palletUnitPrice || 0)}</strong> | إجمالي قيمة البالتات: <strong>${fmtMoney(Math.abs(m.netPalletsValue || 0))}</strong></span>
+          </td>
         </tr>
       </table>
 
@@ -10832,6 +11164,8 @@ function printAllClientsAccountingReportPdf() {
           <th>إجمالي المدفوعات (دائن)</th>
           <th>صافي المديونية / المستحقات</th>
           <th>رصيد البالتات طرف العميل</th>
+          <th>قيمة البالتة</th>
+          <th>إجمالي قيمة البالتات</th>
         </tr>
       </thead>
       <tbody>
@@ -10845,12 +11179,14 @@ function printAllClientsAccountingReportPdf() {
             <td>${fmtMoney(m.totalCredit)}</td>
             <td><strong>${m.netDebt > 0 ? 'مدين (عليه): ' + fmtMoney(m.netDebt) : m.netDebt < 0 ? 'دائن (له): ' + fmtMoney(Math.abs(m.netDebt)) : 'خالص (0 ج.م)'}</strong></td>
             <td><strong>${m.netPalletsAtClient} بالتة</strong> (مسلم: ${m.palletsDelivered} / مستلم: ${m.palletsReceived})</td>
+            <td><strong>${fmtMoney(m.palletUnitPrice || 0)}</strong></td>
+            <td><strong>${fmtMoney(Math.abs(m.netPalletsValue || 0))}</strong></td>
           </tr>
         `).join('')}
       </tbody>
     </table>
   `;
-  triggerOfficialReportPdf('🤝 التقرير المالي الشامل لحسابات ومديونيات العملاء وأرصدة البالتات', `إجمالي العملاء: ${rows.length}`, bodyHtml, true);
+  triggerOfficialReportPdf('🤝 التقرير المالي الشامل لحسابات ومديونيات العملاء وأرصدة وقيم البالتات', `إجمالي العملاء: ${rows.length}`, bodyHtml, true);
 }
 
 function printAllFinancialTransactionsReportPdf() {
@@ -10890,6 +11226,7 @@ function printAllFinancialTransactionsReportPdf() {
 }
 
 function printAllPalletMovementsReportPdf() {
+  const showPrices = canSeeFinancialPrices();
   const pms = state.palletMovements || [];
   const bodyHtml = `
     <table class="pdf-report-table">
@@ -10899,25 +11236,36 @@ function printAllPalletMovementsReportPdf() {
           <th>العميل وكوده</th>
           <th>بالتات مسلمة للعميل</th>
           <th>بالتات مستلمة من العميل</th>
+          ${showPrices ? '<th>قيمة البالتة</th><th>إجمالي قيمة البالتات</th>' : ''}
           <th>السيارة / الملاحظات</th>
           <th>بواسطة</th>
         </tr>
       </thead>
       <tbody>
-        ${pms.map(pm => `
+        ${pms.map(pm => {
+          const ptObj = (state.partners || []).find(p => p.id === pm.clientId || p.name === pm.clientName);
+          const pltPrice = getWoodenPalletUnitPrice(ptObj, pm);
+          const delVal = Number(pm.totalDeliveredValue ?? (Number(pm.deliveredCount || 0) * pltPrice));
+          const recVal = Number(pm.totalReceivedValue ?? (Number(pm.receivedCount || 0) * pltPrice));
+          const netVal = delVal - recVal;
+          return `
           <tr>
             <td>${pm.date}</td>
             <td><strong>${pm.clientName}</strong> (${pm.clientCode || 'CL'})</td>
-            <td><strong>+${pm.deliveredCount || 0}</strong></td>
-            <td><strong>-${pm.receivedCount || 0}</strong></td>
+            <td><strong>+${pm.deliveredCount || 0}</strong>${showPrices && delVal > 0 ? ` (${fmtMoney(delVal)})` : ''}</td>
+            <td><strong>-${pm.receivedCount || 0}</strong>${showPrices && recVal > 0 ? ` (${fmtMoney(recVal)})` : ''}</td>
+            ${showPrices ? `
+              <td><strong>${fmtMoney(pltPrice)}</strong></td>
+              <td><strong>${fmtMoney(Math.abs(netVal))}</strong></td>
+            ` : ''}
             <td>${pm.notes || pm.carPlateNumber || '-'}</td>
             <td>${pm.createdBy || '-'}</td>
           </tr>
-        `).join('')}
+        `;}).join('')}
       </tbody>
     </table>
   `;
-  triggerOfficialReportPdf('🪵 تقرير سجل حركة البالتات الخشبية مع العملاء', `إجمالي الحركات: ${pms.length}`, bodyHtml, false);
+  triggerOfficialReportPdf('🪵 تقرير سجل حركة وقيم البالتات الخشبية مع العملاء', `إجمالي الحركات: ${pms.length}`, bodyHtml, false);
 }
 
 function printGeneralInventoryAndAuditReportPdf() {
@@ -11565,6 +11913,7 @@ function openEditPartnerModal(clientId) {
   const pt = (state.partners || []).find(p => p.id === clientId);
   if (!pt) return;
   const modalRoot = document.getElementById('modal-root');
+  const currentPltPrice = getWoodenPalletUnitPrice(pt);
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
@@ -11583,6 +11932,10 @@ function openEditPartnerModal(clientId) {
             <div class="form-group"><label>رصيد دائن افتتاحي (له - ج.م)</label><input id="ept-credit" type="number" step="0.5" min="0" class="form-control" value="${pt.openingCredit || 0}" /></div>
             <div class="form-group"><label>بالتات افتتاحية مسلمة للعميل</label><input id="ept-pdel" type="number" min="0" class="form-control" value="${pt.openingPalletsDelivered || 0}" /></div>
             <div class="form-group"><label>بالتات افتتاحية مستلمة من العميل</label><input id="ept-prec" type="number" min="0" class="form-control" value="${pt.openingPalletsReceived || 0}" /></div>
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="color:var(--primary-dark);font-weight:800;">💰 قيمة البالتة الواحدة للعميل (ج.م)</label>
+              <input id="ept-plt-price" type="number" step="1" min="0" class="form-control" value="${currentPltPrice}" style="font-weight:900;border-color:var(--primary);" />
+            </div>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
             <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
@@ -11606,6 +11959,13 @@ function submitEditPartnerModal(e, clientId) {
   pt.openingCredit = Math.max(0, Number(document.getElementById('ept-credit')?.value || 0));
   pt.openingPalletsDelivered = Math.max(0, Number(document.getElementById('ept-pdel')?.value || 0));
   pt.openingPalletsReceived = Math.max(0, Number(document.getElementById('ept-prec')?.value || 0));
+  const pltPrice = Math.max(0, Number(document.getElementById('ept-plt-price')?.value ?? getWoodenPalletUnitPrice(pt)));
+  pt.palletUnitPrice = pltPrice;
+  if (pltPrice > 0 && !Number(state.catalog?.woodenPalletUnitPrice)) {
+    if (!state.catalog) state.catalog = {};
+    state.catalog.woodenPalletUnitPrice = pltPrice;
+    state.catalog.woodenPalletUnitPriceUpdatedAt = new Date().toISOString();
+  }
   pt.balance = +(pt.openingDebit - pt.openingCredit).toFixed(2);
   pt.updatedAt = new Date().toISOString();
   closeModal();
@@ -11700,6 +12060,8 @@ function openEditPalletMovementModal(pmId) {
   const pm = (state.palletMovements || []).find(x => x.id === pmId);
   if (!pm) return;
   const modalRoot = document.getElementById('modal-root');
+  const ptObj = (state.partners || []).find(p => p.id === pm.clientId || p.name === pm.clientName);
+  const currentPltPrice = getWoodenPalletUnitPrice(ptObj, pm);
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
@@ -11714,6 +12076,10 @@ function openEditPalletMovementModal(pmId) {
             <div class="form-group"><label>رقم السيارة</label><input id="epm-car" class="form-control" value="${pm.carPlateNumber || ''}" /></div>
             <div class="form-group"><label>بالتات مسلمة للعميل (+)</label><input id="epm-del" type="number" min="0" class="form-control" value="${pm.deliveredCount || 0}" required /></div>
             <div class="form-group"><label>بالتات مستلمة من العميل (-)</label><input id="epm-rec" type="number" min="0" class="form-control" value="${pm.receivedCount || 0}" required /></div>
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="color:var(--primary-dark);font-weight:800;">💰 قيمة البالتة الواحدة (ج.م)</label>
+              <input id="epm-price" type="number" step="1" min="0" class="form-control" value="${currentPltPrice}" style="font-weight:900;border-color:var(--primary);" />
+            </div>
             <div class="form-group" style="grid-column: 1 / -1;"><label>البيان والملاحظات</label><input id="epm-notes" class="form-control" value="${pm.notes || ''}" /></div>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
@@ -11734,6 +12100,10 @@ function submitEditPalletMovementModal(e, pmId) {
   pm.carPlateNumber = (document.getElementById('epm-car')?.value || pm.carPlateNumber).trim();
   pm.deliveredCount = Math.max(0, Number(document.getElementById('epm-del')?.value || 0));
   pm.receivedCount = Math.max(0, Number(document.getElementById('epm-rec')?.value || 0));
+  const pltPrice = Math.max(0, Number(document.getElementById('epm-price')?.value ?? getWoodenPalletUnitPrice(null, pm)));
+  pm.palletUnitPrice = pltPrice;
+  pm.totalDeliveredValue = +(pm.deliveredCount * pltPrice).toFixed(2);
+  pm.totalReceivedValue = +(pm.receivedCount * pltPrice).toFixed(2);
   pm.notes = (document.getElementById('epm-notes')?.value || pm.notes).trim();
   pm.updatedAt = new Date().toISOString();
   closeModal();
