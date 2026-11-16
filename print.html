@@ -300,14 +300,24 @@
       const btn = document.getElementById('btn-download-pdf');
       const oldText = btn ? btn.innerText : '';
       if (btn) btn.innerText = '⏳ جاري تجهيز الـ PDF...';
+      const isSinglePageStmt = Boolean(container.querySelector('[data-single-page-statement="1"]'));
       const safeFile = (_currentDocTitle || 'مستند_مصنع_العاصمة').replace(/[\\/:*?"<>|]/g, '_') + '.pdf';
-      window.html2pdf().set({
-        margin: 7,
+      const worker = window.html2pdf().set({
+        margin: isSinglePageStmt ? 5 : 6,
         filename: safeFile,
+        pagebreak: { mode: ['css', 'legacy'] },
         image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollY: 0 },
         jsPDF: { unit: 'mm', format: 'a4', orientation: window._isLandscapeDoc ? 'landscape' : 'portrait' }
-      }).from(container).save().then(() => {
+      }).from(container).toPdf();
+
+      worker.get('pdf').then((pdf) => {
+        if (isSinglePageStmt && pdf && pdf.internal && typeof pdf.internal.getNumberOfPages === 'function') {
+          while (pdf.internal.getNumberOfPages() > 1) {
+            pdf.deletePage(pdf.internal.getNumberOfPages());
+          }
+        }
+      }).then(() => worker.save()).then(() => {
         if (btn) btn.innerText = oldText;
       }).catch(() => {
         if (btn) btn.innerText = oldText;

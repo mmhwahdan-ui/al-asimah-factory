@@ -10957,14 +10957,24 @@ function downloadInPagePdfFile() {
     window.print();
     return;
   }
+  const isSinglePageStmt = Boolean(contentEl.querySelector('[data-single-page-statement="1"]'));
   const safeName = (_lastPrintDocumentTitle || 'مستند_مصنع_العاصمة').replace(/[\\/:*?"<>|]/g, '_') + '.pdf';
-  window.html2pdf().set({
-    margin: 7,
+  const worker = window.html2pdf().set({
+    margin: isSinglePageStmt ? 5 : 6,
     filename: safeName,
+    pagebreak: { mode: ['css', 'legacy'] },
     image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+    html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollY: 0 },
     jsPDF: { unit: 'mm', format: 'a4', orientation: _lastPrintLandscape ? 'landscape' : 'portrait' }
-  }).from(contentEl).save().catch(() => {
+  }).from(contentEl).toPdf();
+
+  worker.get('pdf').then((pdf) => {
+    if (isSinglePageStmt && pdf && pdf.internal && typeof pdf.internal.getNumberOfPages === 'function') {
+      while (pdf.internal.getNumberOfPages() > 1) {
+        pdf.deletePage(pdf.internal.getNumberOfPages());
+      }
+    }
+  }).then(() => worker.save()).catch(() => {
     window.focus();
     window.print();
   });
@@ -11451,172 +11461,187 @@ function buildOfficialOrderStatementPdfHtml(ord) {
   const defTerms = ord.paymentDeferredTerms || '50% عند الاستلام والتوريد';
   const bankAccounts = ord.bankAccountsText || getDefaultBankAccountsText();
 
-  return `
-    <div style="border:3px solid #0f172a;padding:20px 24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;border-radius:6px;">
+  const isSinglePage = items.length <= 3;
+
+  function renderStatementHeader(pageNum = 1, totalPages = 1, subtitleText = 'ORDER STATEMENT') {
+    return `
       <!-- Top Header: Right = Factory Info | Center = بيان طلبية | Top Left = Company Logo -->
-      <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;border-bottom:3px double #0f172a;padding-bottom:12px;margin-bottom:14px;gap:12px;">
+      <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;border-bottom:2.5px double #0f172a;padding-bottom:${isSinglePage ? '7px' : '10px'};margin-bottom:${isSinglePage ? '8px' : '12px'};gap:10px;">
         <!-- Right Side -->
         <div style="text-align:right;">
-          <h1 style="margin:0;font-size:19px;font-weight:900;color:#0f172a;">${factoryName}</h1>
-          <div style="font-size:12px;color:#334155;font-weight:700;margin-top:3px;">لإنتاج وتصنيع القشرة الخشبية القياسية والخاصة</div>
-          <div style="font-size:12px;margin-top:4px;">
+          <h1 style="margin:0;font-size:${isSinglePage ? '16.5px' : '18px'};font-weight:900;color:#0f172a;">${factoryName}</h1>
+          <div style="font-size:11px;color:#334155;font-weight:700;margin-top:2px;">لإنتاج وتصنيع القشرة الخشبية القياسية والخاصة</div>
+          <div style="font-size:11.5px;margin-top:3px;">
             <strong>رقم البيان:</strong> ${ord.orderNumber || '-'} &nbsp;|&nbsp; <strong>التاريخ:</strong> ${ord.date || fmtDate(ord.createdAt)}
           </div>
         </div>
 
         <!-- Center Title: بيان طلبية -->
         <div style="text-align:center;">
-          <div style="border:2.5px solid #0f172a;background:#f8fafc;padding:7px 28px;border-radius:10px;box-shadow:0 2px 0 #0f172a;">
-            <h2 style="margin:0;font-size:22px;font-weight:900;color:#0f172a;letter-spacing:0.5px;">بيان طلبية</h2>
-            <div style="font-size:11px;font-weight:800;color:#b45309;margin-top:2px;">ORDER STATEMENT</div>
+          <div style="border:2px solid #0f172a;background:#f8fafc;padding:${isSinglePage ? '4px 22px' : '6px 26px'};border-radius:9px;box-shadow:0 2px 0 #0f172a;">
+            <h2 style="margin:0;font-size:${isSinglePage ? '19px' : '21px'};font-weight:900;color:#0f172a;line-height:1.2;">بيان طلبية</h2>
+            <div style="font-size:10px;font-weight:800;color:#b45309;margin-top:1px;">
+              ${totalPages > 1 ? `صفحة (${pageNum}) من (${totalPages}) — ${subtitleText}` : subtitleText}
+            </div>
           </div>
         </div>
 
         <!-- Top Left: Company Logo -->
         <div style="display:flex;justify-content:flex-end;align-items:center;">
-          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;border:1.5px solid #0f172a;border-radius:8px;padding:5px 10px;background:#ffffff;">
-            <img src="${logoSrc}" alt="لوجو الشركة" style="height:64px;max-width:150px;object-fit:contain;display:block;" />
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;border:1.5px solid #0f172a;border-radius:8px;padding:3px 8px;background:#ffffff;">
+            <img src="${logoSrc}" alt="لوجو الشركة" style="height:${isSinglePage ? '48px' : '56px'};max-width:135px;object-fit:contain;display:block;" />
           </div>
         </div>
       </div>
 
       <!-- Client Details Box -->
-      <div style="border:1.5px solid #0f172a;background:#f8fafc;padding:9px 14px;border-radius:8px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:13.5px;">
+      <div style="border:1.5px solid #0f172a;background:#f8fafc;padding:${isSinglePage ? '6px 12px' : '8px 14px'};border-radius:7px;margin-bottom:${isSinglePage ? '7px' : '10px'};display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;font-size:${isSinglePage ? '12px' : '13px'};">
         <div>
-          <strong>السادة / اسم العميل:</strong> <span style="font-size:15px;font-weight:900;color:#0f172a;">${ord.clientName || '-'}</span>
-          <span style="font-size:12px;color:#475569;margin-right:6px;">(كود العميل: ${ord.clientCode || 'CL'})</span>
+          <strong>السادة / اسم العميل:</strong> <span style="font-size:${isSinglePage ? '13.5px' : '14.5px'};font-weight:900;color:#0f172a;">${ord.clientName || '-'}</span>
+          <span style="font-size:11px;color:#475569;margin-right:5px;">(كود العميل: ${ord.clientCode || 'CL'})</span>
         </div>
-        <div style="font-size:12.5px;">
+        <div style="font-size:11.5px;">
           ${ord.clientPhone ? `<strong>هاتف:</strong> ${ord.clientPhone} &nbsp;|&nbsp; ` : ''}
           <strong>مكان التسليم:</strong> ${delivModeLabel}
         </div>
       </div>
+    `;
+  }
 
-      <!-- Items Table: مسلسل | البيان | المقاس | الاتجاه | التخانة | الجودة | الكمية | السعر | الإجمالي -->
-      <table style="width:100%;border-collapse:collapse;margin-bottom:8px;font-size:13px;">
+  function renderItemsTable(sliceItems, startOffset = 0, showGrandFooter = true) {
+    const cellPad = isSinglePage ? '4px 5px' : '6px 6px';
+    return `
+      <table style="width:100%;border-collapse:collapse;margin-bottom:${isSinglePage ? '5px' : '8px'};font-size:${isSinglePage ? '11.5px' : '12.5px'};">
         <thead>
           <tr style="background:#e2e8f0;color:#0f172a;">
-            <th style="border:1.5px solid #000;padding:6px 5px;width:36px;text-align:center;">مسلسل</th>
-            <th style="border:1.5px solid #000;padding:6px 8px;text-align:right;">البيان</th>
-            <th style="border:1.5px solid #000;padding:6px 6px;text-align:center;">المقاس (العرض × الطول)</th>
-            <th style="border:1.5px solid #000;padding:6px 6px;text-align:center;">الاتجاه</th>
-            <th style="border:1.5px solid #000;padding:6px 6px;text-align:center;">التخانة</th>
-            <th style="border:1.5px solid #000;padding:6px 6px;text-align:center;">الجودة</th>
-            <th style="border:1.5px solid #000;padding:6px 6px;text-align:center;">الكمية</th>
+            <th style="border:1.5px solid #000;padding:${cellPad};width:34px;text-align:center;">مسلسل</th>
+            <th style="border:1.5px solid #000;padding:${cellPad};text-align:right;">البيان</th>
+            <th style="border:1.5px solid #000;padding:${cellPad};text-align:center;">المقاس (العرض × الطول)</th>
+            <th style="border:1.5px solid #000;padding:${cellPad};text-align:center;">الاتجاه</th>
+            <th style="border:1.5px solid #000;padding:${cellPad};text-align:center;">التخانة</th>
+            <th style="border:1.5px solid #000;padding:${cellPad};text-align:center;">الجودة</th>
+            <th style="border:1.5px solid #000;padding:${cellPad};text-align:center;">الكمية</th>
             ${showPrices ? `
-              <th style="border:1.5px solid #000;padding:6px 6px;text-align:center;">السعر (شامل ق.م 14%)</th>
-              <th style="border:1.5px solid #000;padding:6px 8px;text-align:center;">الإجمالي</th>
+              <th style="border:1.5px solid #000;padding:${cellPad};text-align:center;">السعر (شامل ق.م 14%)</th>
+              <th style="border:1.5px solid #000;padding:${cellPad};text-align:center;">الإجمالي</th>
             ` : ''}
           </tr>
         </thead>
         <tbody>
-          ${items.map((it, idx) => {
+          ${sliceItems.map((it, idx) => {
             const desc = it.itemDescription || it.woodTypeName || 'قشرة خشبية طبيعية';
             const wid = Number(it.widthCm || 125);
             const len = Number(it.lengthCm || 250);
             return `
             <tr>
-              <td style="border:1px solid #000;padding:6px 5px;text-align:center;font-weight:800;">${idx + 1}</td>
-              <td style="border:1px solid #000;padding:6px 8px;font-weight:800;">${desc}</td>
-              <td style="border:1px solid #000;padding:6px 6px;text-align:center;font-weight:700;">${wid} × ${len} سم</td>
-              <td style="border:1px solid #000;padding:6px 6px;text-align:center;font-weight:700;">${it.direction === 'sada' ? 'سدا' : 'قص'}</td>
-              <td style="border:1px solid #000;padding:6px 6px;text-align:center;font-weight:800;">${it.thicknessMm} مم</td>
-              <td style="border:1px solid #000;padding:6px 6px;text-align:center;font-weight:800;">${it.gradeName || it.gradeCode || '-'}</td>
-              <td style="border:1px solid #000;padding:6px 6px;text-align:center;font-weight:800;">
+              <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:800;">${startOffset + idx + 1}</td>
+              <td style="border:1px solid #000;padding:${cellPad};font-weight:800;">${desc}</td>
+              <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:700;">${wid} × ${len} سم</td>
+              <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:700;">${it.direction === 'sada' ? 'سدا' : 'قص'}</td>
+              <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:800;">${it.thicknessMm} مم</td>
+              <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:800;">${it.gradeName || it.gradeCode || '-'}</td>
+              <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:800;">
                 ${fmtNum(it.sheetsCount, 0)} قطعة
-                <div style="font-size:10.5px;color:#475569;font-weight:600;">(${fmtNum(it.volumeM3, 4)} م³)</div>
+                <span style="font-size:10px;color:#475569;font-weight:600;display:inline-block;margin-right:3px;">(${fmtNum(it.volumeM3, 3)} م³)</span>
               </td>
               ${showPrices ? `
-                <td style="border:1px solid #000;padding:6px 6px;text-align:center;font-weight:700;">${fmtMoney(it.unitPrice)}</td>
-                <td style="border:1px solid #000;padding:6px 8px;text-align:center;font-weight:900;">${fmtMoney(it.totalItemAmount)}</td>
+                <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:700;">${fmtMoney(it.unitPrice)}</td>
+                <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:900;">${fmtMoney(it.totalItemAmount)}</td>
               ` : ''}
             </tr>
           `;}).join('')}
         </tbody>
+        ${showGrandFooter ? `
         <tfoot>
           <tr style="background:#f1f5f9;font-weight:900;">
-            <td colspan="6" style="border:1.5px solid #000;padding:6px 8px;text-align:left;">إجمالي الكميات والحجم بالبيان:</td>
-            <td style="border:1.5px solid #000;padding:6px 6px;text-align:center;">${fmtNum(ord.totalSheetsCount, 0)} قطعة (${fmtNum(ord.totalVolumeM3, 4)} م³)</td>
+            <td colspan="6" style="border:1.5px solid #000;padding:${cellPad};text-align:left;">إجمالي الكميات والحجم بالبيان (${items.length} بنود):</td>
+            <td style="border:1.5px solid #000;padding:${cellPad};text-align:center;">${fmtNum(ord.totalSheetsCount, 0)} قطعة (${fmtNum(ord.totalVolumeM3, 4)} م³)</td>
             ${showPrices ? `
-              <td style="border:1.5px solid #000;padding:6px 6px;text-align:center;">إجمالي الطلبية:</td>
-              <td style="border:1.5px solid #000;padding:6px 8px;text-align:center;font-size:14px;">${fmtMoney(subtotal)}</td>
+              <td style="border:1.5px solid #000;padding:${cellPad};text-align:center;">إجمالي الطلبية:</td>
+              <td style="border:1.5px solid #000;padding:${cellPad};text-align:center;font-size:${isSinglePage ? '12.5px' : '13.5px'};">${fmtMoney(subtotal)}</td>
             ` : ''}
           </tr>
         </tfoot>
+        ` : ''}
       </table>
+    `;
+  }
 
+  function renderFinancialAndTermsSection() {
+    const finRowPad = isSinglePage ? '3.5px 8px' : '6px 10px';
+    return `
       ${showPrices ? `
-      <div style="font-size:11.5px;font-weight:800;color:#b45309;margin-bottom:10px;background:#fffbeb;border:1px solid #f59e0b;padding:4px 10px;border-radius:6px;">
+      <div style="font-size:${isSinglePage ? '10.5px' : '11.5px'};font-weight:800;color:#b45309;margin-bottom:${isSinglePage ? '6px' : '10px'};background:#fffbeb;border:1px solid #f59e0b;padding:${isSinglePage ? '3px 8px' : '5px 10px'};border-radius:5px;">
         📌 <strong>ملحوظة هامة:</strong> جميع الأسعار التي تكتب في سعر القطعة <strong>شاملة ضريبة القيمة المضافة 14%</strong>، وضريبة الخصم والإضافة اختيارية.
       </div>
 
       <!-- Financial Breakdown & Delivery & Payment Grid -->
-      <div style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:12px;margin-bottom:12px;align-items:stretch;">
+      <div style="display:grid;grid-template-columns:1.12fr 0.88fr;gap:${isSinglePage ? '8px' : '12px'};margin-bottom:${isSinglePage ? '6px' : '12px'};align-items:stretch;">
         <!-- Right Column: Delivery, Payment Terms & Bank Accounts -->
-        <div style="border:1.5px solid #000;border-radius:8px;padding:10px 12px;font-size:12.5px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+        <div style="border:1.5px solid #000;border-radius:7px;padding:${isSinglePage ? '7px 10px' : '10px 12px'};font-size:${isSinglePage ? '11.2px' : '12.5px'};display:flex;flex-direction:column;justify-content:space-between;gap:5px;">
           <div>
-            <div style="font-weight:900;font-size:13px;color:#0f172a;border-bottom:1px solid #cbd5e1;padding-bottom:4px;margin-bottom:6px;">
+            <div style="font-weight:900;font-size:${isSinglePage ? '11.8px' : '13px'};color:#0f172a;border-bottom:1px solid #cbd5e1;padding-bottom:3px;margin-bottom:4px;">
               🚚 مكان التسليم وشروط الدفع (المقدم والآجل):
             </div>
-            <div style="margin-bottom:4px;"><strong>• مكان التسليم:</strong> ${delivModeLabel} — (${delivPlace})</div>
-            <div style="margin-bottom:4px;"><strong>• شروط الدفع (المقدم):</strong> ${advTerms}</div>
-            <div style="margin-bottom:4px;"><strong>• شروط الدفع (الآجل):</strong> ${defTerms}</div>
-            ${ord.notes ? `<div style="margin-top:4px;"><strong>• ملاحظات البيان:</strong> ${ord.notes}</div>` : ''}
+            <div style="margin-bottom:2px;"><strong>• مكان التسليم:</strong> ${delivModeLabel} — (${delivPlace})</div>
+            <div style="margin-bottom:2px;"><strong>• شروط الدفع (المقدم):</strong> ${advTerms}</div>
+            <div style="margin-bottom:2px;"><strong>• شروط الدفع (الآجل):</strong> ${defTerms}</div>
+            ${ord.notes ? `<div style="margin-top:2px;"><strong>• ملاحظات البيان:</strong> ${ord.notes}</div>` : ''}
           </div>
 
-          <div style="background:#f8fafc;border:1px solid #0f172a;border-radius:6px;padding:7px 10px;margin-top:4px;">
-            <div style="font-weight:900;font-size:12.5px;color:#0f766e;margin-bottom:3px;">
+          <div style="background:#f8fafc;border:1px solid #0f172a;border-radius:6px;padding:${isSinglePage ? '5px 8px' : '7px 10px'};margin-top:2px;">
+            <div style="font-weight:900;font-size:${isSinglePage ? '11.2px' : '12.2px'};color:#0f766e;margin-bottom:2px;">
               🏦 أرقام الحسابات البنكية الخاصة بمصنع العاصمة (لتحويل المبلغ عليها):
             </div>
-            <div style="white-space:pre-line;font-size:11.5px;font-weight:700;line-height:1.45;color:#0f172a;">${bankAccounts}</div>
+            <div style="white-space:pre-line;font-size:${isSinglePage ? '10.5px' : '11.5px'};font-weight:700;line-height:1.35;color:#0f172a;">${bankAccounts}</div>
           </div>
         </div>
 
         <!-- Left Column: Financial Summary Table -->
-        <div style="border:2px solid #000;border-radius:8px;overflow:hidden;font-size:12.5px;">
+        <div style="border:2px solid #000;border-radius:7px;overflow:hidden;font-size:${isSinglePage ? '11.2px' : '12.5px'};">
           <table style="width:100%;border-collapse:collapse;">
             <tr>
-              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;background:#f8fafc;font-weight:700;">إجمالي قيمة الطلبية (شامل ق.م 14%):</td>
-              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;text-align:left;font-weight:900;">${fmtMoney(subtotal)}</td>
+              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};background:#f8fafc;font-weight:700;">إجمالي قيمة الطلبية (شامل ق.م 14%):</td>
+              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};text-align:left;font-weight:900;">${fmtMoney(subtotal)}</td>
             </tr>
             <tr>
-              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;background:#f8fafc;font-weight:700;">نسبة وقيمة الخصم (${fmtNum(discPct, 2)}%):</td>
-              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;text-align:left;font-weight:800;color:#dc2626;">-${fmtMoney(discAmt)}</td>
+              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};background:#f8fafc;font-weight:700;">نسبة وقيمة الخصم (${fmtNum(discPct, 2)}%):</td>
+              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};text-align:left;font-weight:800;color:#dc2626;">-${fmtMoney(discAmt)}</td>
             </tr>
             <tr>
-              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;background:#f8fafc;font-weight:700;">ضريبة القيمة المضافة (14%):</td>
-              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;text-align:left;font-weight:700;font-size:11.5px;">شاملة بالسعر (${fmtMoney(includedVat14)})</td>
+              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};background:#f8fafc;font-weight:700;">ضريبة القيمة المضافة (14%):</td>
+              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};text-align:left;font-weight:700;font-size:10.8px;">شاملة بالسعر (${fmtMoney(includedVat14)})</td>
             </tr>
             <tr>
-              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;background:#f8fafc;font-weight:700;">ضريبة الخصم والإضافة ${whtMode !== 'none' ? `(${whtRate}%)` : '(اختياري)'}:</td>
-              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;text-align:left;font-weight:800;">
+              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};background:#f8fafc;font-weight:700;">ضريبة الخصم والإضافة ${whtMode !== 'none' ? `(${whtRate}%)` : '(اختياري)'}:</td>
+              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};text-align:left;font-weight:800;">
                 ${whtMode === 'none' ? 'غير مطبقة (0 ج.م)' : `${whtMode === 'deduct' ? '-' : '+'}${fmtMoney(whtAmt)}`}
               </td>
             </tr>
             <tr>
-              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;background:#f8fafc;font-weight:700;">سعر التوصيل (${delivMode === 'ex_factory' ? 'أرض المصنع' : delivMode === 'included' ? 'شامل التوصيل' : 'نولون توصيل'}):</td>
-              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;text-align:left;font-weight:800;">
+              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};background:#f8fafc;font-weight:700;">سعر التوصيل (${delivMode === 'ex_factory' ? 'أرض المصنع' : delivMode === 'included' ? 'شامل التوصيل' : 'نولون توصيل'}):</td>
+              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};text-align:left;font-weight:800;">
                 ${delivMode === 'included' ? 'شامل التوصيل' : fmtMoney(delivCost)}
               </td>
             </tr>
             <tr style="background:#e0f2fe;">
-              <td style="border-bottom:1.5px solid #000;padding:7px 10px;font-weight:900;color:#0f172a;">صافي الطلبية:</td>
-              <td style="border-bottom:1.5px solid #000;padding:7px 10px;text-align:left;font-weight:900;font-size:14px;color:#0f172a;">${fmtMoney(netOrder)}</td>
+              <td style="border-bottom:1.5px solid #000;padding:${finRowPad};font-weight:900;color:#0f172a;">صافي الطلبية:</td>
+              <td style="border-bottom:1.5px solid #000;padding:${finRowPad};text-align:left;font-weight:900;font-size:${isSinglePage ? '12.5px' : '13.5px'};color:#0f172a;">${fmtMoney(netOrder)}</td>
             </tr>
             <tr>
-              <td style="border-bottom:1.5px solid #000;padding:6px 10px;background:#fef2f2;font-weight:800;color:#991b1b;">المديونية القديمة على العميل:</td>
-              <td style="border-bottom:1.5px solid #000;padding:6px 10px;background:#fef2f2;text-align:left;font-weight:900;color:#dc2626;">${fmtMoney(oldDebt)}</td>
+              <td style="border-bottom:1.5px solid #000;padding:${finRowPad};background:#fef2f2;font-weight:800;color:#991b1b;">المديونية القديمة على العميل:</td>
+              <td style="border-bottom:1.5px solid #000;padding:${finRowPad};background:#fef2f2;text-align:left;font-weight:900;color:#dc2626;">${fmtMoney(oldDebt)}</td>
             </tr>
             <tr style="background:#dcfce7;">
-              <td style="padding:8px 10px;font-weight:900;font-size:14px;color:#14532d;">إجمالي المبلغ المطلوب:</td>
-              <td style="padding:8px 10px;text-align:left;font-weight:900;font-size:15.5px;color:#14532d;">${fmtMoney(totalRequired)}</td>
+              <td style="padding:${isSinglePage ? '5px 8px' : '7px 10px'};font-weight:900;font-size:${isSinglePage ? '12.5px' : '13.5px'};color:#14532d;">إجمالي المبلغ المطلوب:</td>
+              <td style="padding:${isSinglePage ? '5px 8px' : '7px 10px'};text-align:left;font-weight:900;font-size:${isSinglePage ? '13.8px' : '15px'};color:#14532d;">${fmtMoney(totalRequired)}</td>
             </tr>
           </table>
         </div>
       </div>
 
       <!-- Total Required Amount in Words (إجمالي المبلغ المطلوب بالحروف) -->
-      <div style="border:2px solid #0f172a;background:#f8fafc;padding:8px 14px;border-radius:8px;margin-bottom:12px;font-size:13.5px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+      <div style="border:1.5px solid #0f172a;background:#f8fafc;padding:${isSinglePage ? '5px 12px' : '8px 14px'};border-radius:7px;margin-bottom:${isSinglePage ? '5px' : '10px'};font-size:${isSinglePage ? '12px' : '13.2px'};display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
         <div>
           <strong>إجمالي المبلغ المطلوب بالحروف:</strong>
           <span style="font-weight:900;color:#0f172a;margin-right:6px;">${totalWords}</span>
@@ -11625,20 +11650,24 @@ function buildOfficialOrderStatementPdfHtml(ord) {
       ` : ''}
 
       ${car ? `
-      <div style="border:1.5px solid #000;background:#f8fafc;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:12px;">
+      <div style="border:1px solid #000;background:#f8fafc;padding:4px 10px;border-radius:6px;margin-bottom:5px;font-size:11px;">
         <strong>🚚 بيانات إذن صرف وتحميل السيارة (${car.voucherNo || 'CAR-' + ord.orderNumber}):</strong>
         رقم السيارة: <strong>${car.carPlateNumber || '-'}</strong> | السائق: <strong>${car.driverName || '-'}</strong> | البالتات: مسلم (${car.palletsDeliveredCount ?? 0}) / مستلم (${car.palletsReceivedCount ?? 0})
       </div>
       ` : ''}
+    `;
+  }
 
+  function renderClosingAndStampFooter() {
+    return `
       <!-- Closing Line in Center -->
-      <div style="text-align:center;font-size:15px;font-weight:900;margin:10px 0 12px;color:#0f172a;">
+      <div style="text-align:center;font-size:${isSinglePage ? '13.5px' : '15px'};font-weight:900;margin:${isSinglePage ? '4px 0 6px' : '10px 0 12px'};color:#0f172a;">
         وتفضلوا بقبول فائق الاحترام والتقدير،،،
       </div>
 
       <!-- Bottom Row: Right = Prepared / Approved By | Bottom Left = العاصمة للصناعات المتخصصة + Company Stamp -->
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:8px;padding-top:8px;border-top:1px dashed #94a3b8;">
-        <div style="display:flex;gap:32px;font-size:12.5px;font-weight:700;text-align:center;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:${isSinglePage ? '4px' : '8px'};padding-top:${isSinglePage ? '6px' : '8px'};border-top:1px dashed #94a3b8;">
+        <div style="display:flex;gap:28px;font-size:${isSinglePage ? '11.5px' : '12.5px'};font-weight:700;text-align:center;">
           <div>
             إعداد الحسابات<br/><br/>
             <span>${ord.requestedBy || '................'}</span>
@@ -11654,17 +11683,73 @@ function buildOfficialOrderStatementPdfHtml(ord) {
         </div>
 
         <!-- Bottom Left: العاصمة للصناعات المتخصصة + ختم الشركة تحتها -->
-        <div style="text-align:center;min-width:210px;">
-          <div style="font-size:15px;font-weight:900;color:#0f172a;margin-bottom:6px;">
+        <div style="text-align:center;min-width:190px;">
+          <div style="font-size:${isSinglePage ? '13.5px' : '15px'};font-weight:900;color:#0f172a;margin-bottom:3px;">
             العاصمة للصناعات المتخصصة
           </div>
-          <div style="display:inline-flex;align-items:center;justify-content:center;min-height:85px;">
-            <img src="${stampSrc}" alt="ختم الشركة" style="max-height:92px;max-width:190px;object-fit:contain;display:block;" />
+          <div style="display:inline-flex;align-items:center;justify-content:center;">
+            <img src="${stampSrc}" alt="ختم الشركة" style="height:${isSinglePage ? '68px' : '86px'};max-width:165px;object-fit:contain;display:block;" />
           </div>
         </div>
       </div>
+    `;
+  }
+
+  // CASE 1: <= 3 items -> Strictly ONE single page!
+  if (isSinglePage) {
+    return `
+      <div data-single-page-statement="1" style="border:2.5px solid #0f172a;padding:12px 16px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;border-radius:6px;box-sizing:border-box;page-break-inside:avoid;break-inside:avoid;">
+        ${renderStatementHeader(1, 1, 'ORDER STATEMENT')}
+        ${renderItemsTable(items, 0, true)}
+        ${renderFinancialAndTermsSection()}
+        ${renderClosingAndStampFooter()}
+      </div>
+    `;
+  }
+
+  // CASE 2: > 3 items -> Coordinated Multi-Page Layout!
+  const ITEMS_PER_PAGE = 9;
+  const itemChunks = [];
+  for (let i = 0; i < items.length; i += ITEMS_PER_PAGE) {
+    itemChunks.push({ slice: items.slice(i, i + ITEMS_PER_PAGE), startOffset: i });
+  }
+  const totalPages = itemChunks.length + 1;
+
+  const itemPagesHtml = itemChunks.map((chunk, chunkIdx) => {
+    const pageNum = chunkIdx + 1;
+    const isLastItemsPage = chunkIdx === itemChunks.length - 1;
+    return `
+      <div class="order-stmt-page" style="border:2.5px solid #0f172a;padding:16px 20px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;border-radius:6px;box-sizing:border-box;page-break-inside:avoid;break-inside:avoid;">
+        ${renderStatementHeader(pageNum, totalPages, 'بيان بنود الطلبية')}
+        ${renderItemsTable(chunk.slice, chunk.startOffset, isLastItemsPage)}
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:8px;border-top:1px dashed #94a3b8;font-size:12px;">
+          <div style="font-weight:800;color:#b45309;">
+            ⬅ يتبع في الصفحة التالية (صفحة ${pageNum + 1} من ${totalPages}) ${isLastItemsPage ? 'لاستكمال الملخص المالي والضرائب وشروط الدفع والحسابات البنكية' : 'لاستكمال باقي بنود الطلبية'}
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <strong style="font-size:13px;color:#0f172a;">العاصمة للصناعات المتخصصة</strong>
+            <img src="${stampSrc}" alt="ختم الشركة" style="height:56px;max-width:110px;object-fit:contain;display:block;" />
+          </div>
+        </div>
+      </div>
+      <div class="html2pdf__page-break" style="page-break-after:always;break-after:page;height:0;margin:0;padding:0;"></div>
+    `;
+  }).join('');
+
+  const finalSummaryPageHtml = `
+    <div class="order-stmt-page" style="border:2.5px solid #0f172a;padding:16px 20px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;border-radius:6px;box-sizing:border-box;page-break-inside:avoid;break-inside:avoid;">
+      ${renderStatementHeader(totalPages, totalPages, 'الملخص المالي وشروط السداد')}
+      <div style="border:1.5px solid #0f172a;background:#f1f5f9;padding:8px 12px;border-radius:7px;margin-bottom:10px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:12.5px;font-weight:800;">
+        <span>📦 إجمالي عدد البنود بالطلبية: <strong>${items.length} بنود</strong></span>
+        <span>🪵 إجمالي الكمية: <strong>${fmtNum(ord.totalSheetsCount, 0)} قطعة</strong> (${fmtNum(ord.totalVolumeM3, 4)} م³)</span>
+        ${showPrices ? `<span>💰 إجمالي قيمة البنود (شامل ق.م 14%): <strong>${fmtMoney(subtotal)}</strong></span>` : ''}
+      </div>
+      ${renderFinancialAndTermsSection()}
+      ${renderClosingAndStampFooter()}
     </div>
   `;
+
+  return `${itemPagesHtml}${finalSummaryPageHtml}`;
 }
 
 function printClientOrderStatement(orderId) {
