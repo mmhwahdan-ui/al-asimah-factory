@@ -1609,6 +1609,221 @@ function resetFactoryLogoToDefault() {
   openFactoryLogoModal();
 }
 
+// ============================================================================
+// COMPANY STAMP (ختم الشركة) & BANK ACCOUNTS & ARABIC TAFQEET (التفقيط بالحروف)
+// ============================================================================
+const DEFAULT_FACTORY_STAMP_SVG_DATA_URL = 'data:image/svg+xml;utf8,' + encodeURIComponent(`
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="130" viewBox="0 0 220 130">
+  <g transform="rotate(-4 110 65)" fill="none" stroke="#1e3a8a" stroke-width="2.5">
+    <rect x="8" y="8" width="204" height="114" rx="14" stroke="#1e3a8a" stroke-width="3.2" stroke-dasharray="6,2"/>
+    <rect x="14" y="14" width="192" height="102" rx="10" stroke="#1e3a8a" stroke-width="1.6"/>
+    <text x="110" y="38" text-anchor="middle" font-family="Cairo, Arial, sans-serif" font-size="14.5" font-weight="900" fill="#1e3a8a" stroke="none">مصنع العاصمة للصناعات المتخصصة</text>
+    <text x="110" y="58" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="800" fill="#1d4ed8" stroke="none">CSI CAPITAL INDUSTRIES</text>
+    <line x1="30" y1="67" x2="190" y2="67" stroke="#1e3a8a" stroke-width="1.4"/>
+    <text x="110" y="86" text-anchor="middle" font-family="Cairo, Arial, sans-serif" font-size="12.5" font-weight="800" fill="#1e3a8a" stroke="none">الإدارة المالية والمبيعات - ختـم معتمد</text>
+    <text x="110" y="105" text-anchor="middle" font-family="Cairo, Arial, sans-serif" font-size="11" font-weight="700" fill="#1d4ed8" stroke="none">★ العاصمـة للصناعات المتخصصة ★</text>
+  </g>
+</svg>`);
+
+function getFactoryStampSrc() {
+  const custom = state && state.factoryInfo && state.factoryInfo.stampDataUrl;
+  if (custom && typeof custom === 'string' && custom.startsWith('data:image/')) {
+    return custom;
+  }
+  return DEFAULT_FACTORY_STAMP_SVG_DATA_URL;
+}
+
+function getDefaultBankAccountsText() {
+  const saved = state?.factoryInfo?.bankAccountsText;
+  if (saved && typeof saved === 'string' && saved.trim()) {
+    return saved;
+  }
+  return `• البنك الأهلي المصري (باسم: مصنع العاصمة للصناعات المتخصصة) — رقم الحساب / IBAN: [يرجى كتابة رقم الحساب البنكي هنا]\n• بنك مصر / CIB (باسم: مصنع العاصمة للصناعات المتخصصة) — رقم الحساب / إنستاباي: [يرجى كتابة رقم الحساب هنا]`;
+}
+
+function openFactoryStampModal() {
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  const currentStamp = getFactoryStampSrc();
+  const hasCustom = Boolean(state?.factoryInfo?.stampDataUrl);
+  const currentBanks = getDefaultBankAccountsText();
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:580px;text-align:center;">
+        <div class="card-header">
+          <div class="card-title">💮 ختم الشركة وأرقام الحسابات البنكية في بيان الطلبية PDF</div>
+          <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <div style="background:var(--bg-elevated);border:2px dashed var(--border-color);border-radius:14px;padding:16px;margin-bottom:14px;">
+          <div style="font-size:0.84rem;color:var(--text-muted);margin-bottom:8px;">معاينة ختم الشركة الحالي (يظهر أسفل يسار بيان الطلبية تحت كلمة "العاصمة للصناعات المتخصصة"):</div>
+          <div style="display:inline-flex;align-items:center;justify-content:center;background:#ffffff;border:1px solid #cbd5e1;border-radius:12px;padding:10px 18px;min-height:95px;">
+            <img id="stamp-modal-preview-img" src="${currentStamp}" alt="ختم الشركة" style="max-height:95px;max-width:220px;object-fit:contain;" />
+          </div>
+          <div style="margin-top:10px;">
+            <label for="factory-stamp-file-input" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px;font-size:0.88rem;cursor:pointer;">
+              📤 اختر صورة ختم الشركة من جهازك أو الموبايل (PNG / JPG)
+            </label>
+            <input id="factory-stamp-file-input" type="file" accept="image/*" style="display:none;" onchange="handleFactoryStampFileChange(event)" />
+          </div>
+        </div>
+
+        <div style="text-align:right;background:var(--bg-elevated);padding:14px;border-radius:12px;border:1px solid var(--border-color);margin-bottom:14px;">
+          <label style="font-weight:800;color:var(--primary);display:block;margin-bottom:6px;">🏦 أرقام الحسابات البنكية الخاصة بمصنع العاصمة (تظهر تلقائياً في كل بيان طلبية):</label>
+          <textarea id="factory-bank-accounts-input" rows="3" class="form-control" style="font-size:0.84rem;line-height:1.5;" placeholder="اكتب اسم البنك ورقم الحساب و IBAN لتحويل مبالغ الطلبيات...">${currentBanks}</textarea>
+          <button type="button" class="btn btn-sm btn-success" style="margin-top:8px;width:100%;font-weight:800;" onclick="saveFactoryBankAccountsFromModal()">
+            💾 حفظ أرقام الحسابات البنكية المعتمدة للمصنع
+          </button>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;gap:10px;">
+          ${hasCustom ? `
+            <button type="button" class="btn btn-danger" onclick="resetFactoryStampToDefault()">🔄 استعادة الختم الافتراضي</button>
+          ` : '<span></span>'}
+          <button type="button" class="btn btn-outline" onclick="closeModal()">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function saveFactoryBankAccountsFromModal() {
+  const txt = (document.getElementById('factory-bank-accounts-input')?.value || '').trim();
+  state.factoryInfo = state.factoryInfo || {};
+  state.factoryInfo.bankAccountsText = txt;
+  state.factoryInfo.updatedAt = new Date().toISOString();
+  saveState(`🏦 تحديث أرقام الحسابات البنكية المعتمدة لمصنع العاصمة بواسطة ${currentUser ? currentUser.name : 'الإدارة'}`);
+  alert('✅ تم حفظ أرقام الحسابات البنكية بنجاح! ستظهر تلقائياً في جميع بيانات الطلبيات.');
+}
+
+function handleFactoryStampFileChange(event) {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const rawDataUrl = e.target?.result;
+    if (!rawDataUrl || typeof rawDataUrl !== 'string') return;
+    const img = new Image();
+    img.onload = function() {
+      try {
+        const maxW = 300;
+        const maxH = 180;
+        let w = img.width || 200;
+        let h = img.height || 140;
+        const ratio = Math.min(maxW / w, maxH / h, 1);
+        w = Math.max(1, Math.round(w * ratio));
+        h = Math.max(1, Math.round(h * ratio));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        const finalDataUrl = canvas.toDataURL('image/png');
+
+        state.factoryInfo = state.factoryInfo || {};
+        state.factoryInfo.stampDataUrl = finalDataUrl;
+        state.factoryInfo.updatedAt = new Date().toISOString();
+        saveState(`💮 تحديث ختم الشركة الرسمي بواسطة ${currentUser ? currentUser.name : 'الإدارة'}`);
+        openFactoryStampModal();
+        alert('✅ تم حفظ صورة ختم الشركة بنجاح! سيظهر الآن أسفل يسار بيان الطلبية تحت كلمة "العاصمة للصناعات المتخصصة".');
+      } catch (_) {
+        state.factoryInfo = state.factoryInfo || {};
+        state.factoryInfo.stampDataUrl = rawDataUrl;
+        state.factoryInfo.updatedAt = new Date().toISOString();
+        saveState(`💮 تحديث ختم الشركة الرسمي بواسطة ${currentUser ? currentUser.name : 'الإدارة'}`);
+        openFactoryStampModal();
+      }
+    };
+    img.src = rawDataUrl;
+  };
+  reader.readAsDataURL(file);
+}
+
+function resetFactoryStampToDefault() {
+  if (!confirm('هل تريد استعادة ختم الشركة الافتراضي؟')) return;
+  if (state && state.factoryInfo) {
+    delete state.factoryInfo.stampDataUrl;
+    state.factoryInfo.updatedAt = new Date().toISOString();
+  }
+  saveState(`🔄 استعادة ختم الشركة الافتراضي بواسطة ${currentUser ? currentUser.name : 'الإدارة'}`);
+  openFactoryStampModal();
+}
+
+// Convert numeric amount to formal Arabic words (التفقيط بالحروف بالعربي)
+function numberToArabicTafqeet(amount) {
+  const num = Math.max(0, Number(amount || 0));
+  const intPart = Math.floor(num + 1e-9);
+  const piastres = Math.round((num - intPart) * 100);
+
+  if (intPart === 0 && piastres === 0) {
+    return 'فقط وقدره صفر جنيه مصري لا غير';
+  }
+
+  const ones = ['', 'واحد', 'اثنان', 'ثلاثة', 'أربعة', 'خمسة', 'ستة', 'سبعة', 'ثمانية', 'تسعة'];
+  const teens = ['عشرة', 'أحد عشر', 'اثنا عشر', 'ثلاثة عشر', 'أربعة عشر', 'خمسة عشر', 'ستة عشر', 'سبعة عشر', 'ثمانية عشر', 'تسعة عشر'];
+  const tens = ['', 'عشرة', 'عشرون', 'ثلاثون', 'أربعون', 'خمسون', 'ستون', 'سبعون', 'ثمانون', 'تسعون'];
+  const hundreds = ['', 'مائة', 'مائتان', 'ثلاثمائة', 'أربعمائة', 'خمسمائة', 'ستمائة', 'سبعمائة', 'ثمانمائة', 'تسعمائة'];
+
+  function convertUnder1000(n) {
+    if (n === 0) return '';
+    const parts = [];
+    const h = Math.floor(n / 100);
+    const rem = n % 100;
+    if (h > 0) parts.push(hundreds[h]);
+    if (rem > 0) {
+      if (rem < 10) {
+        parts.push(ones[rem]);
+      } else if (rem < 20) {
+        parts.push(teens[rem - 10]);
+      } else {
+        const u = rem % 10;
+        const t = Math.floor(rem / 10);
+        if (u > 0) {
+          parts.push(`${ones[u]} و${tens[t]}`);
+        } else {
+          parts.push(tens[t]);
+        }
+      }
+    }
+    return parts.join(' و');
+  }
+
+  const groups = [];
+  const millions = Math.floor(intPart / 1000000);
+  const thousands = Math.floor((intPart % 1000000) / 1000);
+  const remainder = intPart % 1000;
+
+  if (millions > 0) {
+    if (millions === 1) groups.push('مليون');
+    else if (millions === 2) groups.push('مليونان');
+    else if (millions >= 3 && millions <= 10) groups.push(`${convertUnder1000(millions)} ملايين`);
+    else groups.push(`${convertUnder1000(millions)} مليوناً`);
+  }
+
+  if (thousands > 0) {
+    if (thousands === 1) groups.push('ألف');
+    else if (thousands === 2) groups.push('ألفان');
+    else if (thousands >= 3 && thousands <= 10) groups.push(`${convertUnder1000(thousands)} آلاف`);
+    else groups.push(`${convertUnder1000(thousands)} ألفاً`);
+  }
+
+  if (remainder > 0) {
+    groups.push(convertUnder1000(remainder));
+  }
+
+  let words = groups.join(' و');
+  if (intPart > 0) {
+    words += ' جنيه مصري';
+  }
+  if (piastres > 0) {
+    const pWords = convertUnder1000(piastres);
+    words += (intPart > 0 ? ' و' : '') + `${pWords} قرشاً`;
+  }
+  return `فقط وقدره ${words} لا غير`;
+}
+
 // Main Render Entry
 function render() {
   if (window._isPrintingActive) return;
@@ -4139,6 +4354,7 @@ function renderProduction() {
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           ${isAccountantOrExec ? `
             <button class="btn btn-primary" onclick="openNewClientOrderPrepModal()">➕ إنشاء أمر تجهيز طلبية للعميل (بيان جديد)</button>
+            <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="openFactoryStampModal()">💮 ختم الشركة والحسابات البنكية</button>
           ` : ''}
           <button class="btn btn-outline" onclick="printAllProductionOrdersReportPdf()">🖨️ طباعة سجل أوامر التجهيز PDF</button>
           <button class="btn btn-outline" onclick="setTab('approvals')">✅ الانتقال لاعتماد أذون الصرف والسيارات</button>
@@ -4239,8 +4455,13 @@ function renderProduction() {
                     <td>
                       <div style="display:flex;flex-direction:column;gap:4px;">
                         <button class="btn btn-sm btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="openClientOrderStatementModal('${ord.id}')">
-                          ${canSeeFinancialPrices() ? '📄 بيان العميل / تعديل وطباعة' : '📄 بيان الكميات للتجهيز'}
+                          ${canSeeFinancialPrices() ? '📄 بيان العميل / تعديل' : '📄 بيان الكميات للتجهيز'}
                         </button>
+                        ${canSeeFinancialPrices() ? `
+                          <button class="btn btn-sm btn-accent" style="font-weight:800;" onclick="printClientOrderStatement('${ord.id}')">
+                            🖨️ تصدير وطباعة البيان PDF
+                          </button>
+                        ` : ''}
 
                         ${st === 'pending_executive' && isExec ? `
                           <button class="btn btn-sm btn-primary" onclick="approveOrderExecutive('${ord.id}')">
@@ -5791,6 +6012,8 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
   const modalRoot = document.getElementById('modal-root');
   const nextNo = `ORD-2026-${101 + (state.productionOrders?.length || 0)}`;
   const clients = (state.partners || []).filter(pt => pt.type !== 'supplier');
+  const defaultClient = clients.find(c => c.id === preselectedClientId) || clients[0] || null;
+  const defaultOldDebt = defaultClient ? Math.max(0, Number(computeClientMetrics(defaultClient).netDebt || 0)) : 0;
 
   draftOrderItems = [createDefaultDraftOrderItem()];
   draftOrderDiscountType = 'amount';
@@ -5798,15 +6021,20 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box" style="max-width:980px;">
+      <div class="modal-box" style="max-width:1040px;">
         <div class="card-header">
           <div>
-            <div class="card-title">📋 أمر تجهيز طلبية للعميل + إصدار بيان للعميل (المقاس المعتمد 125×250 سم أو مقاسات وتخانات خاصة للشركات)</div>
+            <div class="card-title">📋 أمر تجهيز طلبية للعميل + إصدار بيان طلبية PDF رسمي (شامل ضريبة القيمة المضافة 14%)</div>
             <small style="color:var(--text-muted);">
-              المقاس المعتمد افتراضياً هو <strong>125 سم × 250 سم</strong>، ويمكنك لأي بند اختيار أو كتابة <strong>مقاس مختلف للشركات (العرض × الطول سم)</strong> أو كتابة <strong>تخانة محددة (مم)</strong> مع السعر التلقائي من الجدول
+              جميع الأسعار التي تكتب في سعر القطعة <strong>شاملة ضريبة القيمة المضافة 14%</strong>، وضريبة الخصم والإضافة اختيارية، مع إمكانية طباعة وتصدير <strong>بيان طلبية PDF</strong> كامل باللوجو والختم والتفقيط بالحروف
             </small>
           </div>
-          <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button type="button" class="btn btn-sm btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="openFactoryStampModal()">
+              💮 ختم الشركة والحسابات البنكية
+            </button>
+            <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+          </div>
         </div>
 
         <form onsubmit="submitNewClientOrderPrep(event)">
@@ -5816,7 +6044,7 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
               <input id="ord-date" type="date" class="form-control" value="${todayStr()}" required />
             </div>
             <div class="form-group">
-              <label>رقم أمر تجهيز الطلبية</label>
+              <label>رقم أمر تجهيز الطلبية والبيان</label>
               <input id="ord-num" class="form-control" value="${nextNo}" required />
             </div>
             <div class="form-group" style="grid-column: span 2;">
@@ -5830,9 +6058,9 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
                 <input id="ord-client-code-search" type="text" class="form-control" style="max-width:240px;" placeholder="🔍 ابحث بكود العميل كامل (مثل CL-101)..." oninput="handleOrderModalClientSearch(this.value)" />
                 <div id="ord-client-search-status"></div>
               </div>
-              <select id="ord-client" class="form-control" required style="font-weight:800;border-color:var(--primary);">
+              <select id="ord-client" class="form-control" required style="font-weight:800;border-color:var(--primary);" onchange="onDraftOrderClientSelectionChange(this.value)">
                 ${clients.length === 0 ? `<option value="cl-new-inline">عميل جديد (سيتم تسجيله تلقائياً بكود CL-101)</option>` : ''}
-                ${clients.map(c => `<option value="${c.id}" ${c.id === preselectedClientId ? 'selected' : ''}>[${c.code || 'CL'}] ${c.name} ${c.phone ? '— ' + c.phone : ''}</option>`).join('')}
+                ${clients.map(c => `<option value="${c.id}" ${c.id === (defaultClient?.id || '') ? 'selected' : ''}>[${c.code || 'CL'}] ${c.name} ${c.phone ? '— ' + c.phone : ''}</option>`).join('')}
               </select>
               ${clients.length === 0 ? `
                 <input id="ord-new-client-name" class="form-control" style="margin-top:6px;" placeholder="اكتب اسم العميل الجديد هنا..." required />
@@ -5844,32 +6072,88 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
           <div style="background:var(--bg-elevated);padding:14px;border-radius:12px;border:1px solid var(--border-color);margin-bottom:14px;">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
               <div>
-                <strong style="color:var(--primary);font-size:0.92rem;">🪵 بنود الطلبية (المقاس المعتمد 125×250 سم أو مقاس خاص للشركات + تخانات محددة [قص/سدا] وجودات):</strong>
+                <strong style="color:var(--primary);font-size:0.92rem;">🪵 جدول بنود البيان (المسلسل | البيان | المقاس | الاتجاه | التخانة | الجودة | الكمية | السعر شامل ق.م 14% | الإجمالي):</strong>
               </div>
               <button type="button" class="btn btn-sm btn-primary" onclick="addDraftOrderItemRow()">
-                ➕ إضافة بند (تخانة / مقاس / جودة أخرى) للطلبية
+                ➕ إضافة بند آخر للبيان
               </button>
             </div>
 
             <div id="draft-order-items-container" class="table-responsive"></div>
           </div>
 
-          <!-- Discount & Statement Pricing Controls -->
+          <!-- Comprehensive Statement Financial, Tax, Delivery, Payment & Bank Details -->
           <div class="form-grid" style="background:rgba(217,119,6,0.06);padding:14px;border-radius:12px;border:1px solid rgba(217,119,6,0.25);margin-bottom:14px;">
             <div class="form-group">
               <label>نوع الخصم للعميل في البيان</label>
               <select id="ord-discount-type" class="form-control" onchange="draftOrderDiscountType=this.value; recalcDraftOrderTotals();">
-                <option value="amount">💵 خصم مبلغ نقدي مباشر (بالجنيه)</option>
                 <option value="percent">📉 خصم نسبة مئوية (%)</option>
+                <option value="amount" selected>💵 خصم مبلغ نقدي مباشر (بالجنيه)</option>
               </select>
             </div>
             <div class="form-group">
-              <label>قيمة الخصم (مبلغ أو نسبة %)</label>
+              <label>قيمة / نسبة الخصم</label>
               <input id="ord-discount-val" type="number" step="0.5" min="0" class="form-control" value="0" oninput="draftOrderDiscountValue=Number(this.value||0); recalcDraftOrderTotals();" />
             </div>
-            <div class="form-group" style="grid-column: span 2;">
-              <label>ملاحظات البيان والتجهيز لأمين المخزن</label>
-              <input id="ord-notes" class="form-control" placeholder="مثال: تجهيز بالمقاس والتخانة المحددة على بالتات سليمة ومراجعة الفرز..." />
+
+            <div class="form-group">
+              <label style="color:var(--danger);font-weight:800;">📒 المديونية القديمة على العميل (ج.م)</label>
+              <input id="ord-old-debt" type="number" step="0.5" min="0" class="form-control" value="${defaultOldDebt}" oninput="recalcDraftOrderTotals()" style="font-weight:800;border-color:var(--danger);" />
+            </div>
+
+            <div class="form-group">
+              <label style="color:#6d28d9;font-weight:800;">🧾 ضريبة الخصم والإضافة (اختياري)</label>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <select id="ord-wht-mode" class="form-control" style="font-weight:700;" onchange="const rEl=document.getElementById('ord-wht-rate'); if(this.value==='none'){rEl.value=0;}else if(Number(rEl.value)===0){rEl.value=1;} recalcDraftOrderTotals();">
+                  <option value="none" selected>بدون ضريبة خصم وإضافة (اختياري)</option>
+                  <option value="deduct">تطبيق خصم تحت حساب الضريبة (-%)</option>
+                  <option value="add">تطبيق إضافة ضريبية (+%)</option>
+                </select>
+                <input id="ord-wht-rate" type="number" step="0.25" min="0" max="25" class="form-control" style="width:82px;font-weight:800;text-align:center;" value="0" placeholder="%" title="نسبة ضريبة الخصم والإضافة %" oninput="recalcDraftOrderTotals()" />
+                <span style="font-weight:800;">%</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label style="color:var(--primary);font-weight:800;">🚚 مكان التسليم وطريقة التوصيل</label>
+              <select id="ord-delivery-mode" class="form-control" style="font-weight:800;border-color:var(--primary);" onchange="const cBox=document.getElementById('ord-delivery-cost'); if(this.value!=='paid_delivery'){cBox.value=0;} recalcDraftOrderTotals();">
+                <option value="ex_factory" selected>🏭 تسليم أرض المصنع (بدون نقل)</option>
+                <option value="included">🚛 شامل التوصيل لمقر العميل (مشمول في السعر)</option>
+                <option value="paid_delivery">🚚 توصيل لمقر العميل (مع إضافة سعر التوصيل)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>💰 سعر التوصيل / النولون (ج.م) + بيان مكان التسليم</label>
+              <div style="display:flex;gap:6px;">
+                <input id="ord-delivery-cost" type="number" step="10" min="0" class="form-control" style="max-width:125px;font-weight:800;" value="0" placeholder="سعر التوصيل" oninput="if(Number(this.value)>0){document.getElementById('ord-delivery-mode').value='paid_delivery';} recalcDraftOrderTotals();" />
+                <input id="ord-delivery-place" class="form-control" placeholder="عنوان / مكان التسليم (مثال: أرض مصنع العاصمة - العبور)" value="أرض مصنع العاصمة للصناعات المتخصصة" />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label style="color:var(--success);font-weight:800;">💵 شروط الدفع (الدفعة المقدمة - المقدم)</label>
+              <input id="ord-payment-advance" class="form-control" value="50% دفعة مقدمة عند التعاقد وتأكيد الطلبية" placeholder="مثال: 50% مقدم أو مبلغ محدد..." />
+            </div>
+
+            <div class="form-group">
+              <label style="color:#b45309;font-weight:800;">⏳ شروط الدفع (الدفعة الآجلة - الآجل)</label>
+              <input id="ord-payment-deferred" class="form-control" value="50% عند الاستلام والتوريد" placeholder="مثال: المتبقي عند التسليم أو آجل 30 يوماً..." />
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="font-weight:800;color:var(--primary);">🏦 أرقام الحسابات البنكية الخاصة بمصنع العاصمة (لتحويل المبلغ عليها في البيان):</label>
+              <textarea id="ord-bank-accounts" rows="2" class="form-control" style="font-size:0.82rem;">${getDefaultBankAccountsText()}</textarea>
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="font-weight:800;">✍️ إجمالي المبلغ المطلوب بالحروف (يُكتب تلقائياً ويمكنك تعديله):</label>
+              <input id="ord-amount-words" class="form-control" style="font-weight:800;color:var(--primary);background:var(--bg-surface);" />
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label>ملاحظات إضافية في البيان ولأمين المخزن</label>
+              <input id="ord-notes" class="form-control" placeholder="مثال: جميع الأسعار شاملة ضريبة القيمة المضافة 14%..." />
             </div>
           </div>
 
@@ -5879,9 +6163,17 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
             🔒 <strong>مسار الاعتماد التلقائي:</strong> فور حفظ الطلبية والبيان، سيتم إرساله إلى <strong>المدير التنفيذي أو مدير المشروعات</strong> للموافقة عليه أولاً، ولن يظهر للمدير الإداري وأمين المخزن إلا بعد موافقة المدير التنفيذي أو مدير المشروعات.
           </div>
 
-          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
-            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
-            <button type="submit" class="btn btn-primary">📋 حفظ أمر تجهيز الطلبية وإصدار بيان العميل للاعتماد</button>
+          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:16px;">
+            <button type="button" class="btn btn-accent" style="font-weight:800;" onclick="previewDraftOrderStatementPdf()">
+              🖨️ معاينة وتصدير بيان الطلبية PDF الآن
+            </button>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+              <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+              <button type="button" class="btn btn-success" style="font-weight:800;" onclick="submitNewClientOrderPrep(null, true)">
+                🖨️ حفظ الطلبية + فتح وطباعة البيان PDF فوراً
+              </button>
+              <button type="submit" class="btn btn-primary">📋 حفظ أمر تجهيز الطلبية وإصدار البيان للاعتماد</button>
+            </div>
           </div>
         </form>
       </div>
@@ -5889,6 +6181,16 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
   `;
 
   renderDraftOrderItemsTable();
+}
+
+function onDraftOrderClientSelectionChange(clientId) {
+  const clientObj = (state.partners || []).find(c => c.id === clientId);
+  const oldDebtInput = document.getElementById('ord-old-debt');
+  if (clientObj && oldDebtInput) {
+    const m = computeClientMetrics(clientObj);
+    oldDebtInput.value = Math.max(0, Number(m.netDebt || 0));
+  }
+  recalcDraftOrderTotals();
 }
 
 function addDraftOrderItemRow() {
@@ -5998,6 +6300,9 @@ function updateDraftItemNumeric(idx, field, val) {
     item.lengthCm = Math.max(10, Number(val || 250));
     recalcDraftOrderTotals();
     return;
+  } else if (field === 'itemDescription') {
+    item.itemDescription = val;
+    return;
   } else if (field === 'gradeName') {
     item.gradeName = val;
   } else if (field === 'sheetsCount') {
@@ -6021,13 +6326,14 @@ function renderDraftOrderItemsTable() {
     <table>
       <thead>
         <tr>
-          <th style="width:24px;">#</th>
-          <th>التخانة والاتجاه (أو تخانة محددة)</th>
+          <th style="width:24px;">م</th>
+          <th>البيان</th>
           <th>📐 المقاس (العرض × الطول سم)</th>
+          <th>التخانة والاتجاه</th>
           <th>درجة الجودة</th>
           <th>المتاح</th>
           <th>الكمية (قطعة)</th>
-          <th>💰 سعر القطعة (ج.م)</th>
+          <th>💰 السعر (شامل ق.م 14%)</th>
           <th>إجمالي البند</th>
           <th style="width:32px;">حذف</th>
         </tr>
@@ -6041,9 +6347,27 @@ function renderDraftOrderItemsTable() {
           const itemTotal = +(Number(it.sheetsCount || 0) * Number(it.unitPrice || 0)).toFixed(2);
           const dimKey = `${len}x${wid}`;
           const matchedPreset = presetDims.some(d => `${d.lengthCm}x${d.widthCm}` === dimKey);
+          const descVal = it.itemDescription || it.woodTypeName || 'قشرة خشبية طبيعية';
           return `
             <tr>
               <td><strong>${idx + 1}</strong></td>
+              <td>
+                <input type="text" class="form-control" style="min-width:115px;padding:3px 6px;font-size:0.75rem;font-weight:700;" value="${descVal}" oninput="updateDraftItemNumeric(${idx}, 'itemDescription', this.value)" placeholder="البيان (قشرة خشبية...)" />
+              </td>
+              <td>
+                <div style="display:flex;flex-direction:column;gap:3px;min-width:140px;">
+                  <select class="form-control" style="padding:3px 5px;font-size:0.73rem;font-weight:700;border-color:${isStandardVeneerDimension(len, wid) ? 'var(--border-color)' : '#7c3aed'};" onchange="onDraftItemDimensionPresetSelect(${idx}, this.value)">
+                    ${presetDims.map(d => `<option value="${d.lengthCm}x${d.widthCm}" ${!it.customDimMode && `${d.lengthCm}x${d.widthCm}` === dimKey ? 'selected' : ''}>${d.widthCm}×${d.lengthCm} سم ${d.isStandard ? '(معتمد)' : '(خاص)'}</option>`).join('')}
+                    <option value="custom" ${it.customDimMode || !matchedPreset ? 'selected' : ''}>📐 مقاس خاص للشركة (عرض×طول)...</option>
+                  </select>
+                  <div style="display:flex;align-items:center;gap:3px;">
+                    <input type="number" step="0.5" min="10" class="form-control" style="width:55px;padding:2px 4px;font-size:0.73rem;font-weight:800;text-align:center;" value="${wid}" oninput="updateDraftItemNumeric(${idx}, 'widthCm', this.value)" title="العرض بالسم" placeholder="العرض" />
+                    <span style="font-size:0.72rem;font-weight:800;">×</span>
+                    <input type="number" step="0.5" min="10" class="form-control" style="width:55px;padding:2px 4px;font-size:0.73rem;font-weight:800;text-align:center;" value="${len}" oninput="updateDraftItemNumeric(${idx}, 'lengthCm', this.value)" title="الطول بالسم" placeholder="الطول" />
+                    <small style="font-size:0.65rem;color:var(--text-muted);">سم</small>
+                  </div>
+                </div>
+              </td>
               <td>
                 ${hasCatalogThk && !it.customThkMode ? `
                   <div style="display:flex;flex-direction:column;gap:3px;">
@@ -6062,30 +6386,16 @@ function renderDraftOrderItemsTable() {
                 ` : `
                   <div style="display:flex;flex-direction:column;gap:3px;">
                     <div style="display:flex;gap:3px;align-items:center;">
-                      <input type="number" step="0.05" min="0.1" class="form-control" style="width:64px;padding:3px 5px;font-weight:800;border-color:#7c3aed;" value="${it.thicknessMm}" oninput="updateDraftItemNumeric(${idx}, 'thicknessMm', this.value)" placeholder="مم" title="التخانة المحددة بالمليمتر" />
+                      <input type="number" step="0.05" min="0.1" class="form-control" style="width:62px;padding:3px 5px;font-weight:800;border-color:#7c3aed;" value="${it.thicknessMm}" oninput="updateDraftItemNumeric(${idx}, 'thicknessMm', this.value)" placeholder="مم" title="التخانة المحددة بالمليمتر" />
                       <select class="form-control" style="padding:3px 5px;font-size:0.74rem;font-weight:700;" onchange="updateDraftItemNumeric(${idx}, 'direction', this.value)">
                         <option value="qas" ${it.direction === 'qas' ? 'selected' : ''}>قص</option>
                         <option value="sada" ${it.direction === 'sada' ? 'selected' : ''}>سدا</option>
                       </select>
                       ${hasCatalogThk ? `<button type="button" class="btn btn-sm btn-outline" style="padding:1px 5px;font-size:0.65rem;" onclick="toggleDraftItemCustomThk(${idx})" title="العودة لقائمة التخانات">📋</button>` : ''}
                     </div>
-                    <small style="font-size:0.64rem;color:#7c3aed;font-weight:700;">تخانة محددة (تضاف للجدول تلقائياً)</small>
+                    <small style="font-size:0.64rem;color:#7c3aed;font-weight:700;">تخانة محددة</small>
                   </div>
                 `}
-              </td>
-              <td>
-                <div style="display:flex;flex-direction:column;gap:3px;min-width:145px;">
-                  <select class="form-control" style="padding:3px 5px;font-size:0.73rem;font-weight:700;border-color:${isStandardVeneerDimension(len, wid) ? 'var(--border-color)' : '#7c3aed'};" onchange="onDraftItemDimensionPresetSelect(${idx}, this.value)">
-                    ${presetDims.map(d => `<option value="${d.lengthCm}x${d.widthCm}" ${!it.customDimMode && `${d.lengthCm}x${d.widthCm}` === dimKey ? 'selected' : ''}>${d.widthCm}×${d.lengthCm} سم ${d.isStandard ? '(معتمد)' : '(خاص)'}</option>`).join('')}
-                    <option value="custom" ${it.customDimMode || !matchedPreset ? 'selected' : ''}>📐 مقاس خاص للشركة (عرض×طول)...</option>
-                  </select>
-                  <div style="display:flex;align-items:center;gap:3px;">
-                    <input type="number" step="0.5" min="10" class="form-control" style="width:58px;padding:2px 4px;font-size:0.73rem;font-weight:800;text-align:center;" value="${wid}" oninput="updateDraftItemNumeric(${idx}, 'widthCm', this.value)" title="العرض بالسم" placeholder="العرض" />
-                    <span style="font-size:0.72rem;font-weight:800;">×</span>
-                    <input type="number" step="0.5" min="10" class="form-control" style="width:58px;padding:2px 4px;font-size:0.73rem;font-weight:800;text-align:center;" value="${len}" oninput="updateDraftItemNumeric(${idx}, 'lengthCm', this.value)" title="الطول بالسم" placeholder="الطول" />
-                    <small style="font-size:0.65rem;color:var(--text-muted);">سم</small>
-                  </div>
-                </div>
               </td>
               <td>
                 ${hasCatalogGrades ? `
@@ -6109,12 +6419,12 @@ function renderDraftOrderItemsTable() {
                 </span>
               </td>
               <td>
-                <input type="number" min="1" class="form-control" style="width:76px;padding:4px 6px;font-weight:800;" value="${it.sheetsCount}" oninput="updateDraftItemNumeric(${idx}, 'sheetsCount', this.value)" required />
+                <input type="number" min="1" class="form-control" style="width:74px;padding:4px 6px;font-weight:800;" value="${it.sheetsCount}" oninput="updateDraftItemNumeric(${idx}, 'sheetsCount', this.value)" required />
               </td>
               <td>
                 <div style="display:flex;flex-direction:column;gap:2px;">
                   <input type="number" step="0.5" min="0" class="form-control" style="width:86px;padding:4px 6px;font-weight:800;border-color:var(--accent);" value="${it.unitPrice}" oninput="updateDraftItemNumeric(${idx}, 'unitPrice', this.value)" required />
-                  <small style="font-size:0.66rem;color:var(--text-muted);">
+                  <small style="font-size:0.64rem;color:var(--text-muted);">
                     الجدول: <strong style="color:var(--primary);">${fmtNum(tablePrice, 2)} ج</strong>
                     ${Number(it.unitPrice) !== Number(tablePrice) && tablePrice > 0 ? `
                       <button type="button" class="btn btn-sm btn-outline" style="padding:0px 4px;font-size:0.62rem;" onclick="resetDraftItemToTablePrice(${idx})">🔄</button>
@@ -6155,6 +6465,9 @@ function recalcDraftOrderTotals() {
     it.areaM2 = m.totalAreaM2;
     it.volumeM3 = m.totalVolumeM3;
     it.totalItemAmount = rowAmt;
+    if (!it.itemDescription) {
+      it.itemDescription = it.woodTypeName || 'قشرة خشبية طبيعية';
+    }
 
     subtotal += rowAmt;
     totalSheets += Number(it.sheetsCount || 0);
@@ -6169,57 +6482,190 @@ function recalcDraftOrderTotals() {
 
   subtotal = +subtotal.toFixed(2);
   let discountAmount = 0;
+  let discountPercent = 0;
   if (draftOrderDiscountType === 'percent') {
-    discountAmount = +((subtotal * Math.min(100, Math.max(0, draftOrderDiscountValue))) / 100).toFixed(2);
+    discountPercent = Math.min(100, Math.max(0, Number(draftOrderDiscountValue || 0)));
+    discountAmount = +((subtotal * discountPercent) / 100).toFixed(2);
   } else {
     discountAmount = Math.min(subtotal, Math.max(0, +Number(draftOrderDiscountValue || 0).toFixed(2)));
+    discountPercent = subtotal > 0 ? +((discountAmount / subtotal) * 100).toFixed(2) : 0;
   }
-  const netTotal = Math.max(0, +(subtotal - discountAmount).toFixed(2));
+
+  const afterDiscount = Math.max(0, +(subtotal - discountAmount).toFixed(2));
+  // Prices in unitPrice are inclusive of 14% VAT
+  const preVatBase = +(afterDiscount / 1.14).toFixed(2);
+  const includedVat14 = +(afterDiscount - preVatBase).toFixed(2);
+
+  const whtMode = document.getElementById('ord-wht-mode')?.value || 'none';
+  const whtRate = whtMode === 'none' ? 0 : Math.max(0, Number(document.getElementById('ord-wht-rate')?.value || 0));
+  const whtAmount = whtRate > 0 ? +((preVatBase * whtRate) / 100).toFixed(2) : 0;
+
+  const deliveryMode = document.getElementById('ord-delivery-mode')?.value || 'ex_factory';
+  const deliveryCost = deliveryMode === 'paid_delivery' ? Math.max(0, Number(document.getElementById('ord-delivery-cost')?.value || 0)) : 0;
+
+  let netTotal = afterDiscount;
+  if (whtMode === 'deduct') netTotal -= whtAmount;
+  else if (whtMode === 'add') netTotal += whtAmount;
+  netTotal = Math.max(0, +(netTotal + deliveryCost).toFixed(2));
+
+  const oldDebt = Math.max(0, Number(document.getElementById('ord-old-debt')?.value || 0));
+  const totalRequired = +(netTotal + oldDebt).toFixed(2);
+  const autoWords = numberToArabicTafqeet(totalRequired);
+
+  const wordsEl = document.getElementById('ord-amount-words');
+  if (wordsEl) {
+    wordsEl.value = autoWords;
+  }
 
   const previewEl = document.getElementById('ord-totals-preview');
   if (previewEl) {
     previewEl.innerHTML = `
       <div class="calc-preview-item">
-        <span>إجمالي عدد الأصناف / البنود</span>
-        <strong>${draftOrderItems.length} بنود (${fmtNum(totalSheets, 0)} قطعة)</strong>
+        <span>إجمالي قيمة الطلبية (شامل ق.م 14%)</span>
+        <strong>${fmtMoney(subtotal)} (${fmtNum(totalSheets, 0)} ق)</strong>
       </div>
       <div class="calc-preview-item">
-        <span>إجمالي المساحة والحجم (حسب مقاس وتخانة كل بند)</span>
-        <strong>${fmtNum(totalAreaM2, 2)} م² | ${fmtNum(totalVolumeM3, 4)} م³</strong>
-      </div>
-      <div class="calc-preview-item">
-        <span>الإجمالي قبل الخصم</span>
-        <strong>${fmtMoney(subtotal)}</strong>
-      </div>
-      <div class="calc-preview-item">
-        <span>قيمة الخصم للعميل</span>
+        <span>الخصم (${fmtNum(discountPercent, 2)}%)</span>
         <strong style="color:var(--danger);">-${fmtMoney(discountAmount)}</strong>
       </div>
       <div class="calc-preview-item">
-        <span>صافي بيان الطلبية للعميل</span>
-        <strong style="color:var(--success);font-size:1.15rem;">${fmtMoney(netTotal)}</strong>
+        <span>ضريبة القيمة المضافة 14% (شاملة بالسعر)</span>
+        <strong style="color:#0284c7;">${fmtMoney(includedVat14)} (شاملة)</strong>
+      </div>
+      <div class="calc-preview-item">
+        <span>ضريبة الخصم والإضافة (${whtMode === 'none' ? 'اختياري: 0%' : whtRate + '%'})</span>
+        <strong style="color:#6d28d9;">${whtMode === 'deduct' ? '-' : whtMode === 'add' ? '+' : ''}${fmtMoney(whtAmount)}</strong>
+      </div>
+      <div class="calc-preview-item">
+        <span>التسليم والتوصيل</span>
+        <strong>${deliveryMode === 'ex_factory' ? 'أرض المصنع (0 ج)' : deliveryMode === 'included' ? 'شامل التوصيل' : '+' + fmtMoney(deliveryCost)}</strong>
+      </div>
+      <div class="calc-preview-item">
+        <span>صافي الطلبية الحالية</span>
+        <strong style="color:var(--success);font-size:1.08rem;">${fmtMoney(netTotal)}</strong>
+      </div>
+      <div class="calc-preview-item">
+        <span>المديونية القديمة على العميل</span>
+        <strong style="color:var(--danger);">${fmtMoney(oldDebt)}</strong>
+      </div>
+      <div class="calc-preview-item" style="background:rgba(15,118,110,0.12);border:1.5px solid var(--primary);border-radius:8px;padding:6px 10px;">
+        <span style="font-weight:800;color:var(--primary);">💎 إجمالي المبلغ المطلوب</span>
+        <strong style="color:var(--primary);font-size:1.18rem;">${fmtMoney(totalRequired)}</strong>
       </div>
     `;
   }
 }
 
-function submitNewClientOrderPrep(e) {
-  e.preventDefault();
+function collectDraftOrderObjectForStatement() {
   const opDate = document.getElementById('ord-date')?.value || todayStr();
-  const orderNumber = (document.getElementById('ord-num')?.value || '').trim();
+  const orderNumber = (document.getElementById('ord-num')?.value || `ORD-${Date.now().toString().slice(-4)}`).trim();
   const clientSelectVal = document.getElementById('ord-client')?.value || '';
   const notes = (document.getElementById('ord-notes')?.value || '').trim();
+  let clientObj = (state.partners || []).find(c => c.id === clientSelectVal);
+  const inlineName = (document.getElementById('ord-new-client-name')?.value || 'عميل مصنع العاصمة').trim();
+
+  recalcDraftOrderTotals();
+  const subtotalAmount = +draftOrderItems.reduce((s, i) => s + Number(i.totalItemAmount || 0), 0).toFixed(2);
+  let discountAmount = 0;
+  let discountPercent = 0;
+  if (draftOrderDiscountType === 'percent') {
+    discountPercent = Math.min(100, Math.max(0, Number(draftOrderDiscountValue || 0)));
+    discountAmount = +((subtotalAmount * discountPercent) / 100).toFixed(2);
+  } else {
+    discountAmount = Math.min(subtotalAmount, Math.max(0, +Number(draftOrderDiscountValue || 0).toFixed(2)));
+    discountPercent = subtotalAmount > 0 ? +((discountAmount / subtotalAmount) * 100).toFixed(2) : 0;
+  }
+  const afterDiscount = Math.max(0, +(subtotalAmount - discountAmount).toFixed(2));
+  const preVatBaseAmount = +(afterDiscount / 1.14).toFixed(2);
+  const includedVatAmount = +(afterDiscount - preVatBaseAmount).toFixed(2);
+
+  const withholdingTaxMode = document.getElementById('ord-wht-mode')?.value || 'none';
+  const withholdingTaxRate = withholdingTaxMode === 'none' ? 0 : Math.max(0, Number(document.getElementById('ord-wht-rate')?.value || 0));
+  const withholdingTaxAmount = withholdingTaxRate > 0 ? +((preVatBaseAmount * withholdingTaxRate) / 100).toFixed(2) : 0;
+
+  const deliveryMode = document.getElementById('ord-delivery-mode')?.value || 'ex_factory';
+  const deliveryCost = deliveryMode === 'paid_delivery' ? Math.max(0, Number(document.getElementById('ord-delivery-cost')?.value || 0)) : 0;
+  const deliveryPlace = (document.getElementById('ord-delivery-place')?.value || 'أرض مصنع العاصمة للصناعات المتخصصة').trim();
+
+  let netTotalAmount = afterDiscount;
+  if (withholdingTaxMode === 'deduct') netTotalAmount -= withholdingTaxAmount;
+  else if (withholdingTaxMode === 'add') netTotalAmount += withholdingTaxAmount;
+  netTotalAmount = Math.max(0, +(netTotalAmount + deliveryCost).toFixed(2));
+
+  const previousDebtAmount = Math.max(0, Number(document.getElementById('ord-old-debt')?.value || 0));
+  const totalRequiredAmount = +(netTotalAmount + previousDebtAmount).toFixed(2);
+  const totalRequiredInWords = (document.getElementById('ord-amount-words')?.value || numberToArabicTafqeet(totalRequiredAmount)).trim();
+  const paymentAdvanceTerms = (document.getElementById('ord-payment-advance')?.value || '50% دفعة مقدمة عند التعاقد').trim();
+  const paymentDeferredTerms = (document.getElementById('ord-payment-deferred')?.value || '50% عند الاستلام والتوريد').trim();
+  const bankAccountsText = (document.getElementById('ord-bank-accounts')?.value || getDefaultBankAccountsText()).trim();
+
+  const totalSheetsCount = draftOrderItems.reduce((s, i) => s + Number(i.sheetsCount || 0), 0);
+  const totalAreaM2 = +draftOrderItems.reduce((s, i) => s + Number(i.areaM2 || 0), 0).toFixed(4);
+  const totalVolumeM3 = +draftOrderItems.reduce((s, i) => s + Number(i.volumeM3 || 0), 0).toFixed(4);
+
+  return {
+    orderNumber,
+    date: opDate,
+    clientObj,
+    clientName: clientObj ? clientObj.name : inlineName,
+    clientCode: clientObj ? (clientObj.code || 'CL-101') : 'CL-101',
+    clientPhone: clientObj ? (clientObj.phone || '') : '',
+    clientCity: clientObj ? (clientObj.city || '') : '',
+    items: JSON.parse(JSON.stringify(draftOrderItems)),
+    totalSheetsCount,
+    totalAreaM2,
+    totalVolumeM3,
+    subtotalAmount,
+    discountType: draftOrderDiscountType,
+    discountValue: draftOrderDiscountValue,
+    discountPercent,
+    discountAmount,
+    afterDiscount,
+    vatInclusive: true,
+    vatRate: 14,
+    preVatBaseAmount,
+    includedVatAmount,
+    withholdingTaxMode,
+    withholdingTaxRate,
+    withholdingTaxAmount,
+    deliveryMode,
+    deliveryCost,
+    deliveryPlace,
+    netTotalAmount,
+    previousDebtAmount,
+    totalRequiredAmount,
+    totalRequiredInWords,
+    paymentAdvanceTerms,
+    paymentDeferredTerms,
+    bankAccountsText,
+    notes,
+    requestedBy: currentUser?.name || 'الحسابات'
+  };
+}
+
+function previewDraftOrderStatementPdf() {
+  const draftOrd = collectDraftOrderObjectForStatement();
+  if (draftOrd.bankAccountsText) {
+    state.factoryInfo = state.factoryInfo || {};
+    state.factoryInfo.bankAccountsText = draftOrd.bankAccountsText;
+  }
+  const html = buildOfficialOrderStatementPdfHtml(draftOrd);
+  openUniversalPrintDocument(html, `بيان طلبية ${draftOrd.orderNumber} - ${draftOrd.clientName}`, false);
+}
+
+function submitNewClientOrderPrep(e, andPrintPdf = false) {
+  if (e) e.preventDefault();
+  const collected = collectDraftOrderObjectForStatement();
   const now = new Date().toISOString();
 
-  let clientObj = state.partners.find(c => c.id === clientSelectVal);
+  let clientObj = collected.clientObj;
   if (!clientObj) {
-    const newClientName = (document.getElementById('ord-new-client-name')?.value || 'عميل مصنع العاصمة').trim();
     const nextCode = `CL-${101 + (state.partners?.length || 0)}`;
     clientObj = {
       id: uid('pt'),
       code: nextCode,
       type: 'client',
-      name: newClientName,
+      name: collected.clientName,
       contactPerson: 'إدارة المشتريات',
       phone: '',
       city: '',
@@ -6235,8 +6681,13 @@ function submitNewClientOrderPrep(e) {
     state.partners.push(clientObj);
   }
 
+  if (collected.bankAccountsText) {
+    state.factoryInfo = state.factoryInfo || {};
+    state.factoryInfo.bankAccountsText = collected.bankAccountsText;
+  }
+
   // Ensure any custom thickness or custom company dimension entered in the order is saved to catalog
-  draftOrderItems.forEach(it => {
+  collected.items.forEach(it => {
     const tObj = ensureCatalogThicknessExists(it.thicknessMm, it.direction || 'qas', it.unitPrice, it.gradeId);
     if (tObj) {
       it.thicknessId = tObj.id;
@@ -6251,38 +6702,45 @@ function submitNewClientOrderPrep(e) {
     }
   });
 
-  recalcDraftOrderTotals();
-  const subtotalAmount = +draftOrderItems.reduce((s, i) => s + Number(i.totalItemAmount || 0), 0).toFixed(2);
-  const discountAmount = draftOrderDiscountType === 'percent'
-    ? +((subtotalAmount * Math.min(100, Math.max(0, draftOrderDiscountValue))) / 100).toFixed(2)
-    : Math.min(subtotalAmount, Math.max(0, +Number(draftOrderDiscountValue || 0).toFixed(2)));
-  const netTotalAmount = Math.max(0, +(subtotalAmount - discountAmount).toFixed(2));
-  const totalSheetsCount = draftOrderItems.reduce((s, i) => s + Number(i.sheetsCount || 0), 0);
-  const totalAreaM2 = +draftOrderItems.reduce((s, i) => s + Number(i.areaM2 || 0), 0).toFixed(4);
-  const totalVolumeM3 = +draftOrderItems.reduce((s, i) => s + Number(i.volumeM3 || 0), 0).toFixed(4);
-
   const createdByExec = isFullAdmin(currentUser);
   const initialStage = createdByExec ? 'pending_warehouse_prep' : 'pending_executive';
 
   const newOrder = {
     id: uid('ord'),
-    orderNumber,
-    date: opDate,
+    orderNumber: collected.orderNumber,
+    date: collected.date,
     clientId: clientObj.id,
     clientCode: clientObj.code || 'CL-101',
     clientName: clientObj.name,
     clientPhone: clientObj.phone || '',
     requestedBy: currentUser.name,
     requestedByRole: currentUser.roleKey,
-    items: JSON.parse(JSON.stringify(draftOrderItems)),
-    totalSheetsCount,
-    totalAreaM2,
-    totalVolumeM3,
-    subtotalAmount,
-    discountType: draftOrderDiscountType,
-    discountValue: draftOrderDiscountValue,
-    discountAmount,
-    netTotalAmount,
+    items: collected.items,
+    totalSheetsCount: collected.totalSheetsCount,
+    totalAreaM2: collected.totalAreaM2,
+    totalVolumeM3: collected.totalVolumeM3,
+    subtotalAmount: collected.subtotalAmount,
+    discountType: collected.discountType,
+    discountValue: collected.discountValue,
+    discountPercent: collected.discountPercent,
+    discountAmount: collected.discountAmount,
+    vatInclusive: true,
+    vatRate: 14,
+    preVatBaseAmount: collected.preVatBaseAmount,
+    includedVatAmount: collected.includedVatAmount,
+    withholdingTaxMode: collected.withholdingTaxMode,
+    withholdingTaxRate: collected.withholdingTaxRate,
+    withholdingTaxAmount: collected.withholdingTaxAmount,
+    deliveryMode: collected.deliveryMode,
+    deliveryCost: collected.deliveryCost,
+    deliveryPlace: collected.deliveryPlace,
+    netTotalAmount: collected.netTotalAmount,
+    previousDebtAmount: collected.previousDebtAmount,
+    totalRequiredAmount: collected.totalRequiredAmount,
+    totalRequiredInWords: collected.totalRequiredInWords,
+    paymentAdvanceTerms: collected.paymentAdvanceTerms,
+    paymentDeferredTerms: collected.paymentDeferredTerms,
+    bankAccountsText: collected.bankAccountsText,
     stage: initialStage,
     status: 'in_progress',
     executiveApprovedBy: createdByExec ? currentUser.name : '',
@@ -6293,8 +6751,8 @@ function submitNewClientOrderPrep(e) {
     accountantReleaseAt: '',
     financialSettlement: null,
     carDispatchVoucher: null,
-    notes,
-    createdAt: opDate,
+    notes: collected.notes,
+    createdAt: collected.date,
     updatedAt: now
   };
 
@@ -6305,15 +6763,18 @@ function submitNewClientOrderPrep(e) {
   closeModal();
   activeTab = 'production';
 
+  if (andPrintPdf) {
+    window._isPrintingActive = true;
+    printClientOrderStatement(newOrder.id);
+  }
+
   if (createdByExec) {
-    // Created directly by CEO or Projects Manager -> immediately visible & alerted to Admin Manager and Warehouse Keeper!
     saveState(
-      `📦 أمر تجهيز طلبية جديد (${orderNumber}) للعميل (${clientObj.name} - ${clientObj.code || ''}) معتمد من ${currentUser.name} — جاهز الآن للمدير الإداري وأمين المخزن لتجهيز الطلبية (${totalSheetsCount} قطعة)`
+      `📦 أمر تجهيز طلبية جديد (${newOrder.orderNumber}) للعميل (${clientObj.name} - ${clientObj.code || ''}) معتمد من ${currentUser.name} — جاهز الآن للمدير الإداري وأمين المخزن لتجهيز الطلبية (${newOrder.totalSheetsCount} قطعة)`
     );
   } else {
-    // Created by Accountant -> hidden from admin_manager & warehouse_keeper until CEO or Projects Manager approves it
     saveState(
-      `📋 إنشاء أمر تجهيز طلبية وبيان للعميل (${clientObj.name} - ${clientObj.code || ''}) رقم ${orderNumber} بصافي ${fmtMoney(netTotalAmount)} — بانتظار موافقة المدير التنفيذي أو مدير المشروعات`,
+      `📋 إنشاء أمر تجهيز طلبية وبيان للعميل (${clientObj.name} - ${clientObj.code || ''}) رقم ${newOrder.orderNumber} بصافي ${fmtMoney(newOrder.netTotalAmount)} — بانتظار موافقة المدير التنفيذي أو مدير المشروعات`,
       ['admin_manager', 'warehouse_keeper', 'operations_manager']
     );
   }
@@ -6332,18 +6793,27 @@ function openClientOrderStatementModal(orderId) {
   const canEditQuantities = isExec || canSeeFinancialPrices() || (isWarehouseOrAdmin && ord.stage === 'pending_warehouse_prep');
   const thicknesses = getSortedThicknesses();
   const grades = state.catalog?.grades || [];
+  const clientObj = (state.partners || []).find(p => p.id === ord.clientId || p.name === ord.clientName);
+  const defaultOldDebt = ord.previousDebtAmount !== undefined ? Number(ord.previousDebtAmount || 0) : (clientObj ? Math.max(0, Number(computeClientMetrics(clientObj).netDebt || 0)) : 0);
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box" style="max-width:960px;">
+      <div class="modal-box" style="max-width:1020px;">
         <div class="card-header">
           <div>
-            <div class="card-title">${canSeeFinancialPrices() ? `📄 بيان للعميل بالطلبية (${ord.orderNumber}) — تعديل البيان والمقاسات والتخانات والأسعار والخصم` : `📄 بيان كميات ومقاسات الطلبية للتجهيز بالمخزن (${ord.orderNumber}) — كميات فقط`}</div>
+            <div class="card-title">${canSeeFinancialPrices() ? `📄 بيان طلبية للعميل (${ord.orderNumber}) — تعديل وطباعة وتصدير البيان PDF` : `📄 بيان كميات ومقاسات الطلبية للتجهيز بالمخزن (${ord.orderNumber}) — كميات فقط`}</div>
             <small style="color:var(--text-muted);">
               العميل: <strong>${ord.clientName} (${ord.clientCode || 'CL'})</strong> | التاريخ: <strong>${ord.date}</strong> | الحالة: ${getOrderStageBadge(ord)}
             </small>
           </div>
-          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+          <div style="display:flex;gap:6px;align-items:center;">
+            ${canSeeFinancialPrices() ? `
+              <button type="button" class="btn btn-sm btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="openFactoryStampModal()">
+                💮 ختم الشركة والحسابات البنكية
+              </button>
+            ` : ''}
+            <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+          </div>
         </div>
 
         ${ord.carDispatchVoucher ? `
@@ -6426,13 +6896,14 @@ function openClientOrderStatementModal(orderId) {
             <table>
               <thead>
                 <tr>
-                  <th style="width:28px;">#</th>
-                  <th>التخانة والاتجاه</th>
+                  <th style="width:28px;">م</th>
+                  <th>البيان</th>
                   <th>📐 المقاس (العرض × الطول سم)</th>
+                  <th>الاتجاه والتخانة</th>
                   <th>الجودة</th>
                   <th>الكمية (قطعة)</th>
                   <th>الحجم (م³)</th>
-                  ${canSeeFinancialPrices() ? '<th>💰 سعر القطعة</th><th>الإجمالي</th>' : ''}
+                  ${canSeeFinancialPrices() ? '<th>💰 السعر (شامل ق.م 14%)</th><th>الإجمالي</th>' : ''}
                 </tr>
               </thead>
               <tbody>
@@ -6440,13 +6911,29 @@ function openClientOrderStatementModal(orderId) {
                   const curThkId = it.thicknessId || `th-${it.thicknessMm}-${it.direction || 'qas'}`;
                   const len = Number(it.lengthCm || 250);
                   const wid = Number(it.widthCm || 125);
+                  const descVal = it.itemDescription || it.woodTypeName || 'قشرة خشبية طبيعية';
                   return `
                   <tr>
                     <td><strong>${idx + 1}</strong></td>
                     <td>
                       ${isExec || canSeeFinancialPrices() ? `
+                        <input id="stmt-desc-${idx}" type="text" class="form-control" style="min-width:110px;padding:3px 6px;font-size:0.75rem;font-weight:700;" value="${descVal}" />
+                      ` : `<strong>${descVal}</strong>`}
+                    </td>
+                    <td>
+                      ${isExec || canSeeFinancialPrices() ? `
+                        <div style="display:flex;align-items:center;gap:3px;">
+                          <input id="stmt-wid-${idx}" type="number" step="0.5" min="10" class="form-control" style="width:55px;padding:3px 4px;font-weight:800;text-align:center;" value="${wid}" oninput="recalcStatementModalLive('${ord.id}')" title="العرض (سم)" />
+                          <span>×</span>
+                          <input id="stmt-len-${idx}" type="number" step="0.5" min="10" class="form-control" style="width:55px;padding:3px 4px;font-weight:800;text-align:center;" value="${len}" oninput="recalcStatementModalLive('${ord.id}')" title="الطول (سم)" />
+                          <small style="font-size:0.66rem;color:var(--text-muted);">سم</small>
+                        </div>
+                      ` : getVeneerDimensionBadgeHtml(len, wid)}
+                    </td>
+                    <td>
+                      ${isExec || canSeeFinancialPrices() ? `
                         <div style="display:flex;gap:3px;align-items:center;">
-                          <input id="stmt-thk-mm-${idx}" type="number" step="0.05" min="0.1" class="form-control" style="width:62px;padding:3px 5px;font-weight:800;" value="${it.thicknessMm}" oninput="recalcStatementModalLive('${ord.id}', ${idx})" title="التخانة بالـ مم" />
+                          <input id="stmt-thk-mm-${idx}" type="number" step="0.05" min="0.1" class="form-control" style="width:60px;padding:3px 5px;font-weight:800;" value="${it.thicknessMm}" oninput="recalcStatementModalLive('${ord.id}', ${idx})" title="التخانة بالـ مم" />
                           <select id="stmt-thk-dir-${idx}" class="form-control" style="padding:3px 5px;font-size:0.74rem;font-weight:700;" onchange="recalcStatementModalLive('${ord.id}', ${idx})">
                             <option value="qas" ${it.direction !== 'sada' ? 'selected' : ''}>قص</option>
                             <option value="sada" ${it.direction === 'sada' ? 'selected' : ''}>سدا</option>
@@ -6460,31 +6947,21 @@ function openClientOrderStatementModal(orderId) {
                       `}
                     </td>
                     <td>
-                      ${isExec || canSeeFinancialPrices() ? `
-                        <div style="display:flex;align-items:center;gap:3px;">
-                          <input id="stmt-wid-${idx}" type="number" step="0.5" min="10" class="form-control" style="width:58px;padding:3px 4px;font-weight:800;text-align:center;" value="${wid}" oninput="recalcStatementModalLive('${ord.id}')" title="العرض (سم)" />
-                          <span>×</span>
-                          <input id="stmt-len-${idx}" type="number" step="0.5" min="10" class="form-control" style="width:58px;padding:3px 4px;font-weight:800;text-align:center;" value="${len}" oninput="recalcStatementModalLive('${ord.id}')" title="الطول (سم)" />
-                          <small style="font-size:0.66rem;color:var(--text-muted);">سم</small>
-                        </div>
-                      ` : getVeneerDimensionBadgeHtml(len, wid)}
-                    </td>
-                    <td>
                       ${isExec ? `
-                        <select id="stmt-grd-${idx}" class="form-control" style="min-width:90px;padding:4px 6px;font-size:0.76rem;font-weight:700;" onchange="recalcStatementModalLive('${ord.id}', ${idx})">
+                        <select id="stmt-grd-${idx}" class="form-control" style="min-width:85px;padding:4px 6px;font-size:0.76rem;font-weight:700;" onchange="recalcStatementModalLive('${ord.id}', ${idx})">
                           ${grades.map(g => `<option value="${g.id}" ${g.id === it.gradeId ? 'selected' : ''}>${g.code}</option>`).join('')}
                         </select>
                       ` : `<strong>${it.gradeName}</strong>`}
                     </td>
                     <td>
-                      <input id="stmt-sheets-${idx}" type="number" min="0" class="form-control" style="width:82px;padding:4px 6px;font-weight:800;" value="${it.sheetsCount}" oninput="recalcStatementModalLive('${ord.id}')" ${canEditQuantities ? '' : 'readonly'} required />
+                      <input id="stmt-sheets-${idx}" type="number" min="0" class="form-control" style="width:80px;padding:4px 6px;font-weight:800;" value="${it.sheetsCount}" oninput="recalcStatementModalLive('${ord.id}')" ${canEditQuantities ? '' : 'readonly'} required />
                     </td>
                     <td id="stmt-vol-${idx}" style="font-size:0.75rem;">${fmtNum(it.volumeM3, 3)} م³</td>
                     ${canSeeFinancialPrices() ? `
                     <td>
                       <div style="display:flex;flex-direction:column;gap:2px;">
-                        <input id="stmt-price-${idx}" type="number" step="0.5" min="0" class="form-control" style="width:92px;padding:4px 6px;font-weight:800;border-color:var(--primary);" value="${it.unitPrice}" oninput="recalcStatementModalLive('${ord.id}')" required />
-                        <small id="stmt-tbl-price-hint-${idx}" style="font-size:0.68rem;color:var(--text-muted);">
+                        <input id="stmt-price-${idx}" type="number" step="0.5" min="0" class="form-control" style="width:90px;padding:4px 6px;font-weight:800;border-color:var(--primary);" value="${it.unitPrice}" oninput="recalcStatementModalLive('${ord.id}')" required />
+                        <small id="stmt-tbl-price-hint-${idx}" style="font-size:0.66rem;color:var(--text-muted);">
                           الجدول: <strong>${fmtNum(getCellUnitPrice(curThkId, it.gradeId, it.thicknessMm, it.direction), 2)} ج</strong>
                         </small>
                       </div>
@@ -6509,10 +6986,66 @@ function openClientOrderStatementModal(orderId) {
               </select>
             </div>
             <div class="form-group">
-              <label>قيمة الخصم</label>
+              <label>قيمة / نسبة الخصم</label>
               <input id="stmt-disc-val" type="number" step="0.5" min="0" class="form-control" value="${ord.discountValue || 0}" oninput="recalcStatementModalLive('${ord.id}')" />
             </div>
-            <div class="form-group" style="grid-column: span 2;">
+
+            <div class="form-group">
+              <label style="color:var(--danger);font-weight:800;">📒 المديونية القديمة على العميل (ج.م)</label>
+              <input id="stmt-old-debt" type="number" step="0.5" min="0" class="form-control" value="${defaultOldDebt}" oninput="recalcStatementModalLive('${ord.id}')" style="font-weight:800;border-color:var(--danger);" />
+            </div>
+
+            <div class="form-group">
+              <label style="color:#6d28d9;font-weight:800;">🧾 ضريبة الخصم والإضافة (اختياري)</label>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <select id="stmt-wht-mode" class="form-control" style="font-weight:700;" onchange="const rEl=document.getElementById('stmt-wht-rate'); if(this.value==='none'){rEl.value=0;}else if(Number(rEl.value)===0){rEl.value=1;} recalcStatementModalLive('${ord.id}');">
+                  <option value="none" ${(!ord.withholdingTaxMode || ord.withholdingTaxMode === 'none') ? 'selected' : ''}>بدون ضريبة خصم وإضافة (اختياري)</option>
+                  <option value="deduct" ${ord.withholdingTaxMode === 'deduct' ? 'selected' : ''}>تطبيق خصم تحت حساب الضريبة (-%)</option>
+                  <option value="add" ${ord.withholdingTaxMode === 'add' ? 'selected' : ''}>تطبيق إضافة ضريبية (+%)</option>
+                </select>
+                <input id="stmt-wht-rate" type="number" step="0.25" min="0" max="25" class="form-control" style="width:78px;font-weight:800;text-align:center;" value="${ord.withholdingTaxRate || 0}" oninput="recalcStatementModalLive('${ord.id}')" />
+                <span style="font-weight:800;">%</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label style="color:var(--primary);font-weight:800;">🚚 مكان التسليم وطريقة التوصيل</label>
+              <select id="stmt-delivery-mode" class="form-control" style="font-weight:800;border-color:var(--primary);" onchange="const cBox=document.getElementById('stmt-delivery-cost'); if(this.value!=='paid_delivery'){cBox.value=0;} recalcStatementModalLive('${ord.id}');">
+                <option value="ex_factory" ${(!ord.deliveryMode || ord.deliveryMode === 'ex_factory') ? 'selected' : ''}>🏭 تسليم أرض المصنع (بدون نقل)</option>
+                <option value="included" ${ord.deliveryMode === 'included' ? 'selected' : ''}>🚛 شامل التوصيل لمقر العميل (مشمول في السعر)</option>
+                <option value="paid_delivery" ${ord.deliveryMode === 'paid_delivery' ? 'selected' : ''}>🚚 توصيل لمقر العميل (مع إضافة سعر التوصيل)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>💰 سعر التوصيل / النولون (ج.م) + مكان التسليم</label>
+              <div style="display:flex;gap:6px;">
+                <input id="stmt-delivery-cost" type="number" step="10" min="0" class="form-control" style="max-width:120px;font-weight:800;" value="${ord.deliveryCost || 0}" oninput="if(Number(this.value)>0){document.getElementById('stmt-delivery-mode').value='paid_delivery';} recalcStatementModalLive('${ord.id}');" />
+                <input id="stmt-delivery-place" class="form-control" value="${ord.deliveryPlace || 'أرض مصنع العاصمة للصناعات المتخصصة'}" placeholder="مكان التسليم..." />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label style="color:var(--success);font-weight:800;">💵 شروط الدفع (الدفعة المقدمة - المقدم)</label>
+              <input id="stmt-payment-advance" class="form-control" value="${ord.paymentAdvanceTerms || '50% دفعة مقدمة عند التعاقد وتأكيد الطلبية'}" />
+            </div>
+
+            <div class="form-group">
+              <label style="color:#b45309;font-weight:800;">⏳ شروط الدفع (الدفعة الآجلة - الآجل)</label>
+              <input id="stmt-payment-deferred" class="form-control" value="${ord.paymentDeferredTerms || '50% عند الاستلام والتوريد'}" />
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="font-weight:800;color:var(--primary);">🏦 أرقام الحسابات البنكية الخاصة بمصنع العاصمة (لتحويل المبلغ عليها):</label>
+              <textarea id="stmt-bank-accounts" rows="2" class="form-control" style="font-size:0.82rem;">${ord.bankAccountsText || getDefaultBankAccountsText()}</textarea>
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="font-weight:800;">✍️ إجمالي المبلغ المطلوب بالحروف:</label>
+              <input id="stmt-amount-words" class="form-control" value="${ord.totalRequiredInWords || ''}" style="font-weight:800;color:var(--primary);background:var(--bg-surface);" />
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
               <label>ملاحظات البيان للعميل</label>
               <input id="stmt-notes" class="form-control" value="${ord.notes || ''}" placeholder="شروط التسليم أو ملاحظات البيان..." />
             </div>
@@ -6526,8 +7059,8 @@ function openClientOrderStatementModal(orderId) {
 
           <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:16px;">
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <button type="button" class="btn btn-accent" onclick="printClientOrderStatement('${ord.id}')">
-                🖨️ طباعة بيان الطلبية للعميل (رسمي)
+              <button type="button" class="btn btn-accent" style="font-weight:800;" onclick="saveAndPrintClientOrderStatement('${ord.id}')">
+                🖨️ طباعة وتصدير بيان الطلبية PDF (رسمي باللوجو والختم)
               </button>
               ${ord.carDispatchVoucher ? `
                 <button type="button" class="btn btn-success" onclick="printVehicleDispatchVoucher('${ord.id}')">
@@ -6615,25 +7148,69 @@ function recalcStatementModalLive(orderId, changedRowIdx = null) {
 
   const discType = document.getElementById('stmt-disc-type')?.value || 'amount';
   const discVal = Number(document.getElementById('stmt-disc-val')?.value || 0);
-  const discAmt = discType === 'percent'
-    ? +((subtotal * Math.min(100, Math.max(0, discVal))) / 100).toFixed(2)
-    : Math.min(subtotal, Math.max(0, +discVal.toFixed(2)));
-  const net = Math.max(0, +(subtotal - discAmt).toFixed(2));
+  let discAmt = 0;
+  let discPct = 0;
+  if (discType === 'percent') {
+    discPct = Math.min(100, Math.max(0, discVal));
+    discAmt = +((subtotal * discPct) / 100).toFixed(2);
+  } else {
+    discAmt = Math.min(subtotal, Math.max(0, +discVal.toFixed(2)));
+    discPct = subtotal > 0 ? +((discAmt / subtotal) * 100).toFixed(2) : 0;
+  }
+
+  const afterDiscount = Math.max(0, +(subtotal - discAmt).toFixed(2));
+  const preVatBase = +(afterDiscount / 1.14).toFixed(2);
+  const includedVat14 = +(afterDiscount - preVatBase).toFixed(2);
+
+  const whtMode = document.getElementById('stmt-wht-mode')?.value || ord.withholdingTaxMode || 'none';
+  const whtRate = whtMode === 'none' ? 0 : Math.max(0, Number(document.getElementById('stmt-wht-rate')?.value ?? ord.withholdingTaxRate ?? 0));
+  const whtAmt = whtRate > 0 ? +((preVatBase * whtRate) / 100).toFixed(2) : 0;
+
+  const delivMode = document.getElementById('stmt-delivery-mode')?.value || ord.deliveryMode || 'ex_factory';
+  const delivCost = delivMode === 'paid_delivery' ? Math.max(0, Number(document.getElementById('stmt-delivery-cost')?.value ?? ord.deliveryCost ?? 0)) : 0;
+
+  let net = afterDiscount;
+  if (whtMode === 'deduct') net -= whtAmt;
+  else if (whtMode === 'add') net += whtAmt;
+  net = Math.max(0, +(net + delivCost).toFixed(2));
+
+  const oldDebt = Math.max(0, Number(document.getElementById('stmt-old-debt')?.value ?? ord.previousDebtAmount ?? 0));
+  const totalReq = +(net + oldDebt).toFixed(2);
+
+  const wordsEl = document.getElementById('stmt-amount-words');
+  if (wordsEl) {
+    wordsEl.value = numberToArabicTafqeet(totalReq);
+  }
 
   const sumBox = document.getElementById('stmt-live-summary');
   if (sumBox) {
     sumBox.innerHTML = `
       <div class="calc-preview-item"><span>إجمالي القطع</span><strong>${fmtNum(totalSheets, 0)} قطعة (${fmtNum(totalVol, 4)} م³)</strong></div>
       ${canSeeFinancialPrices() ? `
-        <div class="calc-preview-item"><span>الإجمالي قبل الخصم</span><strong>${fmtMoney(subtotal)}</strong></div>
-        <div class="calc-preview-item"><span>قيمة الخصم</span><strong style="color:var(--danger);">-${fmtMoney(discAmt)}</strong></div>
-        <div class="calc-preview-item"><span>صافي البيان النهائي للعميل</span><strong style="color:var(--success);font-size:1.15rem;">${fmtMoney(net)}</strong></div>
+        <div class="calc-preview-item"><span>إجمالي الطلبية (شامل ق.م 14%)</span><strong>${fmtMoney(subtotal)}</strong></div>
+        <div class="calc-preview-item"><span>الخصم (${fmtNum(discPct, 2)}%)</span><strong style="color:var(--danger);">-${fmtMoney(discAmt)}</strong></div>
+        <div class="calc-preview-item"><span>ق.م 14% (شاملة بالسعر)</span><strong style="color:#0284c7;">${fmtMoney(includedVat14)}</strong></div>
+        <div class="calc-preview-item"><span>ضريبة الخصم والإضافة (${whtMode === 'none' ? '0%' : whtRate + '%'})</span><strong style="color:#6d28d9;">${whtMode === 'deduct' ? '-' : whtMode === 'add' ? '+' : ''}${fmtMoney(whtAmt)}</strong></div>
+        <div class="calc-preview-item"><span>صافي الطلبية</span><strong style="color:var(--success);font-size:1.08rem;">${fmtMoney(net)}</strong></div>
+        <div class="calc-preview-item"><span>المديونية القديمة</span><strong style="color:var(--danger);">${fmtMoney(oldDebt)}</strong></div>
+        <div class="calc-preview-item" style="background:rgba(15,118,110,0.12);border:1.5px solid var(--primary);border-radius:8px;padding:6px 10px;">
+          <span style="font-weight:800;color:var(--primary);">💎 إجمالي المبلغ المطلوب</span>
+          <strong style="color:var(--primary);font-size:1.15rem;">${fmtMoney(totalReq)}</strong>
+        </div>
       ` : ''}
     `;
   }
 }
 
-function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = false, alsoApproveWarehousePrep = false) {
+function saveAndPrintClientOrderStatement(orderId) {
+  if (canSeeFinancialPrices() && document.getElementById('stmt-disc-type')) {
+    saveClientOrderStatementChanges(null, orderId, false, false, true);
+  } else {
+    printClientOrderStatement(orderId);
+  }
+}
+
+function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = false, alsoApproveWarehousePrep = false, alsoPrintPdf = false) {
   if (e) e.preventDefault();
   const ord = (state.productionOrders || []).find(o => o.id === orderId);
   if (!ord) return;
@@ -6677,11 +7254,16 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
   const updatedItems = [];
 
   (ord.items || []).forEach((it, idx) => {
+    const descInput = document.getElementById(`stmt-desc-${idx}`);
     const thkMmInput = document.getElementById(`stmt-thk-mm-${idx}`);
     const thkDirInput = document.getElementById(`stmt-thk-dir-${idx}`);
     const grdSel = document.getElementById(`stmt-grd-${idx}`);
     const lenInput = document.getElementById(`stmt-len-${idx}`);
     const widInput = document.getElementById(`stmt-wid-${idx}`);
+
+    if (descInput) {
+      it.itemDescription = descInput.value.trim() || it.woodTypeName || 'قشرة خشبية طبيعية';
+    }
 
     const sh = Math.max(0, Number(document.getElementById(`stmt-sheets-${idx}`)?.value ?? it.sheetsCount ?? 0));
     const pr = Math.max(0, Number(document.getElementById(`stmt-price-${idx}`)?.value ?? it.unitPrice ?? 0));
@@ -6731,10 +7313,44 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
 
   const discType = document.getElementById('stmt-disc-type')?.value || 'amount';
   const discVal = Number(document.getElementById('stmt-disc-val')?.value || 0);
-  const discAmt = discType === 'percent'
-    ? +((subtotal * Math.min(100, Math.max(0, discVal))) / 100).toFixed(2)
-    : Math.min(subtotal, Math.max(0, +discVal.toFixed(2)));
-  const net = Math.max(0, +(subtotal - discAmt).toFixed(2));
+  let discAmt = 0;
+  let discPct = 0;
+  if (discType === 'percent') {
+    discPct = Math.min(100, Math.max(0, discVal));
+    discAmt = +((subtotal * discPct) / 100).toFixed(2);
+  } else {
+    discAmt = Math.min(subtotal, Math.max(0, +discVal.toFixed(2)));
+    discPct = subtotal > 0 ? +((discAmt / subtotal) * 100).toFixed(2) : 0;
+  }
+
+  const afterDiscount = Math.max(0, +(subtotal - discAmt).toFixed(2));
+  const preVatBase = +(afterDiscount / 1.14).toFixed(2);
+  const includedVat14 = +(afterDiscount - preVatBase).toFixed(2);
+
+  const whtMode = document.getElementById('stmt-wht-mode')?.value || ord.withholdingTaxMode || 'none';
+  const whtRate = whtMode === 'none' ? 0 : Math.max(0, Number(document.getElementById('stmt-wht-rate')?.value ?? ord.withholdingTaxRate ?? 0));
+  const whtAmt = whtRate > 0 ? +((preVatBase * whtRate) / 100).toFixed(2) : 0;
+
+  const delivMode = document.getElementById('stmt-delivery-mode')?.value || ord.deliveryMode || 'ex_factory';
+  const delivCost = delivMode === 'paid_delivery' ? Math.max(0, Number(document.getElementById('stmt-delivery-cost')?.value ?? ord.deliveryCost ?? 0)) : 0;
+  const delivPlace = (document.getElementById('stmt-delivery-place')?.value || ord.deliveryPlace || 'أرض مصنع العاصمة للصناعات المتخصصة').trim();
+
+  let net = afterDiscount;
+  if (whtMode === 'deduct') net -= whtAmt;
+  else if (whtMode === 'add') net += whtAmt;
+  net = Math.max(0, +(net + delivCost).toFixed(2));
+
+  const oldDebt = Math.max(0, Number(document.getElementById('stmt-old-debt')?.value ?? ord.previousDebtAmount ?? 0));
+  const totalReq = +(net + oldDebt).toFixed(2);
+  const wordsTxt = (document.getElementById('stmt-amount-words')?.value || numberToArabicTafqeet(totalReq)).trim();
+  const advTerms = (document.getElementById('stmt-payment-advance')?.value || ord.paymentAdvanceTerms || '50% دفعة مقدمة عند التعاقد').trim();
+  const defTerms = (document.getElementById('stmt-payment-deferred')?.value || ord.paymentDeferredTerms || '50% عند الاستلام والتوريد').trim();
+  const bankTxt = (document.getElementById('stmt-bank-accounts')?.value || ord.bankAccountsText || getDefaultBankAccountsText()).trim();
+
+  if (bankTxt && canSeeFinancialPrices()) {
+    state.factoryInfo = state.factoryInfo || {};
+    state.factoryInfo.bankAccountsText = bankTxt;
+  }
 
   ord.totalSheetsCount = totalSheets;
   ord.totalAreaM2 = +totalArea.toFixed(4);
@@ -6742,8 +7358,25 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
   ord.subtotalAmount = +subtotal.toFixed(2);
   ord.discountType = discType;
   ord.discountValue = discVal;
+  ord.discountPercent = discPct;
   ord.discountAmount = discAmt;
+  ord.vatInclusive = true;
+  ord.vatRate = 14;
+  ord.preVatBaseAmount = preVatBase;
+  ord.includedVatAmount = includedVat14;
+  ord.withholdingTaxMode = whtMode;
+  ord.withholdingTaxRate = whtRate;
+  ord.withholdingTaxAmount = whtAmt;
+  ord.deliveryMode = delivMode;
+  ord.deliveryCost = delivCost;
+  ord.deliveryPlace = delivPlace;
   ord.netTotalAmount = net;
+  ord.previousDebtAmount = oldDebt;
+  ord.totalRequiredAmount = totalReq;
+  ord.totalRequiredInWords = wordsTxt;
+  ord.paymentAdvanceTerms = advTerms;
+  ord.paymentDeferredTerms = defTerms;
+  ord.bankAccountsText = bankTxt;
   ord.notes = (document.getElementById('stmt-notes')?.value || ord.notes || '').trim();
   const now = new Date().toISOString();
   ord.updatedAt = now;
@@ -6824,6 +7457,10 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
   }
 
   closeModal();
+  if (alsoPrintPdf) {
+    window._isPrintingActive = true;
+    printClientOrderStatement(ord.id);
+  }
   const hiddenRoles = ord.stage === 'pending_executive' ? ['admin_manager', 'warehouse_keeper', 'operations_manager'] : [];
   saveState(
     `📄 تعديل بيان الطلبية ${ord.orderNumber} للعميل (${ord.clientName}) بواسطة ${currentUser.name}${stockRestoredAndUpdated ? ' (مع إرجاع وتحديث أرصدة المخازن تلقائياً)' : ''} — الصافي الجديد: ${fmtMoney(net)}`,
@@ -10774,110 +11411,276 @@ function printProductionOrder(poId) {
   printClientOrderStatement(poId);
 }
 
-function printClientOrderStatement(orderId) {
-  const ord = (state.productionOrders || []).find(x => x.id === orderId);
-  if (!ord) return;
+function buildOfficialOrderStatementPdfHtml(ord) {
   const items = Array.isArray(ord.items) ? ord.items : [];
   const showPrices = canSeeFinancialPrices();
   const car = ord.carDispatchVoucher || null;
   const factoryName = state.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة';
-  const html = `
-    <div style="border:3px solid #000;padding:24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
-      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #000;padding-bottom:12px;margin-bottom:16px;">
-        <div>
-          <h1 style="margin:0;font-size:22px;">${factoryName}</h1>
-          <p style="margin:4px 0 0;font-size:14px;">بيان طلبية وأمر تجهيز قشرة خشبية للعميل (المقاس المعتمد 125×250 سم أو مقاس خاص)</p>
+  const logoSrc = getFactoryLogoSrc();
+  const stampSrc = getFactoryStampSrc();
+
+  const clientObj = ord.clientObj || (state.partners || []).find(p => p.id === ord.clientId || p.name === ord.clientName);
+  const subtotal = Number(ord.subtotalAmount ?? items.reduce((s, i) => s + Number(i.totalItemAmount || 0), 0));
+  const discAmt = Number(ord.discountAmount || 0);
+  const discPct = ord.discountPercent !== undefined
+    ? Number(ord.discountPercent)
+    : (ord.discountType === 'percent' ? Number(ord.discountValue || 0) : (subtotal > 0 ? +((discAmt / subtotal) * 100).toFixed(2) : 0));
+  const afterDiscount = Math.max(0, +(subtotal - discAmt).toFixed(2));
+
+  // Unit prices are inclusive of 14% VAT
+  const preVatBase = ord.preVatBaseAmount !== undefined ? Number(ord.preVatBaseAmount) : +(afterDiscount / 1.14).toFixed(2);
+  const includedVat14 = ord.includedVatAmount !== undefined ? Number(ord.includedVatAmount) : +(afterDiscount - preVatBase).toFixed(2);
+
+  const whtMode = ord.withholdingTaxMode || 'none';
+  const whtRate = whtMode === 'none' ? 0 : Number(ord.withholdingTaxRate || 0);
+  const whtAmt = whtRate > 0 ? Number(ord.withholdingTaxAmount ?? +((preVatBase * whtRate) / 100).toFixed(2)) : 0;
+
+  const delivMode = ord.deliveryMode || 'ex_factory';
+  const delivCost = delivMode === 'paid_delivery' ? Number(ord.deliveryCost || 0) : 0;
+  const delivPlace = ord.deliveryPlace || 'أرض مصنع العاصمة للصناعات المتخصصة';
+  const delivModeLabel = delivMode === 'ex_factory'
+    ? 'تسليم أرض المصنع (بدون نقل)'
+    : delivMode === 'included'
+      ? 'شامل التوصيل لمقر العميل (مشمول في السعر)'
+      : `توصيل لمقر العميل (سعر التوصيل: ${fmtMoney(delivCost)})`;
+
+  let netOrder = afterDiscount;
+  if (whtMode === 'deduct') netOrder -= whtAmt;
+  else if (whtMode === 'add') netOrder += whtAmt;
+  netOrder = Math.max(0, +(netOrder + delivCost).toFixed(2));
+
+  const oldDebt = ord.previousDebtAmount !== undefined
+    ? Number(ord.previousDebtAmount || 0)
+    : (clientObj ? Math.max(0, Number(computeClientMetrics(clientObj).netDebt || 0)) : 0);
+  const totalRequired = ord.totalRequiredAmount !== undefined
+    ? Number(ord.totalRequiredAmount)
+    : +(netOrder + oldDebt).toFixed(2);
+  const totalWords = ord.totalRequiredInWords || numberToArabicTafqeet(totalRequired);
+
+  const advTerms = ord.paymentAdvanceTerms || '50% دفعة مقدمة عند التعاقد وتأكيد الطلبية';
+  const defTerms = ord.paymentDeferredTerms || '50% عند الاستلام والتوريد';
+  const bankAccounts = ord.bankAccountsText || getDefaultBankAccountsText();
+
+  return `
+    <div style="border:3px solid #0f172a;padding:20px 24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;border-radius:6px;">
+      <!-- Top Header: Right = Factory Info | Center = بيان طلبية | Top Left = Company Logo -->
+      <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;border-bottom:3px double #0f172a;padding-bottom:12px;margin-bottom:14px;gap:12px;">
+        <!-- Right Side -->
+        <div style="text-align:right;">
+          <h1 style="margin:0;font-size:19px;font-weight:900;color:#0f172a;">${factoryName}</h1>
+          <div style="font-size:12px;color:#334155;font-weight:700;margin-top:3px;">لإنتاج وتصنيع القشرة الخشبية القياسية والخاصة</div>
+          <div style="font-size:12px;margin-top:4px;">
+            <strong>رقم البيان:</strong> ${ord.orderNumber || '-'} &nbsp;|&nbsp; <strong>التاريخ:</strong> ${ord.date || fmtDate(ord.createdAt)}
+          </div>
         </div>
-        ${getPrintTopLeftLogoHtml(`
-          <div><strong>رقم الطلبية:</strong> ${ord.orderNumber}</div>
-          <div><strong>التاريخ:</strong> ${ord.date || fmtDate(ord.createdAt)}</div>
-          <div><strong>كود العميل:</strong> ${ord.clientCode || 'CL'}</div>
-        `)}
+
+        <!-- Center Title: بيان طلبية -->
+        <div style="text-align:center;">
+          <div style="border:2.5px solid #0f172a;background:#f8fafc;padding:7px 28px;border-radius:10px;box-shadow:0 2px 0 #0f172a;">
+            <h2 style="margin:0;font-size:22px;font-weight:900;color:#0f172a;letter-spacing:0.5px;">بيان طلبية</h2>
+            <div style="font-size:11px;font-weight:800;color:#b45309;margin-top:2px;">ORDER STATEMENT</div>
+          </div>
+        </div>
+
+        <!-- Top Left: Company Logo -->
+        <div style="display:flex;justify-content:flex-end;align-items:center;">
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;border:1.5px solid #0f172a;border-radius:8px;padding:5px 10px;background:#ffffff;">
+            <img src="${logoSrc}" alt="لوجو الشركة" style="height:64px;max-width:150px;object-fit:contain;display:block;" />
+          </div>
+        </div>
       </div>
 
-      <p style="font-size:15px;margin-bottom:12px;">
-        <strong>السادة / العميل:</strong> ${ord.clientName} ${ord.clientPhone ? ' — هاتف: ' + ord.clientPhone : ''}
-      </p>
+      <!-- Client Details Box -->
+      <div style="border:1.5px solid #0f172a;background:#f8fafc;padding:9px 14px;border-radius:8px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:13.5px;">
+        <div>
+          <strong>السادة / اسم العميل:</strong> <span style="font-size:15px;font-weight:900;color:#0f172a;">${ord.clientName || '-'}</span>
+          <span style="font-size:12px;color:#475569;margin-right:6px;">(كود العميل: ${ord.clientCode || 'CL'})</span>
+        </div>
+        <div style="font-size:12.5px;">
+          ${ord.clientPhone ? `<strong>هاتف:</strong> ${ord.clientPhone} &nbsp;|&nbsp; ` : ''}
+          <strong>مكان التسليم:</strong> ${delivModeLabel}
+        </div>
+      </div>
 
-      <table style="width:100%;border-collapse:collapse;margin-bottom:18px;font-size:14px;">
+      <!-- Items Table: مسلسل | البيان | المقاس | الاتجاه | التخانة | الجودة | الكمية | السعر | الإجمالي -->
+      <table style="width:100%;border-collapse:collapse;margin-bottom:8px;font-size:13px;">
         <thead>
-          <tr style="background:#e2e8f0;">
-            <th style="border:1px solid #000;padding:7px;">#</th>
-            <th style="border:1px solid #000;padding:7px;">التخانة (مم)</th>
-            <th style="border:1px solid #000;padding:7px;">الاتجاه (قص / سدا)</th>
-            <th style="border:1px solid #000;padding:7px;">درجة الجودة</th>
-            <th style="border:1px solid #000;padding:7px;">المقاس (العرض × الطول)</th>
-            <th style="border:1px solid #000;padding:7px;">الكمية (قطعة)</th>
-            <th style="border:1px solid #000;padding:7px;">الحجم (م³)</th>
+          <tr style="background:#e2e8f0;color:#0f172a;">
+            <th style="border:1.5px solid #000;padding:6px 5px;width:36px;text-align:center;">مسلسل</th>
+            <th style="border:1.5px solid #000;padding:6px 8px;text-align:right;">البيان</th>
+            <th style="border:1.5px solid #000;padding:6px 6px;text-align:center;">المقاس (العرض × الطول)</th>
+            <th style="border:1.5px solid #000;padding:6px 6px;text-align:center;">الاتجاه</th>
+            <th style="border:1.5px solid #000;padding:6px 6px;text-align:center;">التخانة</th>
+            <th style="border:1.5px solid #000;padding:6px 6px;text-align:center;">الجودة</th>
+            <th style="border:1.5px solid #000;padding:6px 6px;text-align:center;">الكمية</th>
             ${showPrices ? `
-              <th style="border:1px solid #000;padding:7px;">سعر القطعة</th>
-              <th style="border:1px solid #000;padding:7px;">إجمالي البند</th>
+              <th style="border:1.5px solid #000;padding:6px 6px;text-align:center;">السعر (شامل ق.م 14%)</th>
+              <th style="border:1.5px solid #000;padding:6px 8px;text-align:center;">الإجمالي</th>
             ` : ''}
           </tr>
         </thead>
         <tbody>
-          ${items.map((it, idx) => `
+          ${items.map((it, idx) => {
+            const desc = it.itemDescription || it.woodTypeName || 'قشرة خشبية طبيعية';
+            const wid = Number(it.widthCm || 125);
+            const len = Number(it.lengthCm || 250);
+            return `
             <tr>
-              <td style="border:1px solid #000;padding:7px;text-align:center;">${idx + 1}</td>
-              <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.thicknessMm} مم</td>
-              <td style="border:1px solid #000;padding:7px;">${it.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص'}</td>
-              <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.gradeName}</td>
-              <td style="border:1px solid #000;padding:7px;font-weight:700;">${formatVeneerDimensions(it.lengthCm, it.widthCm, true)}</td>
-              <td style="border:1px solid #000;padding:7px;font-weight:700;">${fmtNum(it.sheetsCount, 0)} قطعة</td>
-              <td style="border:1px solid #000;padding:7px;">${fmtNum(it.volumeM3, 4)} م³</td>
+              <td style="border:1px solid #000;padding:6px 5px;text-align:center;font-weight:800;">${idx + 1}</td>
+              <td style="border:1px solid #000;padding:6px 8px;font-weight:800;">${desc}</td>
+              <td style="border:1px solid #000;padding:6px 6px;text-align:center;font-weight:700;">${wid} × ${len} سم</td>
+              <td style="border:1px solid #000;padding:6px 6px;text-align:center;font-weight:700;">${it.direction === 'sada' ? 'سدا' : 'قص'}</td>
+              <td style="border:1px solid #000;padding:6px 6px;text-align:center;font-weight:800;">${it.thicknessMm} مم</td>
+              <td style="border:1px solid #000;padding:6px 6px;text-align:center;font-weight:800;">${it.gradeName || it.gradeCode || '-'}</td>
+              <td style="border:1px solid #000;padding:6px 6px;text-align:center;font-weight:800;">
+                ${fmtNum(it.sheetsCount, 0)} قطعة
+                <div style="font-size:10.5px;color:#475569;font-weight:600;">(${fmtNum(it.volumeM3, 4)} م³)</div>
+              </td>
               ${showPrices ? `
-                <td style="border:1px solid #000;padding:7px;">${fmtMoney(it.unitPrice)}</td>
-                <td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtMoney(it.totalItemAmount)}</td>
+                <td style="border:1px solid #000;padding:6px 6px;text-align:center;font-weight:700;">${fmtMoney(it.unitPrice)}</td>
+                <td style="border:1px solid #000;padding:6px 8px;text-align:center;font-weight:900;">${fmtMoney(it.totalItemAmount)}</td>
               ` : ''}
             </tr>
-          `).join('')}
+          `;}).join('')}
         </tbody>
+        <tfoot>
+          <tr style="background:#f1f5f9;font-weight:900;">
+            <td colspan="6" style="border:1.5px solid #000;padding:6px 8px;text-align:left;">إجمالي الكميات والحجم بالبيان:</td>
+            <td style="border:1.5px solid #000;padding:6px 6px;text-align:center;">${fmtNum(ord.totalSheetsCount, 0)} قطعة (${fmtNum(ord.totalVolumeM3, 4)} م³)</td>
+            ${showPrices ? `
+              <td style="border:1.5px solid #000;padding:6px 6px;text-align:center;">إجمالي الطلبية:</td>
+              <td style="border:1.5px solid #000;padding:6px 8px;text-align:center;font-size:14px;">${fmtMoney(subtotal)}</td>
+            ` : ''}
+          </tr>
+        </tfoot>
       </table>
 
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
-        <div>
-          <p style="margin:4px 0;"><strong>إجمالي عدد القطع:</strong> ${fmtNum(ord.totalSheetsCount, 0)} قطعة | <strong>إجمالي الحجم:</strong> ${fmtNum(ord.totalVolumeM3, 4)} م³</p>
-          ${ord.notes ? `<p style="margin:4px 0;"><strong>ملاحظات الطلبية:</strong> ${ord.notes}</p>` : ''}
-        </div>
-        ${showPrices ? `
-        <div style="border:2px solid #000;padding:10px 16px;border-radius:8px;min-width:250px;">
-          <div style="display:flex;justify-content:space-between;margin-bottom:5px;">
-            <span>الإجمالي قبل الخصم:</span>
-            <strong>${fmtMoney(ord.subtotalAmount || ord.netTotalAmount || 0)}</strong>
-          </div>
-          <div style="display:flex;justify-content:space-between;margin-bottom:5px;">
-            <span>قيمة الخصم:</span>
-            <strong>-${fmtMoney(ord.discountAmount || 0)}</strong>
-          </div>
-          <div style="display:flex;justify-content:space-between;font-size:16px;border-top:1px solid #000;padding-top:5px;">
-            <strong>الصافي النهائي للبيان:</strong>
-            <strong>${fmtMoney(ord.netTotalAmount || 0)}</strong>
-          </div>
-        </div>
-        ` : ''}
+      ${showPrices ? `
+      <div style="font-size:11.5px;font-weight:800;color:#b45309;margin-bottom:10px;background:#fffbeb;border:1px solid #f59e0b;padding:4px 10px;border-radius:6px;">
+        📌 <strong>ملحوظة هامة:</strong> جميع الأسعار التي تكتب في سعر القطعة <strong>شاملة ضريبة القيمة المضافة 14%</strong>، وضريبة الخصم والإضافة اختيارية.
       </div>
 
-      ${car ? `
-      <div style="border:2px solid #000;background:#f8fafc;padding:10px 14px;border-radius:8px;margin-bottom:16px;font-size:13px;">
-        <div style="font-weight:900;font-size:14px;margin-bottom:6px;">🚚 بيانات إذن صرف وتحميل السيارة المعتمد (${car.voucherNo || 'CAR-' + ord.orderNumber}):</div>
-        <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;">
-          <div><strong>رقم السيارة:</strong> ${car.carPlateNumber || '-'}</div>
-          <div><strong>اسم السائق:</strong> ${car.driverName || '-'} ${car.driverPhone ? '(' + car.driverPhone + ')' : ''}</div>
-          <div><strong>تاريخ التحميل:</strong> ${car.dispatchDate || ord.date || '-'}</div>
-          <div><strong>البالتات:</strong> مسلم (${car.palletsDeliveredCount ?? 0}) | مستلم (${car.palletsReceivedCount ?? 0})</div>
+      <!-- Financial Breakdown & Delivery & Payment Grid -->
+      <div style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:12px;margin-bottom:12px;align-items:stretch;">
+        <!-- Right Column: Delivery, Payment Terms & Bank Accounts -->
+        <div style="border:1.5px solid #000;border-radius:8px;padding:10px 12px;font-size:12.5px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+          <div>
+            <div style="font-weight:900;font-size:13px;color:#0f172a;border-bottom:1px solid #cbd5e1;padding-bottom:4px;margin-bottom:6px;">
+              🚚 مكان التسليم وشروط الدفع (المقدم والآجل):
+            </div>
+            <div style="margin-bottom:4px;"><strong>• مكان التسليم:</strong> ${delivModeLabel} — (${delivPlace})</div>
+            <div style="margin-bottom:4px;"><strong>• شروط الدفع (المقدم):</strong> ${advTerms}</div>
+            <div style="margin-bottom:4px;"><strong>• شروط الدفع (الآجل):</strong> ${defTerms}</div>
+            ${ord.notes ? `<div style="margin-top:4px;"><strong>• ملاحظات البيان:</strong> ${ord.notes}</div>` : ''}
+          </div>
+
+          <div style="background:#f8fafc;border:1px solid #0f172a;border-radius:6px;padding:7px 10px;margin-top:4px;">
+            <div style="font-weight:900;font-size:12.5px;color:#0f766e;margin-bottom:3px;">
+              🏦 أرقام الحسابات البنكية الخاصة بمصنع العاصمة (لتحويل المبلغ عليها):
+            </div>
+            <div style="white-space:pre-line;font-size:11.5px;font-weight:700;line-height:1.45;color:#0f172a;">${bankAccounts}</div>
+          </div>
         </div>
-        ${car.notes ? `<div style="margin-top:6px;"><strong>ملاحظات التحميل وأمن البوابة:</strong> ${car.notes}</div>` : ''}
+
+        <!-- Left Column: Financial Summary Table -->
+        <div style="border:2px solid #000;border-radius:8px;overflow:hidden;font-size:12.5px;">
+          <table style="width:100%;border-collapse:collapse;">
+            <tr>
+              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;background:#f8fafc;font-weight:700;">إجمالي قيمة الطلبية (شامل ق.م 14%):</td>
+              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;text-align:left;font-weight:900;">${fmtMoney(subtotal)}</td>
+            </tr>
+            <tr>
+              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;background:#f8fafc;font-weight:700;">نسبة وقيمة الخصم (${fmtNum(discPct, 2)}%):</td>
+              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;text-align:left;font-weight:800;color:#dc2626;">-${fmtMoney(discAmt)}</td>
+            </tr>
+            <tr>
+              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;background:#f8fafc;font-weight:700;">ضريبة القيمة المضافة (14%):</td>
+              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;text-align:left;font-weight:700;font-size:11.5px;">شاملة بالسعر (${fmtMoney(includedVat14)})</td>
+            </tr>
+            <tr>
+              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;background:#f8fafc;font-weight:700;">ضريبة الخصم والإضافة ${whtMode !== 'none' ? `(${whtRate}%)` : '(اختياري)'}:</td>
+              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;text-align:left;font-weight:800;">
+                ${whtMode === 'none' ? 'غير مطبقة (0 ج.م)' : `${whtMode === 'deduct' ? '-' : '+'}${fmtMoney(whtAmt)}`}
+              </td>
+            </tr>
+            <tr>
+              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;background:#f8fafc;font-weight:700;">سعر التوصيل (${delivMode === 'ex_factory' ? 'أرض المصنع' : delivMode === 'included' ? 'شامل التوصيل' : 'نولون توصيل'}):</td>
+              <td style="border-bottom:1px solid #cbd5e1;padding:6px 10px;text-align:left;font-weight:800;">
+                ${delivMode === 'included' ? 'شامل التوصيل' : fmtMoney(delivCost)}
+              </td>
+            </tr>
+            <tr style="background:#e0f2fe;">
+              <td style="border-bottom:1.5px solid #000;padding:7px 10px;font-weight:900;color:#0f172a;">صافي الطلبية:</td>
+              <td style="border-bottom:1.5px solid #000;padding:7px 10px;text-align:left;font-weight:900;font-size:14px;color:#0f172a;">${fmtMoney(netOrder)}</td>
+            </tr>
+            <tr>
+              <td style="border-bottom:1.5px solid #000;padding:6px 10px;background:#fef2f2;font-weight:800;color:#991b1b;">المديونية القديمة على العميل:</td>
+              <td style="border-bottom:1.5px solid #000;padding:6px 10px;background:#fef2f2;text-align:left;font-weight:900;color:#dc2626;">${fmtMoney(oldDebt)}</td>
+            </tr>
+            <tr style="background:#dcfce7;">
+              <td style="padding:8px 10px;font-weight:900;font-size:14px;color:#14532d;">إجمالي المبلغ المطلوب:</td>
+              <td style="padding:8px 10px;text-align:left;font-weight:900;font-size:15.5px;color:#14532d;">${fmtMoney(totalRequired)}</td>
+            </tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- Total Required Amount in Words (إجمالي المبلغ المطلوب بالحروف) -->
+      <div style="border:2px solid #0f172a;background:#f8fafc;padding:8px 14px;border-radius:8px;margin-bottom:12px;font-size:13.5px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+        <div>
+          <strong>إجمالي المبلغ المطلوب بالحروف:</strong>
+          <span style="font-weight:900;color:#0f172a;margin-right:6px;">${totalWords}</span>
+        </div>
       </div>
       ` : ''}
 
-      <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:14px;margin-top:26px;text-align:center;font-weight:700;font-size:13px;">
-        <div>إعداد المحاسب<br/><br/>${ord.requestedBy || '................'}</div>
-        <div>اعتماد المدير التنفيذي/المشروعات<br/><br/>${ord.executiveApprovedBy || '................'}</div>
-        <div>موافقة المدير الإداري/أمين المخزن<br/><br/>${ord.warehousePrepApprovedBy || '................'}</div>
-        <div>توقيع العميل / المستلم<br/><br/>${car?.driverName || '................'}</div>
+      ${car ? `
+      <div style="border:1.5px solid #000;background:#f8fafc;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:12px;">
+        <strong>🚚 بيانات إذن صرف وتحميل السيارة (${car.voucherNo || 'CAR-' + ord.orderNumber}):</strong>
+        رقم السيارة: <strong>${car.carPlateNumber || '-'}</strong> | السائق: <strong>${car.driverName || '-'}</strong> | البالتات: مسلم (${car.palletsDeliveredCount ?? 0}) / مستلم (${car.palletsReceivedCount ?? 0})
+      </div>
+      ` : ''}
+
+      <!-- Closing Line in Center -->
+      <div style="text-align:center;font-size:15px;font-weight:900;margin:10px 0 12px;color:#0f172a;">
+        وتفضلوا بقبول فائق الاحترام والتقدير،،،
+      </div>
+
+      <!-- Bottom Row: Right = Prepared / Approved By | Bottom Left = العاصمة للصناعات المتخصصة + Company Stamp -->
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:8px;padding-top:8px;border-top:1px dashed #94a3b8;">
+        <div style="display:flex;gap:32px;font-size:12.5px;font-weight:700;text-align:center;">
+          <div>
+            إعداد الحسابات<br/><br/>
+            <span>${ord.requestedBy || '................'}</span>
+          </div>
+          <div>
+            اعتماد الإدارة<br/><br/>
+            <span>${ord.executiveApprovedBy || '................'}</span>
+          </div>
+          <div>
+            توقيع العميل بالموافقة<br/><br/>
+            <span>................</span>
+          </div>
+        </div>
+
+        <!-- Bottom Left: العاصمة للصناعات المتخصصة + ختم الشركة تحتها -->
+        <div style="text-align:center;min-width:210px;">
+          <div style="font-size:15px;font-weight:900;color:#0f172a;margin-bottom:6px;">
+            العاصمة للصناعات المتخصصة
+          </div>
+          <div style="display:inline-flex;align-items:center;justify-content:center;min-height:85px;">
+            <img src="${stampSrc}" alt="ختم الشركة" style="max-height:92px;max-width:190px;object-fit:contain;display:block;" />
+          </div>
+        </div>
       </div>
     </div>
   `;
+}
+
+function printClientOrderStatement(orderId) {
+  const ord = (state.productionOrders || []).find(x => x.id === orderId);
+  if (!ord) return;
+  const html = buildOfficialOrderStatementPdfHtml(ord);
   openUniversalPrintDocument(html, `بيان طلبية ${ord.orderNumber} - ${ord.clientName}`, false);
 }
 
