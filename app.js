@@ -1625,10 +1625,50 @@ function getFactoryStampSrc() {
 
 function getDefaultBankAccountsText() {
   const saved = state?.factoryInfo?.bankAccountsText;
-  if (saved && typeof saved === 'string' && saved.trim()) {
+  if (saved && typeof saved === 'string' && saved.trim() && !saved.includes('[يرجى كتابة رقم الحساب')) {
     return saved;
   }
-  return `• البنك الأهلي المصري (باسم: مصنع العاصمة للصناعات المتخصصة) — رقم الحساب / IBAN: [يرجى كتابة رقم الحساب البنكي هنا]\n• بنك مصر / CIB (باسم: مصنع العاصمة للصناعات المتخصصة) — رقم الحساب / إنستاباي: [يرجى كتابة رقم الحساب هنا]`;
+  return `رقم حساب بنك CIB   : 100040329352\nرقم حساب بنك مـصـر : 5250001000008011`;
+}
+
+function fmtEnNum(val, decimals = 2) {
+  const n = Number(val || 0);
+  if (!Number.isFinite(n)) return decimals > 0 ? '0.00' : '0';
+  return n.toLocaleString('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  });
+}
+
+function fmtStatementCairoDate(dateStr) {
+  const raw = String(dateStr || todayStr()).trim().slice(0, 10);
+  const parts = raw.split('-');
+  if (parts.length === 3) {
+    const [yyyy, mm, dd] = parts;
+    return `${Number(dd)}- ${Number(mm)} - ${yyyy}`;
+  }
+  return raw;
+}
+
+function buildPreviousDebtStatementText(veneerDebt, palletsCount, palletPrice) {
+  const vDebt = Math.max(0, Number(veneerDebt || 0));
+  const pCnt = Math.max(0, Math.round(Number(palletsCount || 0)));
+  const pPrice = Math.max(0, Number(palletPrice || 500));
+  const pDeposit = +(pCnt * pPrice).toFixed(2);
+  if (pCnt > 0) {
+    return `قيمة مــديـــونـــيـــــة ســــابـــقــــة عبارة :{${fmtEnNum(vDebt, 0)}جنيه تـوريد قشرة + ${fmtEnNum(pDeposit, 0)}جنيه تأمين عدد(${pCnt})بالتة }`;
+  }
+  return 'قيمة مــديـــونـــيـــــة ســــابـــقــــة';
+}
+
+function buildReturnedPalletsStatementText(returnedCount, oldPalletsCount, palletPrice) {
+  const retCnt = Math.max(0, Math.round(Number(returnedCount || 0)));
+  if (retCnt <= 0) return '';
+  const oldCnt = Math.max(retCnt, Math.round(Number(oldPalletsCount || retCnt)));
+  const pPrice = Math.max(0, Number(palletPrice || 500));
+  const remCnt = Math.max(0, oldCnt - retCnt);
+  const remVal = +(remCnt * pPrice).toFixed(2);
+  return `تم رد عدد (${retCnt}) طبليه من مديونية (${oldCnt}) طبليه ويبقي مديونية بعدد (${remCnt}) طبلية بقيمة ${fmtEnNum(remVal, 0)}جنيه`;
 }
 
 function openFactoryStampModal() {
@@ -1748,13 +1788,13 @@ function numberToArabicTafqeet(amount) {
   const piastres = Math.round((num - intPart) * 100);
 
   if (intPart === 0 && piastres === 0) {
-    return 'فقط وقدره صفر جنيه مصري لا غير';
+    return 'صفر جنيهاً فقط لا غير';
   }
 
-  const ones = ['', 'واحد', 'اثنان', 'ثلاثة', 'أربعة', 'خمسة', 'ستة', 'سبعة', 'ثمانية', 'تسعة'];
-  const teens = ['عشرة', 'أحد عشر', 'اثنا عشر', 'ثلاثة عشر', 'أربعة عشر', 'خمسة عشر', 'ستة عشر', 'سبعة عشر', 'ثمانية عشر', 'تسعة عشر'];
+  const ones = ['', 'واحد', 'إثنان', 'ثلاثة', 'أربعة', 'خمسة', 'ستة', 'سبعة', 'ثمانية', 'تسعة'];
+  const teens = ['عشرة', 'أحد عشر', 'إثنا عشر', 'ثلاثة عشر', 'أربعة عشر', 'خمسة عشر', 'ستة عشر', 'سبعة عشر', 'ثمانية عشر', 'تسعة عشر'];
   const tens = ['', 'عشرة', 'عشرون', 'ثلاثون', 'أربعون', 'خمسون', 'ستون', 'سبعون', 'ثمانون', 'تسعون'];
-  const hundreds = ['', 'مائة', 'مائتان', 'ثلاثمائة', 'أربعمائة', 'خمسمائة', 'ستمائة', 'سبعمائة', 'ثمانمائة', 'تسعمائة'];
+  const hundreds = ['', 'مائة', 'مائتان', 'ثلاثمائة', 'أربعمائة', 'خمسمائة', 'ستمائة', 'سبعُمائة', 'ثمانمائة', 'تسعمائة'];
 
   function convertUnder1000(n) {
     if (n === 0) return '';
@@ -1787,16 +1827,16 @@ function numberToArabicTafqeet(amount) {
 
   if (millions > 0) {
     if (millions === 1) groups.push('مليون');
-    else if (millions === 2) groups.push('مليونان');
+    else if (millions === 2) groups.push('إثنان مليون');
     else if (millions >= 3 && millions <= 10) groups.push(`${convertUnder1000(millions)} ملايين`);
-    else groups.push(`${convertUnder1000(millions)} مليوناً`);
+    else groups.push(`${convertUnder1000(millions)} مليون`);
   }
 
   if (thousands > 0) {
-    if (thousands === 1) groups.push('ألف');
+    if (thousands === 1) groups.push('الف');
     else if (thousands === 2) groups.push('ألفان');
     else if (thousands >= 3 && thousands <= 10) groups.push(`${convertUnder1000(thousands)} آلاف`);
-    else groups.push(`${convertUnder1000(thousands)} ألفاً`);
+    else groups.push(`${convertUnder1000(thousands)} الف`);
   }
 
   if (remainder > 0) {
@@ -1805,13 +1845,13 @@ function numberToArabicTafqeet(amount) {
 
   let words = groups.join(' و');
   if (intPart > 0) {
-    words += ' جنيه مصري';
+    words += ' جنيهاً';
   }
   if (piastres > 0) {
     const pWords = convertUnder1000(piastres);
     words += (intPart > 0 ? ' و' : '') + `${pWords} قرشاً`;
   }
-  return `فقط وقدره ${words} لا غير`;
+  return `${words} فقط لا غير`;
 }
 
 // Main Render Entry
@@ -5975,6 +6015,7 @@ function createDefaultDraftOrderItem() {
     id: uid('itm'),
     woodTypeId: firstWood.id,
     woodTypeName: firstWood.name,
+    itemDescription: 'قشرة حور بلجيكي',
     lengthCm: 250,
     widthCm: 125,
     customThkMode: false,
@@ -6003,7 +6044,14 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
   const nextNo = `ORD-2026-${101 + (state.productionOrders?.length || 0)}`;
   const clients = (state.partners || []).filter(pt => pt.type !== 'supplier');
   const defaultClient = clients.find(c => c.id === preselectedClientId) || clients[0] || null;
-  const defaultOldDebt = defaultClient ? Math.max(0, Number(computeClientMetrics(defaultClient).netDebt || 0)) : 0;
+  const cm = defaultClient ? computeClientMetrics(defaultClient) : null;
+  const defaultVeneerDebt = cm ? Math.max(0, Number(cm.netDebt || 0)) : 0;
+  const defaultOldPalletsCnt = cm ? Math.max(0, Number(cm.palletsDelivered || 0)) : 0;
+  const defaultRetPalletsCnt = cm ? Math.max(0, Number(cm.palletsReceived || 0)) : 0;
+  const defaultPalletPrice = cm && Number(cm.palletUnitPrice) > 0 ? Number(cm.palletUnitPrice) : 500;
+  const defaultOldDebt = +(defaultVeneerDebt + (defaultOldPalletsCnt * defaultPalletPrice)).toFixed(2);
+  const defaultOldDebtLabel = buildPreviousDebtStatementText(defaultVeneerDebt, defaultOldPalletsCnt, defaultPalletPrice);
+  const defaultRetPalletsLabel = buildReturnedPalletsStatementText(defaultRetPalletsCnt, defaultOldPalletsCnt, defaultPalletPrice);
 
   draftOrderItems = [createDefaultDraftOrderItem()];
   draftOrderDiscountType = 'amount';
@@ -6087,8 +6135,37 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
             </div>
 
             <div class="form-group">
-              <label style="color:var(--danger);font-weight:800;">📒 المديونية القديمة على العميل (ج.م)</label>
-              <input id="ord-old-debt" type="number" step="0.5" min="0" class="form-control" value="${defaultOldDebt}" oninput="recalcDraftOrderTotals()" style="font-weight:800;border-color:var(--danger);" />
+              <label style="color:var(--danger);font-weight:800;">📒 مديونية توريد قشرة سابقة (ج.م)</label>
+              <input id="ord-old-veneer-debt" type="number" step="0.5" min="0" class="form-control" value="${defaultVeneerDebt}" oninput="recalcDraftOrderTotals('veneer')" style="font-weight:800;border-color:var(--danger);" />
+            </div>
+
+            <div class="form-group">
+              <label style="color:#b45309;font-weight:800;">🪵 تأمين البالتات السابقة (العدد × قيمة البالتة)</label>
+              <div style="display:flex;gap:5px;align-items:center;">
+                <input id="ord-old-pallets-cnt" type="number" min="0" class="form-control" value="${defaultOldPalletsCnt}" oninput="recalcDraftOrderTotals('pallets')" placeholder="عدد البالتات" title="عدد البالتات المسلمة سابقاً" style="font-weight:800;" />
+                <span style="font-weight:800;">×</span>
+                <input id="ord-pallet-unit-price" type="number" step="10" min="0" class="form-control" value="${defaultPalletPrice}" oninput="recalcDraftOrderTotals('pallets')" placeholder="سعر البالتة" title="قيمة تأمين البالتة الواحدة (ج.م)" style="font-weight:800;max-width:95px;" />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label style="color:var(--danger);font-weight:800;">💰 إجمالي المديونية السابقة (قشرة + تأمين بالتات)</label>
+              <input id="ord-old-debt" type="number" step="0.5" min="0" class="form-control" value="${defaultOldDebt}" oninput="recalcDraftOrderTotals('total_debt')" style="font-weight:800;border-color:var(--danger);" />
+            </div>
+
+            <div class="form-group">
+              <label style="color:var(--success);font-weight:800;">🔄 عدد الطبلية / البالتات المرتجعة (يُخصم من المديونية)</label>
+              <input id="ord-ret-pallets-cnt" type="number" min="0" class="form-control" value="${defaultRetPalletsCnt}" oninput="recalcDraftOrderTotals('pallets')" style="font-weight:800;border-color:var(--success);" />
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="font-weight:800;color:#991b1b;">📝 نص سطر المديونية السابقة في جدول البيان (يتحدث تلقائياً ويمكنك تعديله):</label>
+              <input id="ord-old-debt-label" class="form-control" value="${defaultOldDebtLabel}" oninput="this.dataset.manual='1'" style="font-weight:700;" />
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="font-weight:800;color:#15803d;">📝 نص سطر رد الطبلية / البالتات في جدول البيان (يظهر عند وجود بالتات مرتجعة):</label>
+              <input id="ord-ret-pallets-label" class="form-control" value="${defaultRetPalletsLabel}" oninput="this.dataset.manual='1'" placeholder="مثال: تم رد عدد (60) طبليه من مديونية (87) طبليه ويبقي مديونية بعدد (27) طبلية بقيمة 13,500جنيه" style="font-weight:700;" />
             </div>
 
             <div class="form-group">
@@ -6117,18 +6194,18 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
               <label>💰 سعر التوصيل / النولون (ج.م) + بيان مكان التسليم</label>
               <div style="display:flex;gap:6px;">
                 <input id="ord-delivery-cost" type="number" step="10" min="0" class="form-control" style="max-width:125px;font-weight:800;" value="0" placeholder="سعر التوصيل" oninput="if(Number(this.value)>0){document.getElementById('ord-delivery-mode').value='paid_delivery';} recalcDraftOrderTotals();" />
-                <input id="ord-delivery-place" class="form-control" placeholder="عنوان / مكان التسليم (مثال: أرض مصنع العاصمة - العبور)" value="أرض مصنع العاصمة للصناعات المتخصصة" />
+                <input id="ord-delivery-place" class="form-control" placeholder="عنوان / مكان التسليم" value="بالمصنع ك 44 بطريق بلبيس القاهرة الصحراوي" />
               </div>
             </div>
 
             <div class="form-group">
-              <label style="color:var(--success);font-weight:800;">💵 شروط الدفع (الدفعة المقدمة - المقدم)</label>
-              <input id="ord-payment-advance" class="form-control" value="50% دفعة مقدمة عند التعاقد وتأكيد الطلبية" placeholder="مثال: 50% مقدم أو مبلغ محدد..." />
+              <label style="color:var(--success);font-weight:800;">💵 شروط الدفع (المقدم - اختياري)</label>
+              <input id="ord-payment-advance" class="form-control" value="" placeholder="اختياري: مثال 50% دفعة مقدمة..." />
             </div>
 
             <div class="form-group">
-              <label style="color:#b45309;font-weight:800;">⏳ شروط الدفع (الدفعة الآجلة - الآجل)</label>
-              <input id="ord-payment-deferred" class="form-control" value="50% عند الاستلام والتوريد" placeholder="مثال: المتبقي عند التسليم أو آجل 30 يوماً..." />
+              <label style="color:#b45309;font-weight:800;">⏳ شروط الدفع (الآجل - اختياري)</label>
+              <input id="ord-payment-deferred" class="form-control" value="" placeholder="اختياري: مثال 50% عند الاستلام..." />
             </div>
 
             <div class="form-group" style="grid-column: 1 / -1;">
@@ -6143,7 +6220,7 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
 
             <div class="form-group" style="grid-column: 1 / -1;">
               <label>ملاحظات إضافية في البيان ولأمين المخزن</label>
-              <input id="ord-notes" class="form-control" placeholder="مثال: جميع الأسعار شاملة ضريبة القيمة المضافة 14%..." />
+              <input id="ord-notes" class="form-control" placeholder="ملاحظات إضافية (إن وجدت)..." />
             </div>
           </div>
 
@@ -6175,12 +6252,22 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
 
 function onDraftOrderClientSelectionChange(clientId) {
   const clientObj = (state.partners || []).find(c => c.id === clientId);
-  const oldDebtInput = document.getElementById('ord-old-debt');
-  if (clientObj && oldDebtInput) {
+  if (clientObj) {
     const m = computeClientMetrics(clientObj);
-    oldDebtInput.value = Math.max(0, Number(m.netDebt || 0));
+    const vDebtEl = document.getElementById('ord-old-veneer-debt');
+    const pCntEl = document.getElementById('ord-old-pallets-cnt');
+    const pPriceEl = document.getElementById('ord-pallet-unit-price');
+    const retCntEl = document.getElementById('ord-ret-pallets-cnt');
+    const lblDebtEl = document.getElementById('ord-old-debt-label');
+    const lblRetEl = document.getElementById('ord-ret-pallets-label');
+    if (vDebtEl) vDebtEl.value = Math.max(0, Number(m.netDebt || 0));
+    if (pCntEl) pCntEl.value = Math.max(0, Number(m.palletsDelivered || 0));
+    if (pPriceEl && Number(m.palletUnitPrice) > 0) pPriceEl.value = Number(m.palletUnitPrice);
+    if (retCntEl) retCntEl.value = Math.max(0, Number(m.palletsReceived || 0));
+    if (lblDebtEl) delete lblDebtEl.dataset.manual;
+    if (lblRetEl) delete lblRetEl.dataset.manual;
   }
-  recalcDraftOrderTotals();
+  recalcDraftOrderTotals('client');
 }
 
 function addDraftOrderItemRow() {
@@ -6439,7 +6526,7 @@ function renderDraftOrderItemsTable() {
   recalcDraftOrderTotals();
 }
 
-function recalcDraftOrderTotals() {
+function recalcDraftOrderTotals(triggerSource = '') {
   let subtotal = 0;
   let totalSheets = 0;
   let totalAreaM2 = 0;
@@ -6456,7 +6543,7 @@ function recalcDraftOrderTotals() {
     it.volumeM3 = m.totalVolumeM3;
     it.totalItemAmount = rowAmt;
     if (!it.itemDescription) {
-      it.itemDescription = it.woodTypeName || 'قشرة خشبية طبيعية';
+      it.itemDescription = it.woodTypeName || 'قشرة حور بلجيكي';
     }
 
     subtotal += rowAmt;
@@ -6498,8 +6585,42 @@ function recalcDraftOrderTotals() {
   else if (whtMode === 'add') netTotal += whtAmount;
   netTotal = Math.max(0, +(netTotal + deliveryCost).toFixed(2));
 
-  const oldDebt = Math.max(0, Number(document.getElementById('ord-old-debt')?.value || 0));
-  const totalRequired = +(netTotal + oldDebt).toFixed(2);
+  const vDebtEl = document.getElementById('ord-old-veneer-debt');
+  const pCntEl = document.getElementById('ord-old-pallets-cnt');
+  const pPriceEl = document.getElementById('ord-pallet-unit-price');
+  const oldDebtEl = document.getElementById('ord-old-debt');
+  const retCntEl = document.getElementById('ord-ret-pallets-cnt');
+  const lblDebtEl = document.getElementById('ord-old-debt-label');
+  const lblRetEl = document.getElementById('ord-ret-pallets-label');
+
+  let oldVeneerDebt = Math.max(0, Number(vDebtEl?.value || 0));
+  const oldPalletsCount = Math.max(0, Math.round(Number(pCntEl?.value || 0)));
+  const palletUnitPrice = Math.max(0, Number(pPriceEl?.value || 500));
+  const oldPalletsDeposit = +(oldPalletsCount * palletUnitPrice).toFixed(2);
+
+  let oldDebt = 0;
+  if (triggerSource === 'total_debt') {
+    oldDebt = Math.max(0, Number(oldDebtEl?.value || 0));
+    oldVeneerDebt = Math.max(0, +(oldDebt - oldPalletsDeposit).toFixed(2));
+    if (vDebtEl) vDebtEl.value = oldVeneerDebt;
+  } else {
+    oldDebt = +(oldVeneerDebt + oldPalletsDeposit).toFixed(2);
+    if (oldDebtEl && document.activeElement !== oldDebtEl) {
+      oldDebtEl.value = oldDebt;
+    }
+  }
+
+  const returnedPalletsCount = Math.max(0, Math.round(Number(retCntEl?.value || 0)));
+  const returnedPalletsDeduction = +(returnedPalletsCount * palletUnitPrice).toFixed(2);
+
+  if (lblDebtEl && !lblDebtEl.dataset.manual) {
+    lblDebtEl.value = buildPreviousDebtStatementText(oldVeneerDebt, oldPalletsCount, palletUnitPrice);
+  }
+  if (lblRetEl && !lblRetEl.dataset.manual) {
+    lblRetEl.value = buildReturnedPalletsStatementText(returnedPalletsCount, oldPalletsCount, palletUnitPrice);
+  }
+
+  const totalRequired = +(netTotal + oldDebt - returnedPalletsDeduction).toFixed(2);
   const autoWords = numberToArabicTafqeet(totalRequired);
 
   const wordsEl = document.getElementById('ord-amount-words');
@@ -6514,32 +6635,28 @@ function recalcDraftOrderTotals() {
         <span>إجمالي قيمة الطلبية (شامل ق.م 14%)</span>
         <strong>${fmtMoney(subtotal)} (${fmtNum(totalSheets, 0)} ق)</strong>
       </div>
+      ${discountAmount > 0 ? `
       <div class="calc-preview-item">
         <span>الخصم (${fmtNum(discountPercent, 2)}%)</span>
         <strong style="color:var(--danger);">-${fmtMoney(discountAmount)}</strong>
       </div>
-      <div class="calc-preview-item">
-        <span>ضريبة القيمة المضافة 14% (شاملة بالسعر)</span>
-        <strong style="color:#0284c7;">${fmtMoney(includedVat14)} (شاملة)</strong>
-      </div>
-      <div class="calc-preview-item">
-        <span>ضريبة الخصم والإضافة (${whtMode === 'none' ? 'اختياري: 0%' : whtRate + '%'})</span>
-        <strong style="color:#6d28d9;">${whtMode === 'deduct' ? '-' : whtMode === 'add' ? '+' : ''}${fmtMoney(whtAmount)}</strong>
-      </div>
-      <div class="calc-preview-item">
-        <span>التسليم والتوصيل</span>
-        <strong>${deliveryMode === 'ex_factory' ? 'أرض المصنع (0 ج)' : deliveryMode === 'included' ? 'شامل التوصيل' : '+' + fmtMoney(deliveryCost)}</strong>
-      </div>
+      ` : ''}
       <div class="calc-preview-item">
         <span>صافي الطلبية الحالية</span>
         <strong style="color:var(--success);font-size:1.08rem;">${fmtMoney(netTotal)}</strong>
       </div>
       <div class="calc-preview-item">
-        <span>المديونية القديمة على العميل</span>
+        <span>المديونية السابقة (قشرة + تأمين ${oldPalletsCount} بالتة)</span>
         <strong style="color:var(--danger);">${fmtMoney(oldDebt)}</strong>
       </div>
+      ${returnedPalletsDeduction > 0 ? `
+      <div class="calc-preview-item">
+        <span>خصم رد عدد (${returnedPalletsCount}) طبلية/بالتة</span>
+        <strong style="color:var(--success);">-${fmtMoney(returnedPalletsDeduction)}</strong>
+      </div>
+      ` : ''}
       <div class="calc-preview-item" style="background:rgba(15,118,110,0.12);border:1.5px solid var(--primary);border-radius:8px;padding:6px 10px;">
-        <span style="font-weight:800;color:var(--primary);">💎 إجمالي المبلغ المطلوب</span>
+        <span style="font-weight:800;color:var(--primary);">💎 إجمالي المبلغ المستحق</span>
         <strong style="color:var(--primary);font-size:1.18rem;">${fmtMoney(totalRequired)}</strong>
       </div>
     `;
@@ -6575,18 +6692,28 @@ function collectDraftOrderObjectForStatement() {
 
   const deliveryMode = document.getElementById('ord-delivery-mode')?.value || 'ex_factory';
   const deliveryCost = deliveryMode === 'paid_delivery' ? Math.max(0, Number(document.getElementById('ord-delivery-cost')?.value || 0)) : 0;
-  const deliveryPlace = (document.getElementById('ord-delivery-place')?.value || 'أرض مصنع العاصمة للصناعات المتخصصة').trim();
+  const deliveryPlace = (document.getElementById('ord-delivery-place')?.value || 'بالمصنع ك 44 بطريق بلبيس القاهرة الصحراوي').trim();
 
   let netTotalAmount = afterDiscount;
   if (withholdingTaxMode === 'deduct') netTotalAmount -= withholdingTaxAmount;
   else if (withholdingTaxMode === 'add') netTotalAmount += withholdingTaxAmount;
   netTotalAmount = Math.max(0, +(netTotalAmount + deliveryCost).toFixed(2));
 
-  const previousDebtAmount = Math.max(0, Number(document.getElementById('ord-old-debt')?.value || 0));
-  const totalRequiredAmount = +(netTotalAmount + previousDebtAmount).toFixed(2);
+  const oldVeneerDebt = Math.max(0, Number(document.getElementById('ord-old-veneer-debt')?.value || 0));
+  const oldPalletsCount = Math.max(0, Math.round(Number(document.getElementById('ord-old-pallets-cnt')?.value || 0)));
+  const palletDepositUnitPrice = Math.max(0, Number(document.getElementById('ord-pallet-unit-price')?.value || 500));
+  const oldPalletsDepositAmount = +(oldPalletsCount * palletDepositUnitPrice).toFixed(2);
+  const previousDebtAmount = Math.max(0, Number(document.getElementById('ord-old-debt')?.value ?? (oldVeneerDebt + oldPalletsDepositAmount)));
+  const previousDebtLabel = (document.getElementById('ord-old-debt-label')?.value || buildPreviousDebtStatementText(oldVeneerDebt, oldPalletsCount, palletDepositUnitPrice)).trim();
+
+  const returnedPalletsCount = Math.max(0, Math.round(Number(document.getElementById('ord-ret-pallets-cnt')?.value || 0)));
+  const returnedPalletsDeduction = +(returnedPalletsCount * palletDepositUnitPrice).toFixed(2);
+  const returnedPalletsLabel = (document.getElementById('ord-ret-pallets-label')?.value || buildReturnedPalletsStatementText(returnedPalletsCount, oldPalletsCount, palletDepositUnitPrice)).trim();
+
+  const totalRequiredAmount = +(netTotalAmount + previousDebtAmount - returnedPalletsDeduction).toFixed(2);
   const totalRequiredInWords = (document.getElementById('ord-amount-words')?.value || numberToArabicTafqeet(totalRequiredAmount)).trim();
-  const paymentAdvanceTerms = (document.getElementById('ord-payment-advance')?.value || '50% دفعة مقدمة عند التعاقد').trim();
-  const paymentDeferredTerms = (document.getElementById('ord-payment-deferred')?.value || '50% عند الاستلام والتوريد').trim();
+  const paymentAdvanceTerms = (document.getElementById('ord-payment-advance')?.value || '').trim();
+  const paymentDeferredTerms = (document.getElementById('ord-payment-deferred')?.value || '').trim();
   const bankAccountsText = (document.getElementById('ord-bank-accounts')?.value || getDefaultBankAccountsText()).trim();
 
   const totalSheetsCount = draftOrderItems.reduce((s, i) => s + Number(i.sheetsCount || 0), 0);
@@ -6622,7 +6749,15 @@ function collectDraftOrderObjectForStatement() {
     deliveryCost,
     deliveryPlace,
     netTotalAmount,
+    oldVeneerDebt,
+    oldPalletsCount,
+    palletDepositUnitPrice,
+    oldPalletsDepositAmount,
     previousDebtAmount,
+    previousDebtLabel,
+    returnedPalletsCount,
+    returnedPalletsDeduction,
+    returnedPalletsLabel,
     totalRequiredAmount,
     totalRequiredInWords,
     paymentAdvanceTerms,
@@ -6725,7 +6860,15 @@ function submitNewClientOrderPrep(e, andPrintPdf = false) {
     deliveryCost: collected.deliveryCost,
     deliveryPlace: collected.deliveryPlace,
     netTotalAmount: collected.netTotalAmount,
+    oldVeneerDebt: collected.oldVeneerDebt,
+    oldPalletsCount: collected.oldPalletsCount,
+    palletDepositUnitPrice: collected.palletDepositUnitPrice,
+    oldPalletsDepositAmount: collected.oldPalletsDepositAmount,
     previousDebtAmount: collected.previousDebtAmount,
+    previousDebtLabel: collected.previousDebtLabel,
+    returnedPalletsCount: collected.returnedPalletsCount,
+    returnedPalletsDeduction: collected.returnedPalletsDeduction,
+    returnedPalletsLabel: collected.returnedPalletsLabel,
     totalRequiredAmount: collected.totalRequiredAmount,
     totalRequiredInWords: collected.totalRequiredInWords,
     paymentAdvanceTerms: collected.paymentAdvanceTerms,
@@ -6784,7 +6927,19 @@ function openClientOrderStatementModal(orderId) {
   const thicknesses = getSortedThicknesses();
   const grades = state.catalog?.grades || [];
   const clientObj = (state.partners || []).find(p => p.id === ord.clientId || p.name === ord.clientName);
-  const defaultOldDebt = ord.previousDebtAmount !== undefined ? Number(ord.previousDebtAmount || 0) : (clientObj ? Math.max(0, Number(computeClientMetrics(clientObj).netDebt || 0)) : 0);
+  const cm = clientObj ? computeClientMetrics(clientObj) : null;
+  const defaultOldPalletsCnt = ord.oldPalletsCount !== undefined ? Number(ord.oldPalletsCount || 0) : (cm ? Math.max(0, Number(cm.palletsDelivered || 0)) : 0);
+  const defaultRetPalletsCnt = ord.returnedPalletsCount !== undefined ? Number(ord.returnedPalletsCount || 0) : (cm ? Math.max(0, Number(cm.palletsReceived || 0)) : 0);
+  const defaultPalletPrice = ord.palletDepositUnitPrice !== undefined ? Number(ord.palletDepositUnitPrice || 500) : (cm && Number(cm.palletUnitPrice) > 0 ? Number(cm.palletUnitPrice) : 500);
+  const defaultVeneerDebt = ord.oldVeneerDebt !== undefined
+    ? Number(ord.oldVeneerDebt || 0)
+    : (ord.previousDebtAmount !== undefined
+      ? Math.max(0, Number(ord.previousDebtAmount || 0) - (defaultOldPalletsCnt * defaultPalletPrice))
+      : (cm ? Math.max(0, Number(cm.netDebt || 0)) : 0));
+  const defaultOldDebt = ord.previousDebtAmount !== undefined ? Number(ord.previousDebtAmount || 0) : +(defaultVeneerDebt + (defaultOldPalletsCnt * defaultPalletPrice)).toFixed(2);
+  const defaultOldDebtLabel = ord.previousDebtLabel || buildPreviousDebtStatementText(defaultVeneerDebt, defaultOldPalletsCnt, defaultPalletPrice);
+  const defaultRetPalletsLabel = ord.returnedPalletsLabel !== undefined ? ord.returnedPalletsLabel : buildReturnedPalletsStatementText(defaultRetPalletsCnt, defaultOldPalletsCnt, defaultPalletPrice);
+  const defaultDelivPlace = (!ord.deliveryPlace || ord.deliveryPlace === 'أرض مصنع العاصمة للصناعات المتخصصة') ? 'بالمصنع ك 44 بطريق بلبيس القاهرة الصحراوي' : ord.deliveryPlace;
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
@@ -6981,8 +7136,37 @@ function openClientOrderStatementModal(orderId) {
             </div>
 
             <div class="form-group">
-              <label style="color:var(--danger);font-weight:800;">📒 المديونية القديمة على العميل (ج.م)</label>
-              <input id="stmt-old-debt" type="number" step="0.5" min="0" class="form-control" value="${defaultOldDebt}" oninput="recalcStatementModalLive('${ord.id}')" style="font-weight:800;border-color:var(--danger);" />
+              <label style="color:var(--danger);font-weight:800;">📒 مديونية توريد قشرة سابقة (ج.م)</label>
+              <input id="stmt-old-veneer-debt" type="number" step="0.5" min="0" class="form-control" value="${defaultVeneerDebt}" oninput="recalcStatementModalLive('${ord.id}', null, 'veneer')" style="font-weight:800;border-color:var(--danger);" />
+            </div>
+
+            <div class="form-group">
+              <label style="color:#b45309;font-weight:800;">🪵 تأمين البالتات السابقة (العدد × قيمة البالتة)</label>
+              <div style="display:flex;gap:5px;align-items:center;">
+                <input id="stmt-old-pallets-cnt" type="number" min="0" class="form-control" value="${defaultOldPalletsCnt}" oninput="recalcStatementModalLive('${ord.id}', null, 'pallets')" placeholder="عدد البالتات" title="عدد البالتات المسلمة سابقاً" style="font-weight:800;" />
+                <span style="font-weight:800;">×</span>
+                <input id="stmt-pallet-unit-price" type="number" step="10" min="0" class="form-control" value="${defaultPalletPrice}" oninput="recalcStatementModalLive('${ord.id}', null, 'pallets')" placeholder="سعر البالتة" title="قيمة تأمين البالتة الواحدة (ج.م)" style="font-weight:800;max-width:95px;" />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label style="color:var(--danger);font-weight:800;">💰 إجمالي المديونية السابقة (قشرة + تأمين بالتات)</label>
+              <input id="stmt-old-debt" type="number" step="0.5" min="0" class="form-control" value="${defaultOldDebt}" oninput="recalcStatementModalLive('${ord.id}', null, 'total_debt')" style="font-weight:800;border-color:var(--danger);" />
+            </div>
+
+            <div class="form-group">
+              <label style="color:var(--success);font-weight:800;">🔄 عدد الطبلية / البالتات المرتجعة (يُخصم من المديونية)</label>
+              <input id="stmt-ret-pallets-cnt" type="number" min="0" class="form-control" value="${defaultRetPalletsCnt}" oninput="recalcStatementModalLive('${ord.id}', null, 'pallets')" style="font-weight:800;border-color:var(--success);" />
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="font-weight:800;color:#991b1b;">📝 نص سطر المديونية السابقة في جدول البيان:</label>
+              <input id="stmt-old-debt-label" class="form-control" value="${defaultOldDebtLabel}" oninput="this.dataset.manual='1'" style="font-weight:700;" />
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="font-weight:800;color:#15803d;">📝 نص سطر رد الطبلية / البالتات في جدول البيان:</label>
+              <input id="stmt-ret-pallets-label" class="form-control" value="${defaultRetPalletsLabel}" oninput="this.dataset.manual='1'" placeholder="مثال: تم رد عدد (60) طبليه من مديونية (87) طبليه ويبقي مديونية بعدد (27) طبلية بقيمة 13,500جنيه" style="font-weight:700;" />
             </div>
 
             <div class="form-group">
@@ -7011,18 +7195,18 @@ function openClientOrderStatementModal(orderId) {
               <label>💰 سعر التوصيل / النولون (ج.م) + مكان التسليم</label>
               <div style="display:flex;gap:6px;">
                 <input id="stmt-delivery-cost" type="number" step="10" min="0" class="form-control" style="max-width:120px;font-weight:800;" value="${ord.deliveryCost || 0}" oninput="if(Number(this.value)>0){document.getElementById('stmt-delivery-mode').value='paid_delivery';} recalcStatementModalLive('${ord.id}');" />
-                <input id="stmt-delivery-place" class="form-control" value="${ord.deliveryPlace || 'أرض مصنع العاصمة للصناعات المتخصصة'}" placeholder="مكان التسليم..." />
+                <input id="stmt-delivery-place" class="form-control" value="${defaultDelivPlace}" placeholder="مكان التسليم..." />
               </div>
             </div>
 
             <div class="form-group">
-              <label style="color:var(--success);font-weight:800;">💵 شروط الدفع (الدفعة المقدمة - المقدم)</label>
-              <input id="stmt-payment-advance" class="form-control" value="${ord.paymentAdvanceTerms || '50% دفعة مقدمة عند التعاقد وتأكيد الطلبية'}" />
+              <label style="color:var(--success);font-weight:800;">💵 شروط الدفع (الدفعة المقدمة - اختياري)</label>
+              <input id="stmt-payment-advance" class="form-control" value="${ord.paymentAdvanceTerms || ''}" placeholder="اختياري..." />
             </div>
 
             <div class="form-group">
-              <label style="color:#b45309;font-weight:800;">⏳ شروط الدفع (الدفعة الآجلة - الآجل)</label>
-              <input id="stmt-payment-deferred" class="form-control" value="${ord.paymentDeferredTerms || '50% عند الاستلام والتوريد'}" />
+              <label style="color:#b45309;font-weight:800;">⏳ شروط الدفع (الدفعة الآجلة - اختياري)</label>
+              <input id="stmt-payment-deferred" class="form-control" value="${ord.paymentDeferredTerms || ''}" placeholder="اختياري..." />
             </div>
 
             <div class="form-group" style="grid-column: 1 / -1;">
@@ -7093,7 +7277,7 @@ function openClientOrderStatementModal(orderId) {
   recalcStatementModalLive(ord.id);
 }
 
-function recalcStatementModalLive(orderId, changedRowIdx = null) {
+function recalcStatementModalLive(orderId, changedRowIdx = null, triggerSource = '') {
   const ord = (state.productionOrders || []).find(o => o.id === orderId);
   if (!ord) return;
   const items = Array.isArray(ord.items) ? ord.items : [];
@@ -7164,8 +7348,44 @@ function recalcStatementModalLive(orderId, changedRowIdx = null) {
   else if (whtMode === 'add') net += whtAmt;
   net = Math.max(0, +(net + delivCost).toFixed(2));
 
-  const oldDebt = Math.max(0, Number(document.getElementById('stmt-old-debt')?.value ?? ord.previousDebtAmount ?? 0));
-  const totalReq = +(net + oldDebt).toFixed(2);
+  const vDebtEl = document.getElementById('stmt-old-veneer-debt');
+  const pCntEl = document.getElementById('stmt-old-pallets-cnt');
+  const pPriceEl = document.getElementById('stmt-pallet-unit-price');
+  const oldDebtEl = document.getElementById('stmt-old-debt');
+  const retCntEl = document.getElementById('stmt-ret-pallets-cnt');
+  const lblDebtEl = document.getElementById('stmt-old-debt-label');
+  const lblRetEl = document.getElementById('stmt-ret-pallets-label');
+
+  let oldVeneerDebt = Math.max(0, Number(vDebtEl?.value ?? ord.oldVeneerDebt ?? 0));
+  const oldPalletsCount = Math.max(0, Math.round(Number(pCntEl?.value ?? ord.oldPalletsCount ?? 0)));
+  const palletUnitPrice = Math.max(0, Number(pPriceEl?.value ?? ord.palletDepositUnitPrice ?? 500));
+  const oldPalletsDeposit = +(oldPalletsCount * palletUnitPrice).toFixed(2);
+
+  let oldDebt = 0;
+  if (triggerSource === 'total_debt') {
+    oldDebt = Math.max(0, Number(oldDebtEl?.value || 0));
+    oldVeneerDebt = Math.max(0, +(oldDebt - oldPalletsDeposit).toFixed(2));
+    if (vDebtEl) vDebtEl.value = oldVeneerDebt;
+  } else if (vDebtEl) {
+    oldDebt = +(oldVeneerDebt + oldPalletsDeposit).toFixed(2);
+    if (oldDebtEl && document.activeElement !== oldDebtEl) {
+      oldDebtEl.value = oldDebt;
+    }
+  } else {
+    oldDebt = Math.max(0, Number(oldDebtEl?.value ?? ord.previousDebtAmount ?? 0));
+  }
+
+  const returnedPalletsCount = Math.max(0, Math.round(Number(retCntEl?.value ?? ord.returnedPalletsCount ?? 0)));
+  const returnedPalletsDeduction = +(returnedPalletsCount * palletUnitPrice).toFixed(2);
+
+  if (lblDebtEl && triggerSource && !lblDebtEl.dataset.manual) {
+    lblDebtEl.value = buildPreviousDebtStatementText(oldVeneerDebt, oldPalletsCount, palletUnitPrice);
+  }
+  if (lblRetEl && triggerSource && !lblRetEl.dataset.manual) {
+    lblRetEl.value = buildReturnedPalletsStatementText(returnedPalletsCount, oldPalletsCount, palletUnitPrice);
+  }
+
+  const totalReq = +(net + oldDebt - returnedPalletsDeduction).toFixed(2);
 
   const wordsEl = document.getElementById('stmt-amount-words');
   if (wordsEl) {
@@ -7178,13 +7398,12 @@ function recalcStatementModalLive(orderId, changedRowIdx = null) {
       <div class="calc-preview-item"><span>إجمالي القطع</span><strong>${fmtNum(totalSheets, 0)} قطعة (${fmtNum(totalVol, 4)} م³)</strong></div>
       ${canSeeFinancialPrices() ? `
         <div class="calc-preview-item"><span>إجمالي الطلبية (شامل ق.م 14%)</span><strong>${fmtMoney(subtotal)}</strong></div>
-        <div class="calc-preview-item"><span>الخصم (${fmtNum(discPct, 2)}%)</span><strong style="color:var(--danger);">-${fmtMoney(discAmt)}</strong></div>
-        <div class="calc-preview-item"><span>ق.م 14% (شاملة بالسعر)</span><strong style="color:#0284c7;">${fmtMoney(includedVat14)}</strong></div>
-        <div class="calc-preview-item"><span>ضريبة الخصم والإضافة (${whtMode === 'none' ? '0%' : whtRate + '%'})</span><strong style="color:#6d28d9;">${whtMode === 'deduct' ? '-' : whtMode === 'add' ? '+' : ''}${fmtMoney(whtAmt)}</strong></div>
+        ${discAmt > 0 ? `<div class="calc-preview-item"><span>الخصم (${fmtNum(discPct, 2)}%)</span><strong style="color:var(--danger);">-${fmtMoney(discAmt)}</strong></div>` : ''}
         <div class="calc-preview-item"><span>صافي الطلبية</span><strong style="color:var(--success);font-size:1.08rem;">${fmtMoney(net)}</strong></div>
-        <div class="calc-preview-item"><span>المديونية القديمة</span><strong style="color:var(--danger);">${fmtMoney(oldDebt)}</strong></div>
+        <div class="calc-preview-item"><span>المديونية السابقة (قشرة + ${oldPalletsCount} بالتة)</span><strong style="color:var(--danger);">${fmtMoney(oldDebt)}</strong></div>
+        ${returnedPalletsDeduction > 0 ? `<div class="calc-preview-item"><span>خصم رد عدد (${returnedPalletsCount}) طبلية</span><strong style="color:var(--success);">-${fmtMoney(returnedPalletsDeduction)}</strong></div>` : ''}
         <div class="calc-preview-item" style="background:rgba(15,118,110,0.12);border:1.5px solid var(--primary);border-radius:8px;padding:6px 10px;">
-          <span style="font-weight:800;color:var(--primary);">💎 إجمالي المبلغ المطلوب</span>
+          <span style="font-weight:800;color:var(--primary);">💎 إجمالي المبلغ المستحق</span>
           <strong style="color:var(--primary);font-size:1.15rem;">${fmtMoney(totalReq)}</strong>
         </div>
       ` : ''}
@@ -7323,18 +7542,28 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
 
   const delivMode = document.getElementById('stmt-delivery-mode')?.value || ord.deliveryMode || 'ex_factory';
   const delivCost = delivMode === 'paid_delivery' ? Math.max(0, Number(document.getElementById('stmt-delivery-cost')?.value ?? ord.deliveryCost ?? 0)) : 0;
-  const delivPlace = (document.getElementById('stmt-delivery-place')?.value || ord.deliveryPlace || 'أرض مصنع العاصمة للصناعات المتخصصة').trim();
+  const delivPlace = (document.getElementById('stmt-delivery-place')?.value || ord.deliveryPlace || 'بالمصنع ك 44 بطريق بلبيس القاهرة الصحراوي').trim();
 
   let net = afterDiscount;
   if (whtMode === 'deduct') net -= whtAmt;
   else if (whtMode === 'add') net += whtAmt;
   net = Math.max(0, +(net + delivCost).toFixed(2));
 
-  const oldDebt = Math.max(0, Number(document.getElementById('stmt-old-debt')?.value ?? ord.previousDebtAmount ?? 0));
-  const totalReq = +(net + oldDebt).toFixed(2);
+  const oldVeneerDebt = Math.max(0, Number(document.getElementById('stmt-old-veneer-debt')?.value ?? ord.oldVeneerDebt ?? 0));
+  const oldPalletsCount = Math.max(0, Math.round(Number(document.getElementById('stmt-old-pallets-cnt')?.value ?? ord.oldPalletsCount ?? 0)));
+  const palletDepositUnitPrice = Math.max(0, Number(document.getElementById('stmt-pallet-unit-price')?.value ?? ord.palletDepositUnitPrice ?? 500));
+  const oldPalletsDepositAmount = +(oldPalletsCount * palletDepositUnitPrice).toFixed(2);
+  const oldDebt = Math.max(0, Number(document.getElementById('stmt-old-debt')?.value ?? ord.previousDebtAmount ?? (oldVeneerDebt + oldPalletsDepositAmount)));
+  const previousDebtLabel = (document.getElementById('stmt-old-debt-label')?.value || ord.previousDebtLabel || buildPreviousDebtStatementText(oldVeneerDebt, oldPalletsCount, palletDepositUnitPrice)).trim();
+
+  const returnedPalletsCount = Math.max(0, Math.round(Number(document.getElementById('stmt-ret-pallets-cnt')?.value ?? ord.returnedPalletsCount ?? 0)));
+  const returnedPalletsDeduction = +(returnedPalletsCount * palletDepositUnitPrice).toFixed(2);
+  const returnedPalletsLabel = (document.getElementById('stmt-ret-pallets-label')?.value ?? ord.returnedPalletsLabel ?? buildReturnedPalletsStatementText(returnedPalletsCount, oldPalletsCount, palletDepositUnitPrice)).trim();
+
+  const totalReq = +(net + oldDebt - returnedPalletsDeduction).toFixed(2);
   const wordsTxt = (document.getElementById('stmt-amount-words')?.value || numberToArabicTafqeet(totalReq)).trim();
-  const advTerms = (document.getElementById('stmt-payment-advance')?.value || ord.paymentAdvanceTerms || '50% دفعة مقدمة عند التعاقد').trim();
-  const defTerms = (document.getElementById('stmt-payment-deferred')?.value || ord.paymentDeferredTerms || '50% عند الاستلام والتوريد').trim();
+  const advTerms = (document.getElementById('stmt-payment-advance')?.value ?? ord.paymentAdvanceTerms ?? '').trim();
+  const defTerms = (document.getElementById('stmt-payment-deferred')?.value ?? ord.paymentDeferredTerms ?? '').trim();
   const bankTxt = (document.getElementById('stmt-bank-accounts')?.value || ord.bankAccountsText || getDefaultBankAccountsText()).trim();
 
   if (bankTxt && canSeeFinancialPrices()) {
@@ -7361,7 +7590,15 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
   ord.deliveryCost = delivCost;
   ord.deliveryPlace = delivPlace;
   ord.netTotalAmount = net;
+  ord.oldVeneerDebt = oldVeneerDebt;
+  ord.oldPalletsCount = oldPalletsCount;
+  ord.palletDepositUnitPrice = palletDepositUnitPrice;
+  ord.oldPalletsDepositAmount = oldPalletsDepositAmount;
   ord.previousDebtAmount = oldDebt;
+  ord.previousDebtLabel = previousDebtLabel;
+  ord.returnedPalletsCount = returnedPalletsCount;
+  ord.returnedPalletsDeduction = returnedPalletsDeduction;
+  ord.returnedPalletsLabel = returnedPalletsLabel;
   ord.totalRequiredAmount = totalReq;
   ord.totalRequiredInWords = wordsTxt;
   ord.paymentAdvanceTerms = advTerms;
@@ -11414,12 +11651,12 @@ function printProductionOrder(poId) {
 function buildOfficialOrderStatementPdfHtml(ord) {
   const items = Array.isArray(ord.items) ? ord.items : [];
   const showPrices = canSeeFinancialPrices();
-  const car = ord.carDispatchVoucher || null;
-  const factoryName = state.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة';
   const logoSrc = getFactoryLogoSrc();
   const stampSrc = getFactoryStampSrc();
 
-  const clientObj = ord.clientObj || (state.partners || []).find(p => p.id === ord.clientId || p.name === ord.clientName);
+  const clientObj = ord.clientObj || (state?.partners || []).find(p => p.id === ord.clientId || p.name === ord.clientName);
+  const cm = clientObj ? computeClientMetrics(clientObj) : null;
+
   const subtotal = Number(ord.subtotalAmount ?? items.reduce((s, i) => s + Number(i.totalItemAmount || 0), 0));
   const discAmt = Number(ord.discountAmount || 0);
   const discPct = ord.discountPercent !== undefined
@@ -11429,7 +11666,6 @@ function buildOfficialOrderStatementPdfHtml(ord) {
 
   // Unit prices are inclusive of 14% VAT
   const preVatBase = ord.preVatBaseAmount !== undefined ? Number(ord.preVatBaseAmount) : +(afterDiscount / 1.14).toFixed(2);
-  const includedVat14 = ord.includedVatAmount !== undefined ? Number(ord.includedVatAmount) : +(afterDiscount - preVatBase).toFixed(2);
 
   const whtMode = ord.withholdingTaxMode || 'none';
   const whtRate = whtMode === 'none' ? 0 : Number(ord.withholdingTaxRate || 0);
@@ -11437,319 +11673,338 @@ function buildOfficialOrderStatementPdfHtml(ord) {
 
   const delivMode = ord.deliveryMode || 'ex_factory';
   const delivCost = delivMode === 'paid_delivery' ? Number(ord.deliveryCost || 0) : 0;
-  const delivPlace = ord.deliveryPlace || 'أرض مصنع العاصمة للصناعات المتخصصة';
-  const delivModeLabel = delivMode === 'ex_factory'
-    ? 'تسليم أرض المصنع (بدون نقل)'
-    : delivMode === 'included'
-      ? 'شامل التوصيل لمقر العميل (مشمول في السعر)'
-      : `توصيل لمقر العميل (سعر التوصيل: ${fmtMoney(delivCost)})`;
+  const rawDelivPlace = (ord.deliveryPlace || '').trim();
+  const delivPlace = (!rawDelivPlace || rawDelivPlace === 'أرض مصنع العاصمة للصناعات المتخصصة')
+    ? 'بالمصنع ك 44 بطريق بلبيس القاهرة الصحراوي'
+    : rawDelivPlace;
+  const delivFullLine = delivMode === 'included'
+    ? `${delivPlace} (شامل التوصيل)`
+    : delivMode === 'paid_delivery' && delivCost > 0
+      ? `${delivPlace} (سعر التوصيل: ${fmtEnNum(delivCost, 0)} جنيه)`
+      : delivPlace;
 
   let netOrder = afterDiscount;
   if (whtMode === 'deduct') netOrder -= whtAmt;
   else if (whtMode === 'add') netOrder += whtAmt;
   netOrder = Math.max(0, +(netOrder + delivCost).toFixed(2));
 
+  const oldPalletsCount = ord.oldPalletsCount !== undefined
+    ? Number(ord.oldPalletsCount || 0)
+    : (cm ? Math.max(0, Number(cm.palletsDelivered || 0)) : 0);
+  const palletUnitPrice = ord.palletDepositUnitPrice !== undefined
+    ? Number(ord.palletDepositUnitPrice || 500)
+    : (cm && Number(cm.palletUnitPrice) > 0 ? Number(cm.palletUnitPrice) : 500);
+  const oldVeneerDebt = ord.oldVeneerDebt !== undefined
+    ? Number(ord.oldVeneerDebt || 0)
+    : (ord.previousDebtAmount !== undefined
+      ? Math.max(0, Number(ord.previousDebtAmount || 0) - (oldPalletsCount * palletUnitPrice))
+      : (cm ? Math.max(0, Number(cm.netDebt || 0)) : 0));
   const oldDebt = ord.previousDebtAmount !== undefined
     ? Number(ord.previousDebtAmount || 0)
-    : (clientObj ? Math.max(0, Number(computeClientMetrics(clientObj).netDebt || 0)) : 0);
+    : +(oldVeneerDebt + (oldPalletsCount * palletUnitPrice)).toFixed(2);
+  const previousDebtLabel = (ord.previousDebtLabel || buildPreviousDebtStatementText(oldVeneerDebt, oldPalletsCount, palletUnitPrice)).trim();
+
+  const returnedPalletsCount = ord.returnedPalletsCount !== undefined
+    ? Number(ord.returnedPalletsCount || 0)
+    : 0;
+  const returnedPalletsDeduction = ord.returnedPalletsDeduction !== undefined
+    ? Number(ord.returnedPalletsDeduction || 0)
+    : +(returnedPalletsCount * palletUnitPrice).toFixed(2);
+  const returnedPalletsLabel = (ord.returnedPalletsLabel !== undefined
+    ? ord.returnedPalletsLabel
+    : buildReturnedPalletsStatementText(returnedPalletsCount, oldPalletsCount, palletUnitPrice)).trim();
+
   const totalRequired = ord.totalRequiredAmount !== undefined
     ? Number(ord.totalRequiredAmount)
-    : +(netOrder + oldDebt).toFixed(2);
-  const totalWords = ord.totalRequiredInWords || numberToArabicTafqeet(totalRequired);
+    : +(netOrder + oldDebt - returnedPalletsDeduction).toFixed(2);
 
-  const advTerms = ord.paymentAdvanceTerms || '50% دفعة مقدمة عند التعاقد وتأكيد الطلبية';
-  const defTerms = ord.paymentDeferredTerms || '50% عند الاستلام والتوريد';
-  const bankAccounts = ord.bankAccountsText || getDefaultBankAccountsText();
+  const rawWords = (ord.totalRequiredInWords || numberToArabicTafqeet(totalRequired)).trim();
+  const cleanTotalWords = rawWords
+    .replace(/^فقط وقدره\s*/g, '')
+    .replace(/^فقط\s*/g, '')
+    .replace(/جنيه مصري/g, 'جنيهاً فقط')
+    .replace(/فقط\s+فقط/g, 'فقط')
+    .trim();
+
+  const rawAdv = (ord.paymentAdvanceTerms || '').trim();
+  const rawDef = (ord.paymentDeferredTerms || '').trim();
+  const isDefaultOldAdv = rawAdv === '50% دفعة مقدمة عند التعاقد وتأكيد الطلبية' || rawAdv === '50% دفعة مقدمة عند التعاقد';
+  const isDefaultOldDef = rawDef === '50% عند الاستلام والتوريد';
+  const advTerms = isDefaultOldAdv ? '' : rawAdv;
+  const defTerms = isDefaultOldDef ? '' : rawDef;
+  const paymentTermsCombined = [advTerms, defTerms].filter(Boolean).join(' — ');
+
+  const bankAccounts = (ord.bankAccountsText || getDefaultBankAccountsText()).trim();
+  const bankLines = bankAccounts.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+  const cairoDateStr = fmtStatementCairoDate(ord.date || ord.createdAt);
+  const rawClientName = String(ord.clientName || '.......').trim();
+  const cleanClientName = rawClientName.replace(/^(السادة\s*)?(مصنع|شركة)\s*\/?\s*/i, '').trim() || rawClientName;
 
   const isSinglePage = items.length <= 3;
 
-  function renderStatementHeader(pageNum = 1, totalPages = 1, subtitleText = 'ORDER STATEMENT') {
+  function renderStatementHeader(pageNum = 1, totalPages = 1) {
     return `
-      <!-- Top Header: Right = Factory Info | Center = بيان طلبية | Top Left = Company Logo -->
-      <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;border-bottom:2.5px double #0f172a;padding-bottom:${isSinglePage ? '7px' : '10px'};margin-bottom:${isSinglePage ? '8px' : '12px'};gap:10px;">
-        <!-- Right Side -->
-        <div style="text-align:right;">
-          <h1 style="margin:0;font-size:${isSinglePage ? '16.5px' : '18px'};font-weight:900;color:#0f172a;">${factoryName}</h1>
-          <div style="font-size:11px;color:#334155;font-weight:700;margin-top:2px;">لإنتاج وتصنيع القشرة الخشبية القياسية والخاصة</div>
-          <div style="font-size:11.5px;margin-top:3px;">
-            <strong>رقم البيان:</strong> ${ord.orderNumber || '-'} &nbsp;|&nbsp; <strong>التاريخ:</strong> ${ord.date || fmtDate(ord.createdAt)}
-          </div>
+      <!-- Top Row: Center = بيان طلبية | Top Left = CSI CAPITAL Logo -->
+      <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:end;margin-bottom:6px;">
+        <div></div>
+        <div style="text-align:center;padding-bottom:6px;">
+          <div style="font-size:21px;font-weight:800;color:#000;letter-spacing:0.2px;">بـــيــــــان طــلبـيـة</div>
+          ${totalPages > 1 ? `<div style="font-size:11.5px;font-weight:700;color:#333;margin-top:2px;">صفحة (${pageNum}) من (${totalPages})</div>` : ''}
         </div>
-
-        <!-- Center Title: بيان طلبية -->
-        <div style="text-align:center;">
-          <div style="border:2px solid #0f172a;background:#f8fafc;padding:${isSinglePage ? '4px 22px' : '6px 26px'};border-radius:9px;box-shadow:0 2px 0 #0f172a;">
-            <h2 style="margin:0;font-size:${isSinglePage ? '19px' : '21px'};font-weight:900;color:#0f172a;line-height:1.2;">بيان طلبية</h2>
-            <div style="font-size:10px;font-weight:800;color:#b45309;margin-top:1px;">
-              ${totalPages > 1 ? `صفحة (${pageNum}) من (${totalPages}) — ${subtitleText}` : subtitleText}
-            </div>
-          </div>
-        </div>
-
-        <!-- Top Left: Company Logo -->
-        <div style="display:flex;justify-content:flex-end;align-items:center;">
-          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;border:1.5px solid #0f172a;border-radius:8px;padding:3px 8px;background:#ffffff;">
-            <img src="${logoSrc}" alt="لوجو الشركة" style="height:${isSinglePage ? '48px' : '56px'};max-width:135px;object-fit:contain;display:block;" />
-          </div>
+        <div style="display:flex;justify-content:flex-end;align-items:flex-start;padding-left:14px;">
+          <img src="${logoSrc}" alt="CSI CAPITAL العاصمة" style="height:105px;width:auto;max-width:165px;object-fit:contain;display:block;" />
         </div>
       </div>
 
-      <!-- Client Details Box -->
-      <div style="border:1.5px solid #0f172a;background:#f8fafc;padding:${isSinglePage ? '6px 12px' : '8px 14px'};border-radius:7px;margin-bottom:${isSinglePage ? '7px' : '10px'};display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;font-size:${isSinglePage ? '12px' : '13px'};">
-        <div>
-          <strong>السادة / اسم العميل:</strong> <span style="font-size:${isSinglePage ? '13.5px' : '14.5px'};font-weight:900;color:#0f172a;">${ord.clientName || '-'}</span>
-          <span style="font-size:11px;color:#475569;margin-right:5px;">(كود العميل: ${ord.clientCode || 'CL'})</span>
-        </div>
-        <div style="font-size:11.5px;">
-          ${ord.clientPhone ? `<strong>هاتف:</strong> ${ord.clientPhone} &nbsp;|&nbsp; ` : ''}
-          <strong>مكان التسليم:</strong> ${delivModeLabel}
-        </div>
+      <!-- Date & Client Salutation (Right Aligned) -->
+      <div style="text-align:right;font-size:15px;font-weight:700;color:#000;line-height:1.75;margin-bottom:4px;">
+        <div style="direction:rtl;">القاهرة في : <span style="direction:ltr;display:inline-block;font-weight:700;">${cairoDateStr}</span></div>
+        <div style="font-size:15.5px;font-weight:800;">الـــســـادة مصنع/ ${cleanClientName} المحترمين ،،،</div>
+      </div>
+
+      <!-- Centered Greeting -->
+      <div style="text-align:center;font-size:15.5px;font-weight:800;color:#000;margin:4px 0 6px;">
+        تــحــــيـــــة طــــيـــبـــة وبعــد،،،
+      </div>
+
+      <!-- Intro Line Above Table -->
+      <div style="text-align:right;font-size:15px;font-weight:800;color:#000;margin-bottom:6px;">
+        مـــرفـق لسيادتكم بيان أسعار بالكميات والاصناف المطلوبة :-
       </div>
     `;
   }
 
-  function renderItemsTable(sliceItems, startOffset = 0, showGrandFooter = true) {
-    const cellPad = isSinglePage ? '4px 5px' : '6px 6px';
+  function renderItemsAndSummaryTable(sliceItems, startOffset = 0, includeSummaryRows = true) {
+    const cellPad = '6px 4px';
+    const hasAdjustments = discAmt > 0 || (whtMode !== 'none' && whtAmt > 0) || (delivMode === 'paid_delivery' && delivCost > 0);
+    const hasReturnedPalletsRow = returnedPalletsDeduction > 0 || returnedPalletsCount > 0;
+    const colSpanCount = showPrices ? 8 : 6;
+
     return `
-      <table style="width:100%;border-collapse:collapse;margin-bottom:${isSinglePage ? '5px' : '8px'};font-size:${isSinglePage ? '11.5px' : '12.5px'};">
+      <table style="width:100%;border-collapse:collapse;direction:rtl;font-size:14px;color:#000;margin-bottom:10px;">
         <thead>
-          <tr style="background:#e2e8f0;color:#0f172a;">
-            <th style="border:1.5px solid #000;padding:${cellPad};width:34px;text-align:center;">مسلسل</th>
-            <th style="border:1.5px solid #000;padding:${cellPad};text-align:right;">البيان</th>
-            <th style="border:1.5px solid #000;padding:${cellPad};text-align:center;">المقاس (العرض × الطول)</th>
-            <th style="border:1.5px solid #000;padding:${cellPad};text-align:center;">الاتجاه</th>
-            <th style="border:1.5px solid #000;padding:${cellPad};text-align:center;">التخانة</th>
-            <th style="border:1.5px solid #000;padding:${cellPad};text-align:center;">الجودة</th>
-            <th style="border:1.5px solid #000;padding:${cellPad};text-align:center;">الكمية</th>
+          <tr style="background:#e59560;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+            <th style="border:1.5px solid #000;padding:${cellPad};width:5%;text-align:center;font-weight:800;">م</th>
+            <th style="border:1.5px solid #000;padding:${cellPad};width:18%;text-align:center;font-weight:800;">البيان</th>
+            <th style="border:1.5px solid #000;padding:${cellPad};width:13%;text-align:center;font-weight:800;">المقاس</th>
+            <th style="border:1.5px solid #000;padding:${cellPad};width:9%;text-align:center;font-weight:800;">الاتجاه</th>
+            <th style="border:1.5px solid #000;padding:${cellPad};width:9%;text-align:center;font-weight:800;">التخانة</th>
+            <th style="border:1.5px solid #000;padding:${cellPad};width:10%;text-align:center;font-weight:800;">الجودة</th>
+            <th style="border:1.5px solid #000;padding:${cellPad};width:10%;text-align:center;font-weight:800;">الكمية</th>
             ${showPrices ? `
-              <th style="border:1.5px solid #000;padding:${cellPad};text-align:center;">السعر (شامل ق.م 14%)</th>
-              <th style="border:1.5px solid #000;padding:${cellPad};text-align:center;">الإجمالي</th>
+              <th style="border:1.5px solid #000;padding:${cellPad};width:10%;text-align:center;font-weight:800;">السعر</th>
+              <th style="border:1.5px solid #000;padding:${cellPad};width:16%;text-align:center;font-weight:800;">الاجمالي</th>
             ` : ''}
           </tr>
         </thead>
         <tbody>
           ${sliceItems.map((it, idx) => {
-            const desc = it.itemDescription || it.woodTypeName || 'قشرة خشبية طبيعية';
+            const rawDesc = (it.itemDescription || it.woodTypeName || '').trim();
+            const desc = (!rawDesc || rawDesc === 'قشرة خشبية طبيعية' || rawDesc === 'قشرة حور / زان') ? 'قشرة حور بلجيكي' : rawDesc;
             const wid = Number(it.widthCm || 125);
             const len = Number(it.lengthCm || 250);
+            const shNum = Number(it.sheetsCount || 0);
+            const prNum = Number(it.unitPrice || 0);
+            const prDisplay = Number.isInteger(prNum) ? String(prNum) : fmtEnNum(prNum, 2);
             return `
-            <tr>
-              <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:800;">${startOffset + idx + 1}</td>
-              <td style="border:1px solid #000;padding:${cellPad};font-weight:800;">${desc}</td>
-              <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:700;">${wid} × ${len} سم</td>
-              <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:700;">${it.direction === 'sada' ? 'سدا' : 'قص'}</td>
-              <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:800;">${it.thicknessMm} مم</td>
-              <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:800;">${it.gradeName || it.gradeCode || '-'}</td>
-              <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:800;">
-                ${fmtNum(it.sheetsCount, 0)} قطعة
-                <span style="font-size:10px;color:#475569;font-weight:600;display:inline-block;margin-right:3px;">(${fmtNum(it.volumeM3, 3)} م³)</span>
-              </td>
+            <tr style="background:#ffffff;">
+              <td style="border:1.5px solid #000;padding:${cellPad};text-align:center;font-weight:700;">${startOffset + idx + 1}</td>
+              <td style="border:1.5px solid #000;padding:${cellPad};text-align:center;font-weight:700;">${desc}</td>
+              <td style="border:1.5px solid #000;padding:${cellPad};text-align:center;font-weight:700;">${wid}×${len}سم</td>
+              <td style="border:1.5px solid #000;padding:${cellPad};text-align:center;font-weight:700;">${it.direction === 'sada' ? 'سدا' : 'قص'}</td>
+              <td style="border:1.5px solid #000;padding:${cellPad};text-align:center;font-weight:700;">${Number(it.thicknessMm)}</td>
+              <td style="border:1.5px solid #000;padding:${cellPad};text-align:center;font-weight:700;">${it.gradeName || it.gradeCode || '-'}</td>
+              <td style="border:1.5px solid #000;padding:${cellPad};text-align:center;font-weight:700;">${shNum}</td>
               ${showPrices ? `
-                <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:700;">${fmtMoney(it.unitPrice)}</td>
-                <td style="border:1px solid #000;padding:${cellPad};text-align:center;font-weight:900;">${fmtMoney(it.totalItemAmount)}</td>
+                <td style="border:1.5px solid #000;padding:${cellPad};text-align:center;font-weight:700;">${prDisplay}</td>
+                <td style="border:1.5px solid #000;padding:${cellPad};text-align:center;font-weight:800;direction:ltr;">${fmtEnNum(it.totalItemAmount, 2)}</td>
               ` : ''}
             </tr>
           `;}).join('')}
-        </tbody>
-        ${showGrandFooter ? `
-        <tfoot>
-          <tr style="background:#f1f5f9;font-weight:900;">
-            <td colspan="6" style="border:1.5px solid #000;padding:${cellPad};text-align:left;">إجمالي الكميات والحجم بالبيان (${items.length} بنود):</td>
-            <td style="border:1.5px solid #000;padding:${cellPad};text-align:center;">${fmtNum(ord.totalSheetsCount, 0)} قطعة (${fmtNum(ord.totalVolumeM3, 4)} م³)</td>
-            ${showPrices ? `
-              <td style="border:1.5px solid #000;padding:${cellPad};text-align:center;">إجمالي الطلبية:</td>
-              <td style="border:1.5px solid #000;padding:${cellPad};text-align:center;font-size:${isSinglePage ? '12.5px' : '13.5px'};">${fmtMoney(subtotal)}</td>
+
+          ${includeSummaryRows && showPrices ? `
+            <!-- Row 1: اجمالي قيمة الطلبية -->
+            <tr>
+              <td colspan="${colSpanCount}" style="border:none;background:transparent;padding:6px 10px;text-align:center;font-weight:700;font-size:14.5px;color:#000;">
+                اجـــمـــالــــي قيمة الطلبية
+              </td>
+              <td style="border:1.5px solid #000;background:#e59560;-webkit-print-color-adjust:exact;print-color-adjust:exact;padding:6px 6px;text-align:center;font-weight:800;font-size:14.5px;color:#000;direction:ltr;">
+                ${fmtEnNum(subtotal, 2)}
+              </td>
+            </tr>
+
+            ${discAmt > 0 ? `
+            <tr>
+              <td colspan="${colSpanCount}" style="border:none;background:transparent;padding:6px 10px;text-align:center;font-weight:700;font-size:14.5px;color:#000;">
+                قيمة الخصم (${fmtEnNum(discPct, Number.isInteger(discPct) ? 0 : 2)}%)
+              </td>
+              <td style="border:1.5px solid #000;background:#e59560;-webkit-print-color-adjust:exact;print-color-adjust:exact;padding:6px 6px;text-align:center;font-weight:800;font-size:14.5px;color:#000;direction:ltr;">
+                -${fmtEnNum(discAmt, 2)}
+              </td>
+            </tr>
             ` : ''}
-          </tr>
-        </tfoot>
-        ` : ''}
+
+            ${whtMode !== 'none' && whtAmt > 0 ? `
+            <tr>
+              <td colspan="${colSpanCount}" style="border:none;background:transparent;padding:6px 10px;text-align:center;font-weight:700;font-size:14.5px;color:#000;">
+                ضريبة الخصم والإضافة (${whtRate}%)
+              </td>
+              <td style="border:1.5px solid #000;background:#e59560;-webkit-print-color-adjust:exact;print-color-adjust:exact;padding:6px 6px;text-align:center;font-weight:800;font-size:14.5px;color:#000;direction:ltr;">
+                ${whtMode === 'deduct' ? '-' : '+'}${fmtEnNum(whtAmt, 2)}
+              </td>
+            </tr>
+            ` : ''}
+
+            ${delivMode === 'paid_delivery' && delivCost > 0 ? `
+            <tr>
+              <td colspan="${colSpanCount}" style="border:none;background:transparent;padding:6px 10px;text-align:center;font-weight:700;font-size:14.5px;color:#000;">
+                تكلفة التوصيل والنقل
+              </td>
+              <td style="border:1.5px solid #000;background:#e59560;-webkit-print-color-adjust:exact;print-color-adjust:exact;padding:6px 6px;text-align:center;font-weight:800;font-size:14.5px;color:#000;direction:ltr;">
+                ${fmtEnNum(delivCost, 2)}
+              </td>
+            </tr>
+            ` : ''}
+
+            ${hasAdjustments ? `
+            <tr>
+              <td colspan="${colSpanCount}" style="border:none;background:transparent;padding:6px 10px;text-align:center;font-weight:700;font-size:14.5px;color:#000;">
+                صافي قيمة الطلبية
+              </td>
+              <td style="border:1.5px solid #000;background:#e59560;-webkit-print-color-adjust:exact;print-color-adjust:exact;padding:6px 6px;text-align:center;font-weight:800;font-size:14.5px;color:#000;direction:ltr;">
+                ${fmtEnNum(netOrder, 2)}
+              </td>
+            </tr>
+            ` : ''}
+
+            <!-- Row 2: قيمة مديونية سابقة -->
+            <tr>
+              <td colspan="${colSpanCount}" style="border:none;background:transparent;padding:6px 6px;text-align:center;font-weight:700;font-size:14px;color:#000;">
+                ${previousDebtLabel}
+              </td>
+              <td style="border:1.5px solid #000;background:#e59560;-webkit-print-color-adjust:exact;print-color-adjust:exact;padding:6px 6px;text-align:center;font-weight:800;font-size:14.5px;color:#000;direction:ltr;">
+                ${fmtEnNum(oldDebt, 2)}
+              </td>
+            </tr>
+
+            <!-- Row 3: رد الطبلية / البالتات (إن وجد) -->
+            ${hasReturnedPalletsRow && returnedPalletsLabel ? `
+            <tr>
+              <td colspan="${colSpanCount}" style="border:none;background:transparent;padding:6px 6px;text-align:center;font-weight:700;font-size:14px;color:#000;">
+                ${returnedPalletsLabel}
+              </td>
+              <td style="border:1.5px solid #000;background:#e59560;-webkit-print-color-adjust:exact;print-color-adjust:exact;padding:6px 6px;text-align:center;font-weight:800;font-size:14.5px;color:#000;direction:ltr;">
+                -${fmtEnNum(returnedPalletsDeduction, 2)}
+              </td>
+            </tr>
+            ` : ''}
+
+            <!-- Row 4: اجمالي المبلغ المستحق -->
+            <tr>
+              <td colspan="${colSpanCount}" style="border:none;background:transparent;padding:6px 10px;text-align:center;font-weight:700;font-size:14.5px;color:#000;">
+                اجمالي المبلغ المستحق
+              </td>
+              <td style="border:1.5px solid #000;background:#e59560;-webkit-print-color-adjust:exact;print-color-adjust:exact;padding:6px 6px;text-align:center;font-weight:800;font-size:14.5px;color:#000;direction:ltr;">
+                ${fmtEnNum(totalRequired, 2)}
+              </td>
+            </tr>
+          ` : ''}
+        </tbody>
       </table>
     `;
   }
 
-  function renderFinancialAndTermsSection() {
-    const finRowPad = isSinglePage ? '3.5px 8px' : '6px 10px';
+  function renderBottomTermsAndStamp() {
+    const formattedBankHtml = bankLines.map(line => {
+      if (line.includes(':')) {
+        const idx = line.indexOf(':');
+        const labelPart = line.slice(0, idx).trim();
+        const numPart = line.slice(idx + 1).trim();
+        return `
+          <div style="display:flex;justify-content:flex-start;align-items:center;gap:14px;margin-top:4px;">
+            <span style="min-width:145px;">${labelPart} :</span>
+            <span style="direction:ltr;font-weight:700;letter-spacing:0.3px;">${numPart}</span>
+          </div>
+        `;
+      }
+      return `<div style="margin-top:4px;">${line}</div>`;
+    }).join('');
+
     return `
       ${showPrices ? `
-      <div style="font-size:${isSinglePage ? '10.5px' : '11.5px'};font-weight:800;color:#b45309;margin-bottom:${isSinglePage ? '6px' : '10px'};background:#fffbeb;border:1px solid #f59e0b;padding:${isSinglePage ? '3px 8px' : '5px 10px'};border-radius:5px;">
-        📌 <strong>ملحوظة هامة:</strong> جميع الأسعار التي تكتب في سعر القطعة <strong>شاملة ضريبة القيمة المضافة 14%</strong>، وضريبة الخصم والإضافة اختيارية.
-      </div>
-
-      <!-- Financial Breakdown & Delivery & Payment Grid -->
-      <div style="display:grid;grid-template-columns:1.12fr 0.88fr;gap:${isSinglePage ? '8px' : '12px'};margin-bottom:${isSinglePage ? '6px' : '12px'};align-items:stretch;">
-        <!-- Right Column: Delivery, Payment Terms & Bank Accounts -->
-        <div style="border:1.5px solid #000;border-radius:7px;padding:${isSinglePage ? '7px 10px' : '10px 12px'};font-size:${isSinglePage ? '11.2px' : '12.5px'};display:flex;flex-direction:column;justify-content:space-between;gap:5px;">
-          <div>
-            <div style="font-weight:900;font-size:${isSinglePage ? '11.8px' : '13px'};color:#0f172a;border-bottom:1px solid #cbd5e1;padding-bottom:3px;margin-bottom:4px;">
-              🚚 مكان التسليم وشروط الدفع (المقدم والآجل):
-            </div>
-            <div style="margin-bottom:2px;"><strong>• مكان التسليم:</strong> ${delivModeLabel} — (${delivPlace})</div>
-            <div style="margin-bottom:2px;"><strong>• شروط الدفع (المقدم):</strong> ${advTerms}</div>
-            <div style="margin-bottom:2px;"><strong>• شروط الدفع (الآجل):</strong> ${defTerms}</div>
-            ${ord.notes ? `<div style="margin-top:2px;"><strong>• ملاحظات البيان:</strong> ${ord.notes}</div>` : ''}
-          </div>
-
-          <div style="background:#f8fafc;border:1px solid #0f172a;border-radius:6px;padding:${isSinglePage ? '5px 8px' : '7px 10px'};margin-top:2px;">
-            <div style="font-weight:900;font-size:${isSinglePage ? '11.2px' : '12.2px'};color:#0f766e;margin-bottom:2px;">
-              🏦 أرقام الحسابات البنكية الخاصة بمصنع العاصمة (لتحويل المبلغ عليها):
-            </div>
-            <div style="white-space:pre-line;font-size:${isSinglePage ? '10.5px' : '11.5px'};font-weight:700;line-height:1.35;color:#0f172a;">${bankAccounts}</div>
-          </div>
-        </div>
-
-        <!-- Left Column: Financial Summary Table -->
-        <div style="border:2px solid #000;border-radius:7px;overflow:hidden;font-size:${isSinglePage ? '11.2px' : '12.5px'};">
-          <table style="width:100%;border-collapse:collapse;">
-            <tr>
-              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};background:#f8fafc;font-weight:700;">إجمالي قيمة الطلبية (شامل ق.م 14%):</td>
-              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};text-align:left;font-weight:900;">${fmtMoney(subtotal)}</td>
-            </tr>
-            <tr>
-              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};background:#f8fafc;font-weight:700;">نسبة وقيمة الخصم (${fmtNum(discPct, 2)}%):</td>
-              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};text-align:left;font-weight:800;color:#dc2626;">-${fmtMoney(discAmt)}</td>
-            </tr>
-            <tr>
-              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};background:#f8fafc;font-weight:700;">ضريبة القيمة المضافة (14%):</td>
-              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};text-align:left;font-weight:700;font-size:10.8px;">شاملة بالسعر (${fmtMoney(includedVat14)})</td>
-            </tr>
-            <tr>
-              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};background:#f8fafc;font-weight:700;">ضريبة الخصم والإضافة ${whtMode !== 'none' ? `(${whtRate}%)` : '(اختياري)'}:</td>
-              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};text-align:left;font-weight:800;">
-                ${whtMode === 'none' ? 'غير مطبقة (0 ج.م)' : `${whtMode === 'deduct' ? '-' : '+'}${fmtMoney(whtAmt)}`}
-              </td>
-            </tr>
-            <tr>
-              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};background:#f8fafc;font-weight:700;">سعر التوصيل (${delivMode === 'ex_factory' ? 'أرض المصنع' : delivMode === 'included' ? 'شامل التوصيل' : 'نولون توصيل'}):</td>
-              <td style="border-bottom:1px solid #cbd5e1;padding:${finRowPad};text-align:left;font-weight:800;">
-                ${delivMode === 'included' ? 'شامل التوصيل' : fmtMoney(delivCost)}
-              </td>
-            </tr>
-            <tr style="background:#e0f2fe;">
-              <td style="border-bottom:1.5px solid #000;padding:${finRowPad};font-weight:900;color:#0f172a;">صافي الطلبية:</td>
-              <td style="border-bottom:1.5px solid #000;padding:${finRowPad};text-align:left;font-weight:900;font-size:${isSinglePage ? '12.5px' : '13.5px'};color:#0f172a;">${fmtMoney(netOrder)}</td>
-            </tr>
-            <tr>
-              <td style="border-bottom:1.5px solid #000;padding:${finRowPad};background:#fef2f2;font-weight:800;color:#991b1b;">المديونية القديمة على العميل:</td>
-              <td style="border-bottom:1.5px solid #000;padding:${finRowPad};background:#fef2f2;text-align:left;font-weight:900;color:#dc2626;">${fmtMoney(oldDebt)}</td>
-            </tr>
-            <tr style="background:#dcfce7;">
-              <td style="padding:${isSinglePage ? '5px 8px' : '7px 10px'};font-weight:900;font-size:${isSinglePage ? '12.5px' : '13.5px'};color:#14532d;">إجمالي المبلغ المطلوب:</td>
-              <td style="padding:${isSinglePage ? '5px 8px' : '7px 10px'};text-align:left;font-weight:900;font-size:${isSinglePage ? '13.8px' : '15px'};color:#14532d;">${fmtMoney(totalRequired)}</td>
-            </tr>
-          </table>
+      <div style="text-align:right;font-size:14.5px;font-weight:700;color:#000;line-height:1.95;margin-top:6px;">
+        <div>اجمالي المبلغ المطلوب سداده فقط( ${cleanTotalWords} )</div>
+        <div style="margin-top:4px;">مكان التسليم : ${delivFullLine}</div>
+        ${paymentTermsCombined ? `<div style="margin-top:4px;">شروط الدفع : ${paymentTermsCombined}</div>` : ''}
+        ${ord.notes ? `<div style="margin-top:4px;">ملاحظات : ${ord.notes}</div>` : ''}
+        <div style="margin-top:6px;">
+          ${formattedBankHtml}
         </div>
       </div>
-
-      <!-- Total Required Amount in Words (إجمالي المبلغ المطلوب بالحروف) -->
-      <div style="border:1.5px solid #0f172a;background:#f8fafc;padding:${isSinglePage ? '5px 12px' : '8px 14px'};border-radius:7px;margin-bottom:${isSinglePage ? '5px' : '10px'};font-size:${isSinglePage ? '12px' : '13.2px'};display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
-        <div>
-          <strong>إجمالي المبلغ المطلوب بالحروف:</strong>
-          <span style="font-weight:900;color:#0f172a;margin-right:6px;">${totalWords}</span>
-        </div>
+      ` : `
+      <div style="text-align:right;font-size:14.5px;font-weight:700;color:#000;line-height:1.9;margin-top:6px;">
+        <div>إجمالي الكمية بالبيان : ${ord.totalSheetsCount || 0} قطعة</div>
+        <div>مكان التسليم : ${delivFullLine}</div>
       </div>
-      ` : ''}
+      `}
 
-      ${car ? `
-      <div style="border:1px solid #000;background:#f8fafc;padding:4px 10px;border-radius:6px;margin-bottom:5px;font-size:11px;">
-        <strong>🚚 بيانات إذن صرف وتحميل السيارة (${car.voucherNo || 'CAR-' + ord.orderNumber}):</strong>
-        رقم السيارة: <strong>${car.carPlateNumber || '-'}</strong> | السائق: <strong>${car.driverName || '-'}</strong> | البالتات: مسلم (${car.palletsDeliveredCount ?? 0}) / مستلم (${car.palletsReceivedCount ?? 0})
-      </div>
-      ` : ''}
-    `;
-  }
-
-  function renderClosingAndStampFooter() {
-    return `
-      <!-- Closing Line in Center -->
-      <div style="text-align:center;font-size:${isSinglePage ? '13.5px' : '15px'};font-weight:900;margin:${isSinglePage ? '4px 0 6px' : '10px 0 12px'};color:#0f172a;">
-        وتفضلوا بقبول فائق الاحترام والتقدير،،،
+      <!-- Closing Line Centered -->
+      <div style="text-align:center;font-size:15.5px;font-weight:800;color:#000;margin:14px 0 6px;">
+        وتفضلوا بقبول فائق الاحترام والتقدير ،،،
       </div>
 
-      <!-- Bottom Row: Right = Prepared / Approved By | Bottom Left = العاصمة للصناعات المتخصصة + Company Stamp -->
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:${isSinglePage ? '4px' : '8px'};padding-top:${isSinglePage ? '6px' : '8px'};border-top:1px dashed #94a3b8;">
-        <div style="display:flex;gap:28px;font-size:${isSinglePage ? '11.5px' : '12.5px'};font-weight:700;text-align:center;">
-          <div>
-            إعداد الحسابات<br/><br/>
-            <span>${ord.requestedBy || '................'}</span>
+      <!-- Bottom Left: العاصمة للصناعات المتخصصة + Circular Red Stamp Directly Below It -->
+      <div style="display:flex;justify-content:flex-end;padding-left:28px;margin-top:4px;">
+        <div style="text-align:center;">
+          <div style="font-size:15.5px;font-weight:800;color:#000;margin-bottom:6px;">
+            العاصــمـــة للصـنـاعـــات المتخصصة
           </div>
-          <div>
-            اعتماد الإدارة<br/><br/>
-            <span>${ord.executiveApprovedBy || '................'}</span>
-          </div>
-          <div>
-            توقيع العميل بالموافقة<br/><br/>
-            <span>................</span>
-          </div>
-        </div>
-
-        <!-- Bottom Left: العاصمة للصناعات المتخصصة + ختم الشركة تحتها -->
-        <div style="text-align:center;min-width:190px;">
-          <div style="font-size:${isSinglePage ? '13.5px' : '15px'};font-weight:900;color:#0f172a;margin-bottom:3px;">
-            العاصمة للصناعات المتخصصة
-          </div>
-          <div style="display:inline-flex;align-items:center;justify-content:center;">
-            <img src="${stampSrc}" alt="ختم الشركة" style="height:${isSinglePage ? '68px' : '86px'};max-width:165px;object-fit:contain;display:block;" />
-          </div>
+          <img src="${stampSrc}" alt="ختم الشركة" style="height:112px;width:auto;max-width:165px;object-fit:contain;display:block;margin:0 auto;" />
         </div>
       </div>
     `;
   }
 
-  // CASE 1: <= 3 items -> Strictly ONE single page!
+  // CASE 1: <= 3 items -> Strictly ONE single page matching the exact uploaded PDF template!
   if (isSinglePage) {
     return `
-      <div data-single-page-statement="1" style="border:2.5px solid #0f172a;padding:12px 16px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;border-radius:6px;box-sizing:border-box;page-break-inside:avoid;break-inside:avoid;">
-        ${renderStatementHeader(1, 1, 'ORDER STATEMENT')}
-        ${renderItemsTable(items, 0, true)}
-        ${renderFinancialAndTermsSection()}
-        ${renderClosingAndStampFooter()}
+      <div data-single-page-statement="1" style="padding:18px 28px 12px 28px;font-family:'Cairo',sans-serif;direction:rtl;background:#ffffff;color:#000000;box-sizing:border-box;page-break-inside:avoid;break-inside:avoid;">
+        ${renderStatementHeader(1, 1)}
+        ${renderItemsAndSummaryTable(items, 0, true)}
+        ${renderBottomTermsAndStamp()}
       </div>
     `;
   }
 
-  // CASE 2: > 3 items -> Coordinated Multi-Page Layout!
-  const ITEMS_PER_PAGE = 9;
+  // CASE 2: > 3 items -> Multi-Page Layout using the exact same template!
+  const ITEMS_PER_PAGE = 10;
   const itemChunks = [];
   for (let i = 0; i < items.length; i += ITEMS_PER_PAGE) {
     itemChunks.push({ slice: items.slice(i, i + ITEMS_PER_PAGE), startOffset: i });
   }
-  const totalPages = itemChunks.length + 1;
+  const totalPages = itemChunks.length;
 
-  const itemPagesHtml = itemChunks.map((chunk, chunkIdx) => {
+  return itemChunks.map((chunk, chunkIdx) => {
     const pageNum = chunkIdx + 1;
-    const isLastItemsPage = chunkIdx === itemChunks.length - 1;
+    const isLastPage = chunkIdx === itemChunks.length - 1;
     return `
-      <div class="order-stmt-page" style="border:2.5px solid #0f172a;padding:16px 20px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;border-radius:6px;box-sizing:border-box;page-break-inside:avoid;break-inside:avoid;">
-        ${renderStatementHeader(pageNum, totalPages, 'بيان بنود الطلبية')}
-        ${renderItemsTable(chunk.slice, chunk.startOffset, isLastItemsPage)}
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:8px;border-top:1px dashed #94a3b8;font-size:12px;">
-          <div style="font-weight:800;color:#b45309;">
-            ⬅ يتبع في الصفحة التالية (صفحة ${pageNum + 1} من ${totalPages}) ${isLastItemsPage ? 'لاستكمال الملخص المالي والضرائب وشروط الدفع والحسابات البنكية' : 'لاستكمال باقي بنود الطلبية'}
+      <div class="order-stmt-page" style="padding:18px 28px 12px 28px;font-family:'Cairo',sans-serif;direction:rtl;background:#ffffff;color:#000000;box-sizing:border-box;page-break-inside:avoid;break-inside:avoid;">
+        ${renderStatementHeader(pageNum, totalPages)}
+        ${renderItemsAndSummaryTable(chunk.slice, chunk.startOffset, isLastPage)}
+        ${isLastPage ? renderBottomTermsAndStamp() : `
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;padding-top:8px;border-top:1px dashed #666;font-size:13.5px;font-weight:800;">
+            <div>⬅ يتبع في الصفحة التالية (صفحة ${pageNum + 1} من ${totalPages}) لاستكمال باقي بنود البيان والملخص المالي...</div>
+            <div style="text-align:center;">
+              <div style="font-size:14px;font-weight:800;margin-bottom:4px;">العاصــمـــة للصـنـاعـــات المتخصصة</div>
+              <img src="${stampSrc}" alt="ختم الشركة" style="height:75px;width:auto;object-fit:contain;display:block;margin:0 auto;" />
+            </div>
           </div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <strong style="font-size:13px;color:#0f172a;">العاصمة للصناعات المتخصصة</strong>
-            <img src="${stampSrc}" alt="ختم الشركة" style="height:56px;max-width:110px;object-fit:contain;display:block;" />
-          </div>
-        </div>
+        `}
       </div>
-      <div class="html2pdf__page-break" style="page-break-after:always;break-after:page;height:0;margin:0;padding:0;"></div>
+      ${!isLastPage ? `<div class="html2pdf__page-break" style="page-break-after:always;break-after:page;height:0;margin:0;padding:0;"></div>` : ''}
     `;
   }).join('');
-
-  const finalSummaryPageHtml = `
-    <div class="order-stmt-page" style="border:2.5px solid #0f172a;padding:16px 20px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;border-radius:6px;box-sizing:border-box;page-break-inside:avoid;break-inside:avoid;">
-      ${renderStatementHeader(totalPages, totalPages, 'الملخص المالي وشروط السداد')}
-      <div style="border:1.5px solid #0f172a;background:#f1f5f9;padding:8px 12px;border-radius:7px;margin-bottom:10px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:12.5px;font-weight:800;">
-        <span>📦 إجمالي عدد البنود بالطلبية: <strong>${items.length} بنود</strong></span>
-        <span>🪵 إجمالي الكمية: <strong>${fmtNum(ord.totalSheetsCount, 0)} قطعة</strong> (${fmtNum(ord.totalVolumeM3, 4)} م³)</span>
-        ${showPrices ? `<span>💰 إجمالي قيمة البنود (شامل ق.م 14%): <strong>${fmtMoney(subtotal)}</strong></span>` : ''}
-      </div>
-      ${renderFinancialAndTermsSection()}
-      ${renderClosingAndStampFooter()}
-    </div>
-  `;
-
-  return `${itemPagesHtml}${finalSummaryPageHtml}`;
 }
 
 function printClientOrderStatement(orderId) {
