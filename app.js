@@ -858,7 +858,7 @@ function normalizeState(s) {
   const arrayKeys = [
     'users', 'pallets', 'rawMaterials', 'logContainers', 'logItems', 'scrapItems', 'spareParts',
     'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
-    'partners', 'palletMovements', 'financialTransactions',
+    'partners', 'palletMovements', 'financialTransactions', 'checksUnderCollection',
     'auditLogs', 'chatMessages', 'deletedIds'
   ];
   for (const k of arrayKeys) {
@@ -869,11 +869,11 @@ function normalizeState(s) {
   if (s.users.length === 0) s.users = def.users;
 
   // Keep newest records first (index 0) so new orders, movements, and notifications always appear at the top
-  const descTimeKeys = ['productionOrders', 'warehouseMovements', 'salesReturns', 'financialTransactions', 'palletMovements', 'auditLogs'];
+  const descTimeKeys = ['productionOrders', 'warehouseMovements', 'salesReturns', 'financialTransactions', 'checksUnderCollection', 'palletMovements', 'auditLogs'];
   for (const tk of descTimeKeys) {
     s[tk].sort((a, b) => {
-      const tA = new Date(a?.updatedAt || a?.timestamp || a?.createdAt || a?.date || 0).getTime() || 0;
-      const tB = new Date(b?.updatedAt || b?.timestamp || b?.createdAt || b?.date || 0).getTime() || 0;
+      const tA = new Date(a?.updatedAt || a?.timestamp || a?.createdAt || a?.date || a?.issueDate || 0).getTime() || 0;
+      const tB = new Date(b?.updatedAt || b?.timestamp || b?.createdAt || b?.date || b?.issueDate || 0).getTime() || 0;
       return tB - tA;
     });
   }
@@ -883,12 +883,19 @@ function normalizeState(s) {
     return tA - tB;
   });
 
+  const activeChecksTotal = (s.checksUnderCollection || [])
+    .filter(c => c && (c.status || 'under_collection') === 'under_collection')
+    .reduce((sum, c) => sum + Number(c.amount || 0), 0);
+
   s.treasuryBalances = {
     cashVault: 0,
     bankAccount: 0,
     checksUnderCollection: 0,
     ...(s.treasuryBalances || {})
   };
+  if (Array.isArray(s.checksUnderCollection) && s.checksUnderCollection.length > 0) {
+    s.treasuryBalances.checksUnderCollection = +activeChecksTotal.toFixed(2);
+  }
 
   for (const u of s.users) {
     const defUser = def.users.find(du => du.roleKey === u.roleKey || du.id === u.id);
@@ -952,7 +959,7 @@ function smartMergeClientState(current, incoming) {
     const listKeys = [
       'pallets', 'rawMaterials', 'logContainers', 'logItems', 'scrapItems', 'spareParts',
       'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
-      'partners', 'palletMovements', 'financialTransactions', 'auditLogs', 'chatMessages'
+      'partners', 'palletMovements', 'financialTransactions', 'checksUnderCollection', 'auditLogs', 'chatMessages'
     ];
     const cleanedIncoming = {
       ...incoming,
@@ -969,7 +976,7 @@ function smartMergeClientState(current, incoming) {
   const listKeys = [
     'users', 'pallets', 'rawMaterials', 'logContainers', 'logItems', 'scrapItems', 'spareParts',
     'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
-    'partners', 'palletMovements', 'financialTransactions', 'auditLogs', 'chatMessages'
+    'partners', 'palletMovements', 'financialTransactions', 'checksUnderCollection', 'auditLogs', 'chatMessages'
   ];
 
   const merged = {
@@ -1041,7 +1048,7 @@ function getDefaultInitialState() {
       { id: 'u-8', code: 'USR-08', name: 'مستخدم احتياطي', roleKey: 'reserve_user', roleTitle: 'حساب احتياطي / طوارئ وجرد', pin: '8888', avatarColor: '#64748b', active: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: true, production: true, approvals: true, approveFinancial: false, approveExecutive: false, approveWarehouse: false, salesAccounting: false, clientsSuppliers: false, reports: true, settingsUsers: false } }
     ],
     pallets: [], rawMaterials: [], logContainers: [], logItems: [], scrapItems: [], spareParts: [], productionOrders: [],
-    approvalRequests: [], warehouseMovements: [], salesReturns: [], partners: [], palletMovements: [], financialTransactions: [],
+    approvalRequests: [], warehouseMovements: [], salesReturns: [], partners: [], palletMovements: [], financialTransactions: [], checksUnderCollection: [],
     treasuryBalances: { cashVault: 0, bankAccount: 0, checksUnderCollection: 0 },
     auditLogs: [], chatMessages: [], deletedIds: []
   };
@@ -2011,7 +2018,7 @@ function render() {
             </div>
           </div>
 
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <div class="topbar-actions">
             <button class="btn btn-sm btn-outline" onclick="openFactoryLogoModal()" title="رفع أو تغيير لوجو الشركة ليظهر في النظام وفي أعلى يسار جميع التقارير">
               🖼️ لوجو الشركة
             </button>
@@ -4228,7 +4235,7 @@ function handleOrderModalClientSearch(val) {
 }
 
 function computeClientMetrics(pt) {
-  if (!pt) return { orders: [], txs: [], palletMoves: [], totalInvoiced: 0, totalPaid: 0, netDebt: 0, palletsDelivered: 0, palletsReceived: 0, netPalletsAtClient: 0, palletUnitPrice: 0, palletsDeliveredValue: 0, palletsReceivedValue: 0, netPalletsValue: 0 };
+  if (!pt) return { orders: [], txs: [], palletMoves: [], checks: [], pendingChecks: [], pendingChecksAmount: 0, collectedChecks: [], collectedChecksAmount: 0, totalInvoiced: 0, totalPaid: 0, netDebt: 0, palletsDelivered: 0, palletsReceived: 0, netPalletsAtClient: 0, palletUnitPrice: 0, palletsDeliveredValue: 0, palletsReceivedValue: 0, netPalletsValue: 0 };
 
   const orders = (state.productionOrders || []).filter(
     o => (o.clientId && o.clientId === pt.id) || (o.clientName && o.clientName.trim() === pt.name.trim())
@@ -4241,6 +4248,14 @@ function computeClientMetrics(pt) {
   const palletMoves = (state.palletMovements || []).filter(
     pm => (pm.clientId && pm.clientId === pt.id) || (pm.clientName && pm.clientName.trim() === pt.name.trim())
   );
+
+  const checks = (state.checksUnderCollection || []).filter(
+    chk => (chk.clientId && chk.clientId === pt.id) || (chk.clientName && chk.clientName.trim() === pt.name.trim())
+  );
+  const pendingChecks = checks.filter(c => (c.status || 'under_collection') === 'under_collection');
+  const pendingChecksAmount = +pendingChecks.reduce((s, c) => s + Number(c.amount || 0), 0).toFixed(2);
+  const collectedChecks = checks.filter(c => c.status === 'collected');
+  const collectedChecksAmount = +collectedChecks.reduce((s, c) => s + Number(c.amount || 0), 0).toFixed(2);
 
   const openingDebit = Number(pt.openingDebit ?? (Number(pt.balance || 0) > 0 ? Number(pt.balance) : 0));
   const openingCredit = Number(pt.openingCredit ?? (Number(pt.balance || 0) < 0 ? Math.abs(Number(pt.balance)) : 0));
@@ -4284,6 +4299,11 @@ function computeClientMetrics(pt) {
     orders,
     txs,
     palletMoves,
+    checks,
+    pendingChecks,
+    pendingChecksAmount,
+    collectedChecks,
+    collectedChecksAmount,
     openingDebit,
     openingCredit,
     totalInvoiced: +invoicesTotal.toFixed(2),
@@ -4788,8 +4808,14 @@ function renderAccounting() {
   const totalPalletsReceivedValueAll = enrichedClients.reduce((s, x) => s + x.metrics.palletsReceivedValue, 0);
   const totalNetPalletsOutValue = enrichedClients.reduce((s, x) => s + x.metrics.netPalletsValue, 0);
 
+  const allChecks = state.checksUnderCollection || [];
+  const pendingChecksList = allChecks.filter(c => (c.status || 'under_collection') === 'under_collection');
+  const collectedChecksList = allChecks.filter(c => c.status === 'collected');
+  const totalPendingChecksAmount = pendingChecksList.reduce((s, c) => s + Number(c.amount || 0), 0);
+  const totalCollectedChecksAmount = collectedChecksList.reduce((s, c) => s + Number(c.amount || 0), 0);
+
   return `
-    <!-- Top Financial & Pallets Summary Cards -->
+    <!-- Top Financial, Checks Under Collection & Pallets Summary Cards -->
     <div class="stats-grid">
       <div class="stat-card danger">
         <span class="stat-title">إجمالي مديونيات المصنع على العملاء (لنا)</span>
@@ -4797,14 +4823,21 @@ function renderAccounting() {
         <div class="stat-sub">مستحقات واجبة التحصيل من العملاء</div>
       </div>
 
-      <div class="stat-card info">
-        <span class="stat-title">إجمالي المستحقات الدائنة للعملاء (لهم)</span>
-        <div class="stat-value">${fmtMoney(totalCreditsForClients)}</div>
-        <div class="stat-sub">دفعات مقدمة أو أرصدة دائنة لصالح العملاء</div>
+      <div class="stat-card" style="border-right:4px solid #f59e0b;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">
+          <span class="stat-title">📝 شيكات تحت التحصيل طرف المصنع/البنك</span>
+          <button type="button" class="btn btn-sm btn-primary" style="padding:2px 8px;font-size:0.7rem;" onclick="openNewCheckUnderCollectionModal()">
+            ➕ تسجيل شيك
+          </button>
+        </div>
+        <div class="stat-value" style="color:#d97706;">${fmtMoney(totalPendingChecksAmount)}</div>
+        <div class="stat-sub">
+          تحت التحصيل: <strong>${pendingChecksList.length} شيك</strong> | تم تحصيلها وإضافتها للمدفوعات: <strong style="color:var(--success);">${collectedChecksList.length} شيك (${fmtMoney(totalCollectedChecksAmount)})</strong>
+        </div>
       </div>
 
       <div class="stat-card accent">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">
           <span class="stat-title">حساب البالتات الخشبية وقيمتها طرف العملاء</span>
           <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.7rem;border-color:var(--accent);color:var(--accent);font-weight:800;" onclick="openSetDefaultPalletPriceModal()">
             💰 تحديد قيمة البالتة (${fmtNum(defaultPalletPrice, 0)} ج)
@@ -4817,24 +4850,25 @@ function renderAccounting() {
       </div>
 
       <div class="stat-card success">
-        <span class="stat-title">رصيد خزينة المصنع والبنك</span>
+        <span class="stat-title">رصيد خزينة المصنع والبنك (المحصل)</span>
         <div class="stat-value">${fmtMoney(Number(tb.cashVault || 0) + Number(tb.bankAccount || 0))}</div>
-        <div class="stat-sub">نقدي بالخزينة: ${fmtMoney(tb.cashVault)}</div>
+        <div class="stat-sub">نقدي بالخزينة: ${fmtMoney(tb.cashVault)} | بالبنك: ${fmtMoney(tb.bankAccount)}</div>
       </div>
     </div>
 
-    <!-- Main Clients Directory: Codes, Past Orders, Debts/Receivables & Pallets Ledger -->
+    <!-- Main Clients Directory: Codes, Past Orders, Debts/Receivables, Checks & Pallets Ledger -->
     <div class="card">
       <div class="card-header">
         <div>
-          <div class="card-title">🤝 حسابات ومبيعات العملاء (الأكواد، الطلبيات الفائتة، بيان المديونيات والمستحقات، وحسابات وقيمة البالتات)</div>
+          <div class="card-title">🤝 حسابات ومبيعات العملاء (الأكواد، الطلبيات، المديونيات، الشيكات تحت التحصيل، وحسابات البالتات)</div>
           <small style="color:var(--text-muted);">
-            اضغط على <strong>"📂 كشف الحساب"</strong> لأي عميل لمراجعة كافة طلبياته السابقة، وحركة المديونية، وعدد وقيمة البالتات المسلمة له والمستلمة منه
+            اضغط على <strong>"📂 كشف الحساب"</strong> لأي عميل لمراجعة طلبياته، المديونية، الشيكات تحت التحصيل، وحساب البالتات
           </small>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <button class="btn btn-primary" onclick="openNewPartnerModal()">➕ إضافة عميل جديد بالكود</button>
           <button class="btn btn-accent" onclick="openNewClientOrderPrepModal()">📋 إنشاء أمر تجهيز طلبية لعميل</button>
+          <button class="btn" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal()">📝 تسجيل شيك تحت التحصيل</button>
           <button class="btn btn-outline" style="border-color:#d97706;color:#b45309;font-weight:800;" onclick="openSetDefaultPalletPriceModal()">🪵 تحديد قيمة البالتة (${fmtMoney(defaultPalletPrice)})</button>
           <button class="btn btn-outline" onclick="openNewFinancialTxModal()">💵 تسجيل سند مالي عام بالخزينة</button>
           <button class="btn btn-outline" onclick="printAllClientsAccountingReportPdf()">🖨️ طباعة كشف حسابات جميع العملاء PDF</button>
@@ -4894,7 +4928,16 @@ function renderAccounting() {
                     </button>
                   </td>
                   <td><strong>${fmtMoney(m.totalDebit)}</strong></td>
-                  <td style="color:var(--success);font-weight:700;">${fmtMoney(m.totalCredit)}</td>
+                  <td>
+                    <div style="color:var(--success);font-weight:700;">${fmtMoney(m.totalCredit)}</div>
+                    ${m.pendingChecks && m.pendingChecks.length > 0 ? `
+                      <div style="margin-top:3px;">
+                        <span class="badge badge-warning" style="cursor:pointer;" onclick="openClientFullHistoryModal('${pt.id}', 'checks')" title="اضغط لعرض وتحصيل شيكات العميل وإضافتها لمدفوعاته">
+                          ⏳ شيكات تحت التحصيل: ${m.pendingChecks.length} (${fmtMoney(m.pendingChecksAmount)})
+                        </span>
+                      </div>
+                    ` : ''}
+                  </td>
                   <td>
                     ${isDebtor ? `
                       <span class="badge badge-danger">
@@ -4922,12 +4965,15 @@ function renderAccounting() {
                     </div>
                   </td>
                   <td>
-                    <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    <div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;">
                       <button class="btn btn-sm btn-primary" onclick="openClientFullHistoryModal('${pt.id}', 'all')">
                         📂 كشف الحساب
                       </button>
                       <button class="btn btn-sm btn-success" onclick="openClientPaymentModal('${pt.id}')">
                         💵 تحصيل
+                      </button>
+                      <button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal('${pt.id}')">
+                        📝 شيك
                       </button>
                       <button class="btn btn-sm btn-accent" onclick="openClientPalletMovementModal('${pt.id}')">
                         🪵 بالتات
@@ -4938,6 +4984,95 @@ function renderAccounting() {
                       ${isFullAdmin(currentUser) ? `
                         <button class="btn btn-sm btn-outline" onclick="openEditPartnerModal('${pt.id}')" title="تعديل">✏️</button>
                         <button class="btn btn-sm btn-danger" onclick="deletePartnerRecord('${pt.id}')" title="حذف">🗑️</button>
+                      ` : ''}
+                    </div>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Checks Under Collection Ledger Card (سجل الشيكات تحت التحصيل وإضافتها في مدفوعات العميل عند تحصيلها) -->
+    <div class="card" style="border:2px solid #d97706;">
+      <div class="card-header">
+        <div>
+          <div class="card-title" style="color:#b45309;">📝 سجل الشيكات تحت التحصيل وإضافتها في مدفوعات العميل عند تحصيلها (${allChecks.length} شيك)</div>
+          <small style="color:var(--text-muted);">
+            عند تحصيل أي شيك اضغط على زر <strong>"✅ تم التحصيل (إضافة لمدفوعات العميل)"</strong> ليتم إضافته فوراً في مدفوعات العميل وخصمه من مديونيته وإيداعه بحساب البنك/الخزينة
+          </small>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-sm btn-primary" onclick="openNewCheckUnderCollectionModal()">➕ تسجيل شيك جديد تحت التحصيل</button>
+          <button class="btn btn-sm btn-outline" onclick="printChecksUnderCollectionReportPdf()">🖨️ طباعة سجل الشيكات PDF</button>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>رقم الشيك</th>
+              <th>العميل وكوده</th>
+              <th>البنك المسحوب عليه</th>
+              <th>تاريخ الاستلام</th>
+              <th>تاريخ الاستحقاق</th>
+              <th>قيمة الشيك</th>
+              <th>حالة الشيك</th>
+              <th>إجراءات الشيك (تحصيل وإضافة للمدفوعات / تعديل / حذف)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${allChecks.length === 0 ? `
+              <tr>
+                <td colspan="8" style="text-align:center;padding:20px;color:var(--text-muted);">
+                  لا توجد شيكات مسجلة حالياً. اضغط على <strong>"➕ تسجيل شيك جديد تحت التحصيل"</strong> لتسجيل شيك.
+                </td>
+              </tr>
+            ` : allChecks.map(chk => {
+              const st = chk.status || 'under_collection';
+              const isPending = st === 'under_collection';
+              const isCollected = st === 'collected';
+              return `
+                <tr style="${isPending ? 'background:rgba(245,158,11,0.04);' : ''}">
+                  <td><strong style="color:var(--primary);">${chk.checkNumber || '-'}</strong></td>
+                  <td>
+                    <strong>${chk.clientName || '-'}</strong>
+                    ${chk.clientCode ? `<br/><small style="color:var(--text-muted);">(${chk.clientCode})</small>` : ''}
+                  </td>
+                  <td><strong>${chk.bankName || '-'}</strong></td>
+                  <td>${chk.issueDate || '-'}</td>
+                  <td><strong style="color:${isPending ? '#b45309' : 'var(--text-main)'};">${chk.dueDate || '-'}</strong></td>
+                  <td><strong style="font-size:0.86rem;">${fmtMoney(chk.amount)}</strong></td>
+                  <td>
+                    ${isPending ? `
+                      <span class="badge badge-warning">⏳ تحت التحصيل</span>
+                    ` : isCollected ? `
+                      <span class="badge badge-success">✅ تم التحصيل وأضيف للمدفوعات</span>
+                      <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">بتاريخ: ${chk.collectedAt || '-'} (${chk.depositTarget || 'البنك'})</div>
+                    ` : `
+                      <span class="badge badge-danger">❌ شيك مرتد / مرفوض</span>
+                    `}
+                  </td>
+                  <td>
+                    <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
+                      ${isPending ? `
+                        <button class="btn btn-sm btn-success" style="font-weight:800;" onclick="openCollectCheckModal('${chk.id}')">
+                          ✅ تم التحصيل (إضافة لمدفوعات العميل)
+                        </button>
+                        <button class="btn btn-sm btn-outline" style="border-color:var(--danger);color:var(--danger);" onclick="markCheckReturned('${chk.id}')">
+                          ❌ مرتد
+                        </button>
+                      ` : !isCollected ? `
+                        <button class="btn btn-sm btn-success" onclick="openCollectCheckModal('${chk.id}')">
+                          ✅ تحصيل الآن
+                        </button>
+                      ` : ''}
+                      <button class="btn btn-sm btn-outline" onclick="openEditCheckModal('${chk.id}')" title="تعديل بيانات الشيك">✏️</button>
+                      ${isFullAdmin(currentUser) ? `
+                        <button class="btn btn-sm btn-danger" onclick="deleteCheckRecord('${chk.id}')" title="حذف الشيك">🗑️</button>
                       ` : ''}
                     </div>
                   </td>
@@ -6062,9 +6197,9 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
       <div class="modal-box" style="max-width:1040px;">
         <div class="card-header">
           <div>
-            <div class="card-title">📋 أمر تجهيز طلبية للعميل + إصدار بيان طلبية PDF رسمي (شامل ضريبة القيمة المضافة 14%)</div>
+            <div class="card-title">📋 أمر تجهيز طلبية للعميل + إصدار بيان طلبية PDF رسمي</div>
             <small style="color:var(--text-muted);">
-              جميع الأسعار التي تكتب في سعر القطعة <strong>شاملة ضريبة القيمة المضافة 14%</strong>، وضريبة الخصم والإضافة اختيارية، مع إمكانية طباعة وتصدير <strong>بيان طلبية PDF</strong> كامل باللوجو والختم والتفقيط بالحروف
+              تجهيز طلبية العميل من جدول الكميات والأسعار مع إمكانية طباعة وتصدير <strong>بيان طلبية PDF</strong> كامل باللوجو والختم والتفقيط بالحروف
             </small>
           </div>
           <div style="display:flex;gap:6px;align-items:center;">
@@ -6110,7 +6245,7 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
           <div style="background:var(--bg-elevated);padding:14px;border-radius:12px;border:1px solid var(--border-color);margin-bottom:14px;">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
               <div>
-                <strong style="color:var(--primary);font-size:0.92rem;">🪵 جدول بنود البيان (المسلسل | البيان | المقاس | الاتجاه | التخانة | الجودة | الكمية | السعر شامل ق.م 14% | الإجمالي):</strong>
+                <strong style="color:var(--primary);font-size:0.92rem;">🪵 جدول بنود البيان (المسلسل | البيان | المقاس | الاتجاه | التخانة | الجودة | الكمية | السعر | الإجمالي):</strong>
               </div>
               <button type="button" class="btn btn-sm btn-primary" onclick="addDraftOrderItemRow()">
                 ➕ إضافة بند آخر للبيان
@@ -6166,19 +6301,6 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
             <div class="form-group" style="grid-column: 1 / -1;">
               <label style="font-weight:800;color:#15803d;">📝 نص سطر رد الطبلية / البالتات في جدول البيان (يظهر عند وجود بالتات مرتجعة):</label>
               <input id="ord-ret-pallets-label" class="form-control" value="${defaultRetPalletsLabel}" oninput="this.dataset.manual='1'" placeholder="مثال: تم رد عدد (60) طبليه من مديونية (87) طبليه ويبقي مديونية بعدد (27) طبلية بقيمة 13,500جنيه" style="font-weight:700;" />
-            </div>
-
-            <div class="form-group">
-              <label style="color:#6d28d9;font-weight:800;">🧾 ضريبة الخصم والإضافة (اختياري)</label>
-              <div style="display:flex;gap:6px;align-items:center;">
-                <select id="ord-wht-mode" class="form-control" style="font-weight:700;" onchange="const rEl=document.getElementById('ord-wht-rate'); if(this.value==='none'){rEl.value=0;}else if(Number(rEl.value)===0){rEl.value=1;} recalcDraftOrderTotals();">
-                  <option value="none" selected>بدون ضريبة خصم وإضافة (اختياري)</option>
-                  <option value="deduct">تطبيق خصم تحت حساب الضريبة (-%)</option>
-                  <option value="add">تطبيق إضافة ضريبية (+%)</option>
-                </select>
-                <input id="ord-wht-rate" type="number" step="0.25" min="0" max="25" class="form-control" style="width:82px;font-weight:800;text-align:center;" value="0" placeholder="%" title="نسبة ضريبة الخصم والإضافة %" oninput="recalcDraftOrderTotals()" />
-                <span style="font-weight:800;">%</span>
-              </div>
             </div>
 
             <div class="form-group">
@@ -6410,7 +6532,7 @@ function renderDraftOrderItemsTable() {
           <th>درجة الجودة</th>
           <th>المتاح</th>
           <th>الكمية (قطعة)</th>
-          <th>💰 السعر (شامل ق.م 14%)</th>
+          <th>💰 السعر</th>
           <th>إجمالي البند</th>
           <th style="width:32px;">حذف</th>
         </tr>
@@ -6569,21 +6691,10 @@ function recalcDraftOrderTotals(triggerSource = '') {
   }
 
   const afterDiscount = Math.max(0, +(subtotal - discountAmount).toFixed(2));
-  // Prices in unitPrice are inclusive of 14% VAT
-  const preVatBase = +(afterDiscount / 1.14).toFixed(2);
-  const includedVat14 = +(afterDiscount - preVatBase).toFixed(2);
-
-  const whtMode = document.getElementById('ord-wht-mode')?.value || 'none';
-  const whtRate = whtMode === 'none' ? 0 : Math.max(0, Number(document.getElementById('ord-wht-rate')?.value || 0));
-  const whtAmount = whtRate > 0 ? +((preVatBase * whtRate) / 100).toFixed(2) : 0;
-
   const deliveryMode = document.getElementById('ord-delivery-mode')?.value || 'ex_factory';
   const deliveryCost = deliveryMode === 'paid_delivery' ? Math.max(0, Number(document.getElementById('ord-delivery-cost')?.value || 0)) : 0;
 
-  let netTotal = afterDiscount;
-  if (whtMode === 'deduct') netTotal -= whtAmount;
-  else if (whtMode === 'add') netTotal += whtAmount;
-  netTotal = Math.max(0, +(netTotal + deliveryCost).toFixed(2));
+  const netTotal = Math.max(0, +(afterDiscount + deliveryCost).toFixed(2));
 
   const vDebtEl = document.getElementById('ord-old-veneer-debt');
   const pCntEl = document.getElementById('ord-old-pallets-cnt');
@@ -6632,7 +6743,7 @@ function recalcDraftOrderTotals(triggerSource = '') {
   if (previewEl) {
     previewEl.innerHTML = `
       <div class="calc-preview-item">
-        <span>إجمالي قيمة الطلبية (شامل ق.م 14%)</span>
+        <span>إجمالي قيمة الطلبية</span>
         <strong>${fmtMoney(subtotal)} (${fmtNum(totalSheets, 0)} ق)</strong>
       </div>
       ${discountAmount > 0 ? `
@@ -6683,21 +6794,11 @@ function collectDraftOrderObjectForStatement() {
     discountPercent = subtotalAmount > 0 ? +((discountAmount / subtotalAmount) * 100).toFixed(2) : 0;
   }
   const afterDiscount = Math.max(0, +(subtotalAmount - discountAmount).toFixed(2));
-  const preVatBaseAmount = +(afterDiscount / 1.14).toFixed(2);
-  const includedVatAmount = +(afterDiscount - preVatBaseAmount).toFixed(2);
-
-  const withholdingTaxMode = document.getElementById('ord-wht-mode')?.value || 'none';
-  const withholdingTaxRate = withholdingTaxMode === 'none' ? 0 : Math.max(0, Number(document.getElementById('ord-wht-rate')?.value || 0));
-  const withholdingTaxAmount = withholdingTaxRate > 0 ? +((preVatBaseAmount * withholdingTaxRate) / 100).toFixed(2) : 0;
-
   const deliveryMode = document.getElementById('ord-delivery-mode')?.value || 'ex_factory';
   const deliveryCost = deliveryMode === 'paid_delivery' ? Math.max(0, Number(document.getElementById('ord-delivery-cost')?.value || 0)) : 0;
   const deliveryPlace = (document.getElementById('ord-delivery-place')?.value || 'بالمصنع ك 44 بطريق بلبيس القاهرة الصحراوي').trim();
 
-  let netTotalAmount = afterDiscount;
-  if (withholdingTaxMode === 'deduct') netTotalAmount -= withholdingTaxAmount;
-  else if (withholdingTaxMode === 'add') netTotalAmount += withholdingTaxAmount;
-  netTotalAmount = Math.max(0, +(netTotalAmount + deliveryCost).toFixed(2));
+  const netTotalAmount = Math.max(0, +(afterDiscount + deliveryCost).toFixed(2));
 
   const oldVeneerDebt = Math.max(0, Number(document.getElementById('ord-old-veneer-debt')?.value || 0));
   const oldPalletsCount = Math.max(0, Math.round(Number(document.getElementById('ord-old-pallets-cnt')?.value || 0)));
@@ -6738,13 +6839,9 @@ function collectDraftOrderObjectForStatement() {
     discountPercent,
     discountAmount,
     afterDiscount,
-    vatInclusive: true,
-    vatRate: 14,
-    preVatBaseAmount,
-    includedVatAmount,
-    withholdingTaxMode,
-    withholdingTaxRate,
-    withholdingTaxAmount,
+    withholdingTaxMode: 'none',
+    withholdingTaxRate: 0,
+    withholdingTaxAmount: 0,
     deliveryMode,
     deliveryCost,
     deliveryPlace,
@@ -7048,7 +7145,7 @@ function openClientOrderStatementModal(orderId) {
                   <th>الجودة</th>
                   <th>الكمية (قطعة)</th>
                   <th>الحجم (م³)</th>
-                  ${canSeeFinancialPrices() ? '<th>💰 السعر (شامل ق.م 14%)</th><th>الإجمالي</th>' : ''}
+                  ${canSeeFinancialPrices() ? '<th>💰 السعر</th><th>الإجمالي</th>' : ''}
                 </tr>
               </thead>
               <tbody>
@@ -7167,19 +7264,6 @@ function openClientOrderStatementModal(orderId) {
             <div class="form-group" style="grid-column: 1 / -1;">
               <label style="font-weight:800;color:#15803d;">📝 نص سطر رد الطبلية / البالتات في جدول البيان:</label>
               <input id="stmt-ret-pallets-label" class="form-control" value="${defaultRetPalletsLabel}" oninput="this.dataset.manual='1'" placeholder="مثال: تم رد عدد (60) طبليه من مديونية (87) طبليه ويبقي مديونية بعدد (27) طبلية بقيمة 13,500جنيه" style="font-weight:700;" />
-            </div>
-
-            <div class="form-group">
-              <label style="color:#6d28d9;font-weight:800;">🧾 ضريبة الخصم والإضافة (اختياري)</label>
-              <div style="display:flex;gap:6px;align-items:center;">
-                <select id="stmt-wht-mode" class="form-control" style="font-weight:700;" onchange="const rEl=document.getElementById('stmt-wht-rate'); if(this.value==='none'){rEl.value=0;}else if(Number(rEl.value)===0){rEl.value=1;} recalcStatementModalLive('${ord.id}');">
-                  <option value="none" ${(!ord.withholdingTaxMode || ord.withholdingTaxMode === 'none') ? 'selected' : ''}>بدون ضريبة خصم وإضافة (اختياري)</option>
-                  <option value="deduct" ${ord.withholdingTaxMode === 'deduct' ? 'selected' : ''}>تطبيق خصم تحت حساب الضريبة (-%)</option>
-                  <option value="add" ${ord.withholdingTaxMode === 'add' ? 'selected' : ''}>تطبيق إضافة ضريبية (+%)</option>
-                </select>
-                <input id="stmt-wht-rate" type="number" step="0.25" min="0" max="25" class="form-control" style="width:78px;font-weight:800;text-align:center;" value="${ord.withholdingTaxRate || 0}" oninput="recalcStatementModalLive('${ord.id}')" />
-                <span style="font-weight:800;">%</span>
-              </div>
             </div>
 
             <div class="form-group">
@@ -7333,20 +7417,10 @@ function recalcStatementModalLive(orderId, changedRowIdx = null, triggerSource =
   }
 
   const afterDiscount = Math.max(0, +(subtotal - discAmt).toFixed(2));
-  const preVatBase = +(afterDiscount / 1.14).toFixed(2);
-  const includedVat14 = +(afterDiscount - preVatBase).toFixed(2);
-
-  const whtMode = document.getElementById('stmt-wht-mode')?.value || ord.withholdingTaxMode || 'none';
-  const whtRate = whtMode === 'none' ? 0 : Math.max(0, Number(document.getElementById('stmt-wht-rate')?.value ?? ord.withholdingTaxRate ?? 0));
-  const whtAmt = whtRate > 0 ? +((preVatBase * whtRate) / 100).toFixed(2) : 0;
-
   const delivMode = document.getElementById('stmt-delivery-mode')?.value || ord.deliveryMode || 'ex_factory';
   const delivCost = delivMode === 'paid_delivery' ? Math.max(0, Number(document.getElementById('stmt-delivery-cost')?.value ?? ord.deliveryCost ?? 0)) : 0;
 
-  let net = afterDiscount;
-  if (whtMode === 'deduct') net -= whtAmt;
-  else if (whtMode === 'add') net += whtAmt;
-  net = Math.max(0, +(net + delivCost).toFixed(2));
+  const net = Math.max(0, +(afterDiscount + delivCost).toFixed(2));
 
   const vDebtEl = document.getElementById('stmt-old-veneer-debt');
   const pCntEl = document.getElementById('stmt-old-pallets-cnt');
@@ -7397,7 +7471,7 @@ function recalcStatementModalLive(orderId, changedRowIdx = null, triggerSource =
     sumBox.innerHTML = `
       <div class="calc-preview-item"><span>إجمالي القطع</span><strong>${fmtNum(totalSheets, 0)} قطعة (${fmtNum(totalVol, 4)} م³)</strong></div>
       ${canSeeFinancialPrices() ? `
-        <div class="calc-preview-item"><span>إجمالي الطلبية (شامل ق.م 14%)</span><strong>${fmtMoney(subtotal)}</strong></div>
+        <div class="calc-preview-item"><span>إجمالي الطلبية</span><strong>${fmtMoney(subtotal)}</strong></div>
         ${discAmt > 0 ? `<div class="calc-preview-item"><span>الخصم (${fmtNum(discPct, 2)}%)</span><strong style="color:var(--danger);">-${fmtMoney(discAmt)}</strong></div>` : ''}
         <div class="calc-preview-item"><span>صافي الطلبية</span><strong style="color:var(--success);font-size:1.08rem;">${fmtMoney(net)}</strong></div>
         <div class="calc-preview-item"><span>المديونية السابقة (قشرة + ${oldPalletsCount} بالتة)</span><strong style="color:var(--danger);">${fmtMoney(oldDebt)}</strong></div>
@@ -7533,21 +7607,11 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
   }
 
   const afterDiscount = Math.max(0, +(subtotal - discAmt).toFixed(2));
-  const preVatBase = +(afterDiscount / 1.14).toFixed(2);
-  const includedVat14 = +(afterDiscount - preVatBase).toFixed(2);
-
-  const whtMode = document.getElementById('stmt-wht-mode')?.value || ord.withholdingTaxMode || 'none';
-  const whtRate = whtMode === 'none' ? 0 : Math.max(0, Number(document.getElementById('stmt-wht-rate')?.value ?? ord.withholdingTaxRate ?? 0));
-  const whtAmt = whtRate > 0 ? +((preVatBase * whtRate) / 100).toFixed(2) : 0;
-
   const delivMode = document.getElementById('stmt-delivery-mode')?.value || ord.deliveryMode || 'ex_factory';
   const delivCost = delivMode === 'paid_delivery' ? Math.max(0, Number(document.getElementById('stmt-delivery-cost')?.value ?? ord.deliveryCost ?? 0)) : 0;
   const delivPlace = (document.getElementById('stmt-delivery-place')?.value || ord.deliveryPlace || 'بالمصنع ك 44 بطريق بلبيس القاهرة الصحراوي').trim();
 
-  let net = afterDiscount;
-  if (whtMode === 'deduct') net -= whtAmt;
-  else if (whtMode === 'add') net += whtAmt;
-  net = Math.max(0, +(net + delivCost).toFixed(2));
+  const net = Math.max(0, +(afterDiscount + delivCost).toFixed(2));
 
   const oldVeneerDebt = Math.max(0, Number(document.getElementById('stmt-old-veneer-debt')?.value ?? ord.oldVeneerDebt ?? 0));
   const oldPalletsCount = Math.max(0, Math.round(Number(document.getElementById('stmt-old-pallets-cnt')?.value ?? ord.oldPalletsCount ?? 0)));
@@ -7579,13 +7643,9 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
   ord.discountValue = discVal;
   ord.discountPercent = discPct;
   ord.discountAmount = discAmt;
-  ord.vatInclusive = true;
-  ord.vatRate = 14;
-  ord.preVatBaseAmount = preVatBase;
-  ord.includedVatAmount = includedVat14;
-  ord.withholdingTaxMode = whtMode;
-  ord.withholdingTaxRate = whtRate;
-  ord.withholdingTaxAmount = whtAmt;
+  ord.withholdingTaxMode = 'none';
+  ord.withholdingTaxRate = 0;
+  ord.withholdingTaxAmount = 0;
   ord.deliveryMode = delivMode;
   ord.deliveryCost = delivCost;
   ord.deliveryPlace = delivPlace;
@@ -9016,6 +9076,13 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
               ${m.netDebt > 0 ? 'مدين (عليه): ' + fmtMoney(m.netDebt) : m.netDebt < 0 ? 'دائن (له): ' + fmtMoney(Math.abs(m.netDebt)) : 'خالص (0 ج.م)'}
             </div>
           </div>
+          <div style="background:var(--bg-elevated);padding:12px;border-radius:10px;border-right:4px solid #f59e0b;">
+            <small style="color:var(--text-muted);">شيكات تحت التحصيل للعميل</small>
+            <div style="font-weight:900;font-size:0.95rem;color:#d97706;">
+              ${m.pendingChecks.length} شيك (${fmtMoney(m.pendingChecksAmount)})<br/>
+              <span style="font-size:0.76rem;color:var(--success);">محصل سابقاً: ${m.collectedChecks.length} شيك (${fmtMoney(m.collectedChecksAmount)})</span>
+            </div>
+          </div>
           <div style="background:var(--bg-elevated);padding:12px;border-radius:10px;border-right:4px solid #d97706;">
             <small style="color:var(--text-muted);">رصيد وقيمة البالتات الخشبية</small>
             <div style="font-weight:900;font-size:0.9rem;">
@@ -9027,9 +9094,10 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
           </div>
         </div>
 
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
           <button class="btn btn-sm btn-primary" onclick="closeModal(); openNewClientOrderPrepModal('${pt.id}');">📋 إنشاء طلبية جديدة لهذا العميل</button>
           <button class="btn btn-sm btn-success" onclick="openClientPaymentModal('${pt.id}')">💵 تسجيل تحصيل دفعة مالية / تسوية مديونية</button>
+          <button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal('${pt.id}')">📝 تسجيل شيك تحت التحصيل</button>
           <button class="btn btn-sm btn-accent" onclick="openClientPalletMovementModal('${pt.id}')">🪵 تسجيل تسليم / استلام بالتات خشبية</button>
         </div>
 
@@ -9141,6 +9209,59 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
             </div>
           </div>
 
+          <!-- 2.5 Checks Under Collection & Collected Checks for Client -->
+          <div style="margin-bottom:18px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+              <h4 style="margin:0;color:#b45309;">📝 شيكات العميل تحت التحصيل والمحصلة (${m.checks.length} شيك):</h4>
+              <button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal('${pt.id}')">➕ تسجيل شيك تحت التحصيل</button>
+            </div>
+            ${m.checks.length === 0 ? `<p style="color:var(--text-muted);font-size:0.86rem;">لا توجد شيكات مسجلة لهذا العميل حتى الآن.</p>` : `
+              <div class="table-responsive">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>رقم الشيك</th>
+                      <th>البنك</th>
+                      <th>تاريخ الاستلام</th>
+                      <th>تاريخ الاستحقاق</th>
+                      <th>القيمة</th>
+                      <th>الحالة</th>
+                      <th>الإجراء (تحصيل وإضافة للمدفوعات / تعديل / حذف)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${m.checks.map(chk => {
+                      const st = chk.status || 'under_collection';
+                      const isPending = st === 'under_collection';
+                      const isCollected = st === 'collected';
+                      return `
+                        <tr>
+                          <td><strong>${chk.checkNumber || '-'}</strong></td>
+                          <td>${chk.bankName || '-'}</td>
+                          <td>${chk.issueDate || '-'}</td>
+                          <td><strong>${chk.dueDate || '-'}</strong></td>
+                          <td><strong>${fmtMoney(chk.amount)}</strong></td>
+                          <td>
+                            ${isPending ? `<span class="badge badge-warning">⏳ تحت التحصيل</span>` : isCollected ? `<span class="badge badge-success">✅ تم التحصيل وأضيف للمدفوعات (${chk.collectedAt || ''})</span>` : `<span class="badge badge-danger">❌ مرتد</span>`}
+                          </td>
+                          <td>
+                            <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
+                              ${isPending ? `
+                                <button class="btn btn-sm btn-success" style="font-weight:800;" onclick="openCollectCheckModal('${chk.id}')">✅ تم التحصيل (إضافة للمدفوعات)</button>
+                              ` : ''}
+                              <button class="btn btn-sm btn-outline" onclick="openEditCheckModal('${chk.id}')">✏️</button>
+                              ${isFullAdmin(currentUser) ? `<button class="btn btn-sm btn-danger" onclick="deleteCheckRecord('${chk.id}')">🗑️</button>` : ''}
+                            </div>
+                          </td>
+                        </tr>
+                      `;
+                    }).join('')}
+                  </tbody>
+                </table>
+              </div>
+            `}
+          </div>
+
           <!-- 3. Wooden Pallets Delivered & Received Ledger -->
           <div>
             <h4 style="margin-bottom:8px;color:var(--primary);">3️⃣ حساب البالتات الخشبية المسلمة للعميل والمستلمة منه وقيمتها (${m.palletMoves.length} حركة):</h4>
@@ -9224,10 +9345,10 @@ function openClientPaymentModal(clientId) {
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box" style="max-width:560px;">
+      <div class="modal-box" style="max-width:600px;">
         <div class="card-header">
           <div>
-            <div class="card-title">💵 تسجيل تحصيل دفعة مالية / تسوية حساب العميل (${pt.code || 'CL'} - ${pt.name})</div>
+            <div class="card-title">💵 تسجيل تحصيل دفعة مالية / شيك تحت التحصيل (${pt.code || 'CL'} - ${pt.name})</div>
             <small style="color:var(--text-muted);">
               الرصيد الحالي قبل السند: <strong>${m.netDebt > 0 ? 'مدين (عليه للمصنع): ' + fmtMoney(m.netDebt) : m.netDebt < 0 ? 'دائن (له مستحقات): ' + fmtMoney(Math.abs(m.netDebt)) : 'خالص (0 ج.م)'}</strong>
             </small>
@@ -9238,13 +9359,14 @@ function openClientPaymentModal(clientId) {
         <form onsubmit="submitClientPayment(event, '${pt.id}')">
           <div class="form-grid">
             <div class="form-group">
-              <label>تاريخ السند (حالي أو سابق)</label>
+              <label>تاريخ السند / استلام الشيك</label>
               <input id="cpay-date" type="date" class="form-control" value="${todayStr()}" required />
             </div>
             <div class="form-group">
               <label>نوع التسوية المالية</label>
-              <select id="cpay-type" class="form-control">
-                <option value="client_payment">💵 تحصيل دفعة مسددة من العميل (تخصم من مديونيته)</option>
+              <select id="cpay-type" class="form-control" onchange="toggleClientPaymentCheckFields()">
+                <option value="client_payment">💵 تحصيل دفعة مسددة فوراً من العميل (تخصم من مديونيته)</option>
+                <option value="check_under_collection">📝 تسجيل شيك تحت التحصيل (يُضاف لمدفوعات العميل عند تحصيله)</option>
                 <option value="sales_invoice">🧾 إضافة مديونية / مطالبة مالية على العميل</option>
                 <option value="client_credit">🎁 إشعار خصم مكتسب / تسوية لصالح العميل</option>
               </select>
@@ -9255,13 +9377,35 @@ function openClientPaymentModal(clientId) {
             </div>
             <div class="form-group">
               <label>طريقة الدفع / الخزينة</label>
-              <select id="cpay-method" class="form-control">
+              <select id="cpay-method" class="form-control" onchange="toggleClientPaymentCheckFields()">
                 <option value="نقدي بالخزينة">💵 نقدي بالخزينة</option>
                 <option value="تحويل بنكي">🏦 تحويل بنكي</option>
-                <option value="شيك بنكي">📝 شيك بنكي</option>
+                <option value="شيك تحت التحصيل">📝 شيك تحت التحصيل (يُضاف للمدفوعات عند التحصيل)</option>
+                <option value="شيك بنكي محصل فوراً">✅ شيك بنكي محصل فوراً</option>
                 <option value="تسوية حسابية">📒 تسوية حسابية</option>
               </select>
             </div>
+
+            <div id="cpay-check-extra-fields" style="display:none;grid-column: 1 / -1;background:rgba(245,158,11,0.08);border:1.5px solid #d97706;border-radius:10px;padding:10px 12px;">
+              <div style="font-weight:800;color:#b45309;font-size:0.82rem;margin-bottom:8px;">
+                📝 بيانات الشيك تحت التحصيل (سيتم حفظه في سجل الشيكات تحت التحصيل وإضافته لمدفوعات العميل فور الضغط على زر "تم التحصيل"):
+              </div>
+              <div class="form-grid">
+                <div class="form-group">
+                  <label style="color:#b45309;font-weight:800;">🔢 رقم الشيك</label>
+                  <input id="cpay-check-num" class="form-control" placeholder="مثال: 4589201" />
+                </div>
+                <div class="form-group">
+                  <label style="color:#b45309;font-weight:800;">🏦 اسم البنك المسحوب عليه</label>
+                  <input id="cpay-check-bank" class="form-control" placeholder="مثال: بنك CIB / بنك مصر / الأهلي" />
+                </div>
+                <div class="form-group">
+                  <label style="color:#b45309;font-weight:800;">📅 تاريخ استحقاق الشيك</label>
+                  <input id="cpay-check-due" type="date" class="form-control" value="${todayStr()}" />
+                </div>
+              </div>
+            </div>
+
             <div class="form-group" style="grid-column: 1 / -1;">
               <label>بيان السند / الملاحظات</label>
               <input id="cpay-notes" class="form-control" placeholder="مثال: دفعة من حساب الطلبيات السابقة..." required />
@@ -9270,12 +9414,21 @@ function openClientPaymentModal(clientId) {
 
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
             <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
-            <button type="submit" class="btn btn-success">💾 حفظ السند وتحديث مديونية العميل فوراً</button>
+            <button type="submit" class="btn btn-success">💾 حفظ وتحديث حساب العميل</button>
           </div>
         </form>
       </div>
     </div>
   `;
+}
+
+function toggleClientPaymentCheckFields() {
+  const txType = document.getElementById('cpay-type')?.value || '';
+  const method = document.getElementById('cpay-method')?.value || '';
+  const box = document.getElementById('cpay-check-extra-fields');
+  if (!box) return;
+  const isCheckUnderCol = txType === 'check_under_collection' || method === 'شيك تحت التحصيل';
+  box.style.display = isCheckUnderCol ? 'block' : 'none';
 }
 
 function submitClientPayment(e, clientId) {
@@ -9290,6 +9443,36 @@ function submitClientPayment(e, clientId) {
   const notes = (document.getElementById('cpay-notes')?.value || '').trim();
   const now = new Date().toISOString();
   const vchNo = `RCV-${Date.now().toString().slice(-5)}`;
+
+  if (txType === 'check_under_collection' || method === 'شيك تحت التحصيل') {
+    const checkNumber = (document.getElementById('cpay-check-num')?.value || `CHK-${Date.now().toString().slice(-4)}`).trim();
+    const bankName = (document.getElementById('cpay-check-bank')?.value || 'بنك معتمد').trim();
+    const dueDate = document.getElementById('cpay-check-due')?.value || opDate;
+
+    state.checksUnderCollection = state.checksUnderCollection || [];
+    state.checksUnderCollection.unshift({
+      id: uid('chk'),
+      checkNumber,
+      bankName,
+      issueDate: opDate,
+      dueDate,
+      clientId: pt.id,
+      clientCode: pt.code || 'CL',
+      clientName: pt.name,
+      amount,
+      status: 'under_collection',
+      depositTarget: 'حساب البنك',
+      collectedAt: '',
+      collectedBy: '',
+      linkedPaymentTxId: '',
+      notes: notes || `شيك تحت التحصيل من العميل ${pt.name}`,
+      createdBy: currentUser?.name || 'الحسابات',
+      updatedAt: now
+    });
+    closeModal();
+    saveState(`📝 تسجيل شيك تحت التحصيل رقم (${checkNumber}) من العميل (${pt.code || ''} - ${pt.name}) بقيمة ${fmtMoney(amount)} يستحق بتاريخ ${dueDate}`);
+    return;
+  }
 
   if (txType === 'sales_invoice') {
     state.financialTransactions.unshift({
@@ -9329,10 +9512,8 @@ function submitClientPayment(e, clientId) {
     });
 
     if (txType === 'client_payment') {
-      if (method.includes('بنك')) {
+      if (method.includes('بنك') || method.includes('شيك')) {
         state.treasuryBalances.bankAccount = Number(state.treasuryBalances.bankAccount || 0) + amount;
-      } else if (method.includes('شيك')) {
-        state.treasuryBalances.checksUnderCollection = Number(state.treasuryBalances.checksUnderCollection || 0) + amount;
       } else if (method.includes('نقدي')) {
         state.treasuryBalances.cashVault = Number(state.treasuryBalances.cashVault || 0) + amount;
       }
@@ -9341,6 +9522,445 @@ function submitClientPayment(e, clientId) {
 
   closeModal();
   saveState(`💵 تسجيل حركة مالية للعميل (${pt.code || ''} - ${pt.name}) بقيمة ${fmtMoney(amount)} بتاريخ ${opDate}`);
+}
+
+// ============================================================================
+// CHECKS UNDER COLLECTION MODALS & COLLECTION INTO CLIENT PAYMENTS
+// ============================================================================
+function openNewCheckUnderCollectionModal(preselectedClientId = '') {
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  const clients = (state.partners || []).filter(p => p.type !== 'supplier');
+  const defaultClient = clients.find(c => c.id === preselectedClientId) || clients[0] || null;
+  const nextChkNum = `CHK-${1001 + (state.checksUnderCollection?.length || 0)}`;
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:620px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">📝 تسجيل شيك تحت التحصيل من عميل</div>
+            <small style="color:var(--text-muted);">
+              يُحفظ الشيك في سجل الشيكات تحت التحصيل، وعند تحصيله يمكنك بضغطة زر إضافته فوراً في مدفوعات العميل وخصمه من مديونيته
+            </small>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <form onsubmit="submitNewCheckUnderCollection(event)">
+          <div class="form-grid">
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="color:var(--primary);font-weight:800;">🤝 العميل صاحب الشيك</label>
+              <select id="chk-client" class="form-control" required style="font-weight:800;border-color:var(--primary);">
+                ${clients.length === 0 ? `<option value="">يرجى إضافة عميل أولاً</option>` : ''}
+                ${clients.map(c => {
+                  const cm = computeClientMetrics(c);
+                  return `<option value="${c.id}" ${c.id === (defaultClient?.id || '') ? 'selected' : ''}>[${c.code || 'CL'}] ${c.name} (مديونيته الحالية: ${fmtMoney(cm.netDebt)})</option>`;
+                }).join('')}
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label style="color:#b45309;font-weight:800;">🔢 رقم الشيك</label>
+              <input id="chk-number" class="form-control" value="${nextChkNum}" placeholder="رقم الشيك المدون عليه..." required autofocus style="font-weight:800;border-color:#d97706;" />
+            </div>
+
+            <div class="form-group">
+              <label style="color:var(--primary);font-weight:800;">🏦 اسم البنك المسحوب عليه الشيك</label>
+              <input id="chk-bank" class="form-control" value="بنك CIB" placeholder="مثال: بنك CIB / بنك مصر / البنك الأهلي..." required style="font-weight:700;" />
+            </div>
+
+            <div class="form-group">
+              <label>📅 تاريخ استلام / تحرير الشيك</label>
+              <input id="chk-issue-date" type="date" class="form-control" value="${todayStr()}" required />
+            </div>
+
+            <div class="form-group">
+              <label style="color:var(--danger);font-weight:800;">⏳ تاريخ استحقاق وصرف الشيك</label>
+              <input id="chk-due-date" type="date" class="form-control" value="${todayStr()}" required style="font-weight:800;border-color:var(--danger);" />
+            </div>
+
+            <div class="form-group">
+              <label style="color:var(--success);font-weight:800;">💰 قيمة الشيك بالجنيه (ج.م)</label>
+              <input id="chk-amount" type="number" step="0.5" min="1" class="form-control" value="25000" required style="font-weight:900;border-color:var(--success);font-size:0.95rem;" />
+            </div>
+
+            <div class="form-group">
+              <label>حالة الشيك عند التسجيل</label>
+              <select id="chk-initial-status" class="form-control" style="font-weight:800;">
+                <option value="under_collection" selected>⏳ تحت التحصيل (يُضاف لمدفوعات العميل عند تحصيله)</option>
+                <option value="collect_now">✅ تم تحصيله بالفعل الآن (إضافة فورية لمدفوعات العميل)</option>
+              </select>
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label>بيان / ملاحظات الشيك</label>
+              <input id="chk-notes" class="form-control" placeholder="مثال: شيك دفعة من حساب طلبيات القشرة..." />
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-primary">💾 حفظ الشيك في السجل</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function submitNewCheckUnderCollection(e) {
+  if (e) e.preventDefault();
+  const clientId = document.getElementById('chk-client')?.value || '';
+  const pt = (state.partners || []).find(p => p.id === clientId);
+  if (!pt) {
+    alert('يرجى اختيار العميل أولاً!');
+    return;
+  }
+
+  const checkNumber = (document.getElementById('chk-number')?.value || '').trim();
+  const bankName = (document.getElementById('chk-bank')?.value || '').trim();
+  const issueDate = document.getElementById('chk-issue-date')?.value || todayStr();
+  const dueDate = document.getElementById('chk-due-date')?.value || issueDate;
+  const amount = Math.max(0, Number(document.getElementById('chk-amount')?.value || 0));
+  const initStatus = document.getElementById('chk-initial-status')?.value || 'under_collection';
+  const notes = (document.getElementById('chk-notes')?.value || '').trim();
+  const now = new Date().toISOString();
+
+  if (!checkNumber || amount <= 0) return;
+
+  const chkId = uid('chk');
+  let linkedTxId = '';
+
+  if (initStatus === 'collect_now') {
+    linkedTxId = uid('fin');
+    state.financialTransactions = state.financialTransactions || [];
+    state.financialTransactions.unshift({
+      id: linkedTxId,
+      checkId: chkId,
+      voucherNo: `CHK-${checkNumber}`,
+      date: dueDate,
+      type: 'client_payment',
+      typeLabel: 'تحصيل شيك وإضافته لمدفوعات العميل',
+      partnerId: pt.id,
+      partnerName: pt.name,
+      description: `تحصيل شيك رقم (${checkNumber}) مسحوب على (${bankName})${notes ? ' — ' + notes : ''}`,
+      totalAmount: amount,
+      paidAmount: amount,
+      remainingAmount: 0,
+      paymentMethod: `تحصيل شيك (${bankName})`,
+      createdBy: currentUser?.name || 'الحسابات',
+      approvedBy: currentUser?.name || 'الحسابات',
+      updatedAt: now
+    });
+    state.treasuryBalances.bankAccount = Number(state.treasuryBalances.bankAccount || 0) + amount;
+  }
+
+  state.checksUnderCollection = state.checksUnderCollection || [];
+  state.checksUnderCollection.unshift({
+    id: chkId,
+    checkNumber,
+    bankName,
+    issueDate,
+    dueDate,
+    clientId: pt.id,
+    clientCode: pt.code || 'CL',
+    clientName: pt.name,
+    amount,
+    status: initStatus === 'collect_now' ? 'collected' : 'under_collection',
+    depositTarget: 'حساب البنك',
+    collectedAt: initStatus === 'collect_now' ? dueDate : '',
+    collectedBy: initStatus === 'collect_now' ? (currentUser?.name || 'الحسابات') : '',
+    linkedPaymentTxId: linkedTxId,
+    notes: notes || `شيك رقم (${checkNumber}) على (${bankName})`,
+    createdBy: currentUser?.name || 'الحسابات',
+    updatedAt: now
+  });
+
+  closeModal();
+  if (initStatus === 'collect_now') {
+    saveState(`✅ تسجيل وتحصيل شيك رقم (${checkNumber}) من العميل (${pt.name}) بقيمة ${fmtMoney(amount)} وإضافته فوراً في مدفوعات العميل`);
+  } else {
+    saveState(`📝 تسجيل شيك تحت التحصيل رقم (${checkNumber}) من العميل (${pt.name}) بقيمة ${fmtMoney(amount)} مستحق بتاريخ ${dueDate}`);
+  }
+}
+
+function openCollectCheckModal(checkId) {
+  const chk = (state.checksUnderCollection || []).find(c => c.id === checkId);
+  if (!chk) return;
+  const pt = (state.partners || []).find(p => p.id === chk.clientId || p.name === chk.clientName);
+  const cm = pt ? computeClientMetrics(pt) : null;
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:540px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">✅ تأكيد تحصيل الشيك وإضافته في مدفوعات العميل (${chk.checkNumber})</div>
+            <small style="color:var(--text-muted);">
+              العميل: <strong>${chk.clientName} (${chk.clientCode || 'CL'})</strong> | البنك: <strong>${chk.bankName}</strong>
+            </small>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <div style="background:rgba(16,185,129,0.1);border:2px solid var(--success);padding:12px 14px;border-radius:10px;margin-bottom:14px;font-size:0.86rem;">
+          <div>💰 <strong>قيمة الشيك التي ستُضاف لمدفوعات العميل الآن:</strong> <strong style="color:var(--success);font-size:1.1rem;">${fmtMoney(chk.amount)}</strong></div>
+          ${cm ? `
+            <div style="margin-top:4px;">
+              مديونية العميل قبل تحصيل الشيك: <strong style="color:var(--danger);">${fmtMoney(cm.netDebt)}</strong>
+              ⬅ بعد التحصيل ستصبح: <strong style="color:var(--primary);">${fmtMoney(Math.max(0, +(cm.netDebt - Number(chk.amount || 0)).toFixed(2)))}</strong>
+            </div>
+          ` : ''}
+        </div>
+
+        <form onsubmit="submitCollectCheckModal(event, '${chk.id}')">
+          <div class="form-grid">
+            <div class="form-group">
+              <label style="font-weight:800;">📅 تاريخ التحصيل الفعلي</label>
+              <input id="col-chk-date" type="date" class="form-control" value="${todayStr()}" required />
+            </div>
+            <div class="form-group">
+              <label style="font-weight:800;">🏦 جهة إيداع مبلغ الشيك المحصل</label>
+              <select id="col-chk-target" class="form-control" style="font-weight:800;">
+                <option value="حساب البنك" selected>🏦 إيداع في حساب البنك للمصنع</option>
+                <option value="نقدي بالخزينة">💵 توريد نقدي بخزينة المصنع</option>
+              </select>
+            </div>
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label>ملاحظات التحصيل والإضافة في مدفوعات العميل</label>
+              <input id="col-chk-notes" class="form-control" value="${chk.notes || `تحصيل شيك رقم (${chk.checkNumber}) مسحوب على (${chk.bankName})`}" />
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-success" style="font-weight:800;">✅ تأكيد التحصيل وإضافة المبلغ في مدفوعات العميل فوراً</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function submitCollectCheckModal(e, checkId) {
+  if (e) e.preventDefault();
+  const chk = (state.checksUnderCollection || []).find(c => c.id === checkId);
+  if (!chk) return;
+  if (chk.status === 'collected') {
+    alert('تم تحصيل هذا الشيك وإضافته لمدفوعات العميل بالفعل!');
+    closeModal();
+    return;
+  }
+
+  const collectDate = document.getElementById('col-chk-date')?.value || todayStr();
+  const depositTarget = document.getElementById('col-chk-target')?.value || 'حساب البنك';
+  const notes = (document.getElementById('col-chk-notes')?.value || '').trim();
+  const now = new Date().toISOString();
+  const amount = Number(chk.amount || 0);
+
+  const txId = uid('fin');
+  state.financialTransactions = state.financialTransactions || [];
+  state.financialTransactions.unshift({
+    id: txId,
+    checkId: chk.id,
+    voucherNo: `CHK-${chk.checkNumber}`,
+    date: collectDate,
+    type: 'client_payment',
+    typeLabel: 'تحصيل شيك وإضافته لمدفوعات العميل',
+    partnerId: chk.clientId,
+    partnerName: chk.clientName,
+    description: notes || `تحصيل شيك رقم (${chk.checkNumber}) مسحوب على (${chk.bankName}) وإضافته في مدفوعات العميل`,
+    totalAmount: amount,
+    paidAmount: amount,
+    remainingAmount: 0,
+    paymentMethod: `تحصيل شيك (${chk.bankName}) — ${depositTarget}`,
+    createdBy: currentUser?.name || 'الحسابات',
+    approvedBy: currentUser?.name || 'الحسابات',
+    updatedAt: now
+  });
+
+  if (depositTarget.includes('نقدي')) {
+    state.treasuryBalances.cashVault = Number(state.treasuryBalances.cashVault || 0) + amount;
+  } else {
+    state.treasuryBalances.bankAccount = Number(state.treasuryBalances.bankAccount || 0) + amount;
+  }
+
+  chk.status = 'collected';
+  chk.collectedAt = collectDate;
+  chk.collectedBy = currentUser?.name || 'الحسابات';
+  chk.depositTarget = depositTarget;
+  chk.linkedPaymentTxId = txId;
+  if (notes) chk.notes = notes;
+  chk.updatedAt = now;
+
+  closeModal();
+  saveState(`✅ تحصيل الشيك رقم (${chk.checkNumber}) بقيمة ${fmtMoney(amount)} وإضافته في مدفوعات العميل (${chk.clientName}) وخصمه من مديونيته`);
+}
+
+function markCheckReturned(checkId) {
+  const chk = (state.checksUnderCollection || []).find(c => c.id === checkId);
+  if (!chk) return;
+  if (!confirm(`هل تريد تسجيل الشيك رقم (${chk.checkNumber}) للعميل (${chk.clientName}) كـ "شيك مرتد / مرفوض"؟`)) return;
+  chk.status = 'returned';
+  chk.updatedAt = new Date().toISOString();
+  saveState(`❌ تسجيل ارتداد الشيك رقم (${chk.checkNumber}) للعميل (${chk.clientName}) بقيمة ${fmtMoney(chk.amount)}`);
+}
+
+function openEditCheckModal(checkId) {
+  const chk = (state.checksUnderCollection || []).find(c => c.id === checkId);
+  if (!chk) return;
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:560px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">✏️ تعديل بيانات الشيك (${chk.checkNumber}) — العميل: ${chk.clientName}</div>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <form onsubmit="submitEditCheckModal(event, '${chk.id}')">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>رقم الشيك</label>
+              <input id="edit-chk-num" class="form-control" value="${chk.checkNumber || ''}" required style="font-weight:800;" />
+            </div>
+            <div class="form-group">
+              <label>اسم البنك المسحوب عليه</label>
+              <input id="edit-chk-bank" class="form-control" value="${chk.bankName || ''}" required />
+            </div>
+            <div class="form-group">
+              <label>تاريخ الاستلام</label>
+              <input id="edit-chk-issue" type="date" class="form-control" value="${chk.issueDate || todayStr()}" required />
+            </div>
+            <div class="form-group">
+              <label>تاريخ الاستحقاق</label>
+              <input id="edit-chk-due" type="date" class="form-control" value="${chk.dueDate || todayStr()}" required />
+            </div>
+            <div class="form-group">
+              <label>قيمة الشيك (ج.م)</label>
+              <input id="edit-chk-amount" type="number" step="0.5" min="1" class="form-control" value="${chk.amount || 0}" required style="font-weight:800;" />
+            </div>
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label>ملاحظات</label>
+              <input id="edit-chk-notes" class="form-control" value="${chk.notes || ''}" />
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-primary">💾 حفظ التعديلات</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function submitEditCheckModal(e, checkId) {
+  if (e) e.preventDefault();
+  const chk = (state.checksUnderCollection || []).find(c => c.id === checkId);
+  if (!chk) return;
+  const now = new Date().toISOString();
+  const newNum = (document.getElementById('edit-chk-num')?.value || chk.checkNumber).trim();
+  const newBank = (document.getElementById('edit-chk-bank')?.value || chk.bankName).trim();
+  const newIssue = document.getElementById('edit-chk-issue')?.value || chk.issueDate;
+  const newDue = document.getElementById('edit-chk-due')?.value || chk.dueDate;
+  const newAmt = Math.max(0, Number(document.getElementById('edit-chk-amount')?.value ?? chk.amount ?? 0));
+  const newNotes = (document.getElementById('edit-chk-notes')?.value || '').trim();
+
+  chk.checkNumber = newNum;
+  chk.bankName = newBank;
+  chk.issueDate = newIssue;
+  chk.dueDate = newDue;
+  chk.amount = newAmt;
+  chk.notes = newNotes;
+  chk.updatedAt = now;
+
+  // If this check was already collected, sync its linked payment transaction in financialTransactions
+  if (chk.status === 'collected') {
+    const linkedTx = (state.financialTransactions || []).find(tx => tx.id === chk.linkedPaymentTxId || tx.checkId === chk.id);
+    if (linkedTx) {
+      linkedTx.voucherNo = `CHK-${newNum}`;
+      linkedTx.totalAmount = newAmt;
+      linkedTx.paidAmount = newAmt;
+      linkedTx.description = `تحصيل شيك رقم (${newNum}) مسحوب على (${newBank})${newNotes ? ' — ' + newNotes : ''}`;
+      linkedTx.updatedAt = now;
+    }
+  }
+
+  closeModal();
+  saveState(`✏️ تعديل بيانات الشيك رقم (${newNum}) للعميل (${chk.clientName}) بقيمة ${fmtMoney(newAmt)}`);
+}
+
+function deleteCheckRecord(checkId) {
+  const chk = (state.checksUnderCollection || []).find(c => c.id === checkId);
+  if (!chk) return;
+  if (!confirm(`⚠️ هل أنت متأكد من حذف الشيك رقم (${chk.checkNumber}) للعميل (${chk.clientName}) بقيمة ${fmtMoney(chk.amount)}؟${chk.status === 'collected' ? '\nسيتم أيضاً إلغاء حركة التحصيل المرتبطة به من مدفوعات العميل تلقائياً.' : ''}`)) return;
+
+  markRecordIdDeleted(chk.id);
+  if (chk.linkedPaymentTxId) {
+    markRecordIdDeleted(chk.linkedPaymentTxId);
+  }
+  state.financialTransactions = (state.financialTransactions || []).filter(tx => tx.id !== chk.linkedPaymentTxId && tx.checkId !== chk.id);
+  state.checksUnderCollection = (state.checksUnderCollection || []).filter(c => c.id !== chk.id);
+
+  closeModal();
+  saveState(`🗑️ حذف الشيك رقم (${chk.checkNumber}) للعميل (${chk.clientName}) بواسطة ${currentUser?.name || 'الإدارة'}`);
+}
+
+function printChecksUnderCollectionReportPdf() {
+  const checks = state.checksUnderCollection || [];
+  const pending = checks.filter(c => (c.status || 'under_collection') === 'under_collection');
+  const collected = checks.filter(c => c.status === 'collected');
+  const pendingSum = pending.reduce((s, c) => s + Number(c.amount || 0), 0);
+  const collectedSum = collected.reduce((s, c) => s + Number(c.amount || 0), 0);
+
+  const html = `
+    <div class="pdf-report-wrap">
+      ${buildStandardPdfHeaderHtml('كشف سجل الشيكات تحت التحصيل والشيكات المحصلة', `إجمالي تحت التحصيل: ${pending.length} شيك (${fmtMoney(pendingSum)}) | المحصل: ${collected.length} شيك (${fmtMoney(collectedSum)})`)}
+      <table class="pdf-report-table">
+        <thead>
+          <tr>
+            <th>م</th>
+            <th>رقم الشيك</th>
+            <th>العميل وكوده</th>
+            <th>البنك المسحوب عليه</th>
+            <th>تاريخ الاستلام</th>
+            <th>تاريخ الاستحقاق</th>
+            <th>قيمة الشيك</th>
+            <th>الحالة وتاريخ التحصيل</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${checks.map((c, idx) => {
+            const st = c.status || 'under_collection';
+            const stLabel = st === 'under_collection' ? 'تحت التحصيل' : st === 'collected' ? `تم التحصيل (${c.collectedAt || ''})` : 'شيك مرتد';
+            return `
+              <tr>
+                <td>${idx + 1}</td>
+                <td><strong>${c.checkNumber || '-'}</strong></td>
+                <td><strong>${c.clientName || '-'}</strong> (${c.clientCode || ''})</td>
+                <td>${c.bankName || '-'}</td>
+                <td>${c.issueDate || '-'}</td>
+                <td><strong>${c.dueDate || '-'}</strong></td>
+                <td><strong>${fmtMoney(c.amount)}</strong></td>
+                <td>${stLabel}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+      ${buildStandardPdfFooterHtml()}
+    </div>
+  `;
+  openUniversalPrintDocument(html, 'سجل الشيكات تحت التحصيل والمحصلة', false);
 }
 
 // CLIENT WOODEN PALLETS DELIVERY / RETURN MODAL
@@ -11664,12 +12284,9 @@ function buildOfficialOrderStatementPdfHtml(ord) {
     : (ord.discountType === 'percent' ? Number(ord.discountValue || 0) : (subtotal > 0 ? +((discAmt / subtotal) * 100).toFixed(2) : 0));
   const afterDiscount = Math.max(0, +(subtotal - discAmt).toFixed(2));
 
-  // Unit prices are inclusive of 14% VAT
-  const preVatBase = ord.preVatBaseAmount !== undefined ? Number(ord.preVatBaseAmount) : +(afterDiscount / 1.14).toFixed(2);
-
-  const whtMode = ord.withholdingTaxMode || 'none';
-  const whtRate = whtMode === 'none' ? 0 : Number(ord.withholdingTaxRate || 0);
-  const whtAmt = whtRate > 0 ? Number(ord.withholdingTaxAmount ?? +((preVatBase * whtRate) / 100).toFixed(2)) : 0;
+  const whtMode = 'none';
+  const whtRate = 0;
+  const whtAmt = 0;
 
   const delivMode = ord.deliveryMode || 'ex_factory';
   const delivCost = delivMode === 'paid_delivery' ? Number(ord.deliveryCost || 0) : 0;
@@ -11683,10 +12300,7 @@ function buildOfficialOrderStatementPdfHtml(ord) {
       ? `${delivPlace} (سعر التوصيل: ${fmtEnNum(delivCost, 0)} جنيه)`
       : delivPlace;
 
-  let netOrder = afterDiscount;
-  if (whtMode === 'deduct') netOrder -= whtAmt;
-  else if (whtMode === 'add') netOrder += whtAmt;
-  netOrder = Math.max(0, +(netOrder + delivCost).toFixed(2));
+  const netOrder = Math.max(0, +(afterDiscount + delivCost).toFixed(2));
 
   const oldPalletsCount = ord.oldPalletsCount !== undefined
     ? Number(ord.oldPalletsCount || 0)
@@ -13853,7 +14467,7 @@ function deletePalletMovementRecord(pmId) {
 // ============================================================================
 // 11. MOVABLE FLOATING DOCK & SMART ARABIC AI ASSISTANT (v29)
 // ============================================================================
-const FLOATING_DOCK_STORAGE_KEY = 'al_asimah_floating_dock_pos_v1';
+const FLOATING_DOCK_STORAGE_KEY = 'al_asimah_floating_dock_pos_v2';
 
 function getFloatingDockConfig() {
   try {
@@ -13863,7 +14477,7 @@ function getFloatingDockConfig() {
       if (parsed && typeof parsed === 'object') return parsed;
     }
   } catch (_) {}
-  return { mode: 'preset', preset: 'bottom-left', x: null, y: null };
+  return { mode: 'preset', preset: 'hidden', x: null, y: null };
 }
 
 function saveFloatingDockConfig(cfg) {
