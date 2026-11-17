@@ -941,6 +941,19 @@ function normalizeState(s) {
   }
 
   s.factoryInfo.bankAccountsText = sanitizeBankAccountsText(s.factoryInfo.bankAccountsText);
+
+  for (const tx of (s.financialTransactions || [])) {
+    if (!tx) continue;
+    if (typeof isPalletDepositTransaction === 'function' && isPalletDepositTransaction(tx)) {
+      tx.accountType = 'pallet_deposit';
+      if (!tx.typeLabel || tx.typeLabel === 'سند تحصيل دفعة من عميل') {
+        tx.typeLabel = tx.type === 'pallet_deposit_refund'
+          ? 'حساب تأمين البالتات (رد تأمين بالتات للعميل)'
+          : 'حساب تأمين البالتات (تحصيل تأمين بالتات)';
+      }
+    }
+  }
+
   for (const ord of (s.productionOrders || [])) {
     if (!ord) continue;
     ord.bankAccountsText = sanitizeBankAccountsText(ord.bankAccountsText);
@@ -953,7 +966,7 @@ function normalizeState(s) {
         const retDeduct = Math.max(0, Number(ord.returnedPalletsDeduction || 0));
         ord.oldVeneerDebt = livePrevBal;
         ord.previousDebtAmount = +(livePrevBal + (pCnt * pPrice)).toFixed(2);
-        ord.previousDebtLabel = buildPreviousDebtStatementText(livePrevBal, pCnt, pPrice);
+        ord.previousDebtLabel = buildPreviousDebtStatementText(livePrevBal, pCnt, pPrice, clientObj, s);
         ord.totalRequiredAmount = +(Number(ord.netTotalAmount ?? ord.subtotalAmount ?? 0) + ord.previousDebtAmount - retDeduct).toFixed(2);
         ord.totalRequiredInWords = numberToArabicTafqeet(Math.max(0, ord.totalRequiredAmount));
       }
@@ -1684,6 +1697,49 @@ function fmtStatementCairoDate(dateStr) {
   return raw;
 }
 
+function isPalletDepositTransaction(tx) {
+  if (!tx || typeof tx !== 'object') return false;
+  if (tx.accountType === 'pallet_deposit') return true;
+  if (tx.type === 'pallet_deposit_payment' || tx.type === 'pallet_deposit_refund' || tx.type === 'pallet_deposit_charge') return true;
+  const combined = `${tx.description || ''} ${tx.typeLabel || ''}`;
+  return /(تأمين|تامين).*(بالت|باليت|طبلية|طبليه)|(بالت|باليت|طبلية|طبليه).*(تأمين|تامين)/i.test(combined);
+}
+
+function computeClientLivePalletDepositInfo(clientObj, stateRef = null) {
+  const sObj = stateRef || state;
+  if (!clientObj || !sObj) {
+    return { palletDepositPaid: 0, palletDepositRefunded: 0, netPalletDepositPaid: 0, palletsCountAtClient: 0, palletUnitPrice: 500 };
+  }
+  const txs = (sObj.financialTransactions || []).filter(tx =>
+    ((tx.partnerId && tx.partnerId === clientObj.id) || (tx.partnerName && tx.partnerName.trim() === clientObj.name.trim())) &&
+    isPalletDepositTransaction(tx)
+  );
+  let paid = Number(clientObj.openingPalletDepositPaid || 0);
+  let refunded = 0;
+  for (const tx of txs) {
+    const amt = Number(tx.paidAmount || tx.totalAmount || 0);
+    if (tx.type === 'pallet_deposit_refund') {
+      refunded += amt;
+    } else if (tx.type !== 'pallet_deposit_charge') {
+      paid += amt;
+    }
+  }
+  const palletMoves = (sObj.palletMovements || []).filter(
+    pm => (pm.clientId && pm.clientId === clientObj.id) || (pm.clientName && pm.clientName.trim() === clientObj.name.trim())
+  );
+  const palletsDelivered = Number(clientObj.openingPalletsDelivered || 0) + palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0), 0);
+  const palletsReceived = Number(clientObj.openingPalletsReceived || 0) + palletMoves.reduce((s, pm) => s + Number(pm.receivedCount || 0), 0);
+  const palletsCountAtClient = Math.max(0, palletsDelivered - palletsReceived);
+  const palletUnitPrice = Number(clientObj.palletUnitPrice || sObj.catalog?.woodenPalletUnitPrice || 500) || 500;
+  return {
+    palletDepositPaid: +paid.toFixed(2),
+    palletDepositRefunded: +refunded.toFixed(2),
+    netPalletDepositPaid: +(paid - refunded).toFixed(2),
+    palletsCountAtClient,
+    palletUnitPrice
+  };
+}
+
 function computeClientLivePreviousBalance(clientObj, currentOrderId = null, currentOrderNumber = null, stateRef = null) {
   const sObj = stateRef || state;
   if (!clientObj || !sObj) return 0;
@@ -1702,10 +1758,12 @@ function computeClientLivePreviousBalance(clientObj, currentOrderId = null, curr
   let otherInvoicesTotal = 0;
   let allPaymentsTotal = 0;
   for (const tx of txs) {
-    if (tx.type === 'sales_invoice') {
+    if (tx.type === 'sales_invoice' || tx.type === 'pallet_deposit_charge') {
       otherInvoicesTotal += Number(tx.totalAmount || 0);
       allPaymentsTotal += Number(tx.paidAmount || 0);
-    } else if (tx.type === 'client_payment' || tx.type === 'receipt') {
+    } else if (tx.type === 'pallet_deposit_refund') {
+      allPaymentsTotal -= Number(tx.paidAmount || tx.totalAmount || 0);
+    } else if (tx.type === 'client_payment' || tx.type === 'receipt' || tx.type === 'pallet_deposit_payment') {
       allPaymentsTotal += Number(tx.paidAmount || tx.totalAmount || 0);
     } else if (tx.type === 'client_credit') {
       allPaymentsTotal += Number(tx.totalAmount || 0);
@@ -1726,11 +1784,11 @@ function computeClientLivePreviousBalance(clientObj, currentOrderId = null, curr
   const totalDebit = +(openingDebit + otherInvoicesTotal).toFixed(2);
   const totalCredit = +(openingCredit + allPaymentsTotal).toFixed(2);
   // Positive => client owes previous debt (عليه مديونية سابقة)
-  // Negative => client paid off previous debt and has credit balance (له مبلغ سابق يُخصم من الطلبية)
+  // Negative => client paid off previous debt and has credit / pallet deposit balance (له مبلغ تأمين بالتات أو رصيد دائن)
   return +(totalDebit - totalCredit).toFixed(2);
 }
 
-function buildPreviousDebtStatementText(veneerBalance, palletsCount, palletPrice) {
+function buildPreviousDebtStatementText(veneerBalance, palletsCount, palletPrice, clientObj = null, stateRef = null) {
   const vBal = Number(veneerBalance || 0);
   const pCnt = Math.max(0, Math.round(Number(palletsCount || 0)));
   const pPrice = Math.max(0, Number(palletPrice || 500));
@@ -1738,16 +1796,24 @@ function buildPreviousDebtStatementText(veneerBalance, palletsCount, palletPrice
   const totalSigned = +(vBal + pDeposit).toFixed(2);
 
   if (totalSigned < 0) {
+    const absCredit = Math.abs(totalSigned);
+    const pdInfo = clientObj ? computeClientLivePalletDepositInfo(clientObj, stateRef) : null;
+    if (pdInfo && pdInfo.netPalletDepositPaid > 0 && Math.abs(pdInfo.netPalletDepositPaid - absCredit) < 1) {
+      const cnt = pdInfo.palletsCountAtClient || (pPrice > 0 ? Math.round(absCredit / pPrice) : 0);
+      return cnt > 0
+        ? `حساب تأمين البالتات - رصيد تأمين عدد ${cnt} بالتة مسدد للعميل`
+        : 'حساب تأمين البالتات - رصيد تأمين بالتات مسدد للعميل';
+    }
     return 'رصيد سابق لصالح العميل - له مبلغ مسدد يُخصم من الطلبية';
   }
   if (totalSigned === 0) {
     return 'المديونية السابقة مسددة بالكامل';
   }
   if (pCnt > 0 && vBal > 0) {
-    return `قيمة مديونية سابقة : ${fmtEnNum(vBal, 0)} جنيه توريد قشرة + ${fmtEnNum(pDeposit, 0)} جنيه تأمين عدد ${pCnt} بالتة`;
+    return `قيمة مديونية سابقة : ${fmtEnNum(vBal, 0)} جنيه توريد قشرة + ${fmtEnNum(pDeposit, 0)} جنيه حساب تأمين عدد ${pCnt} بالتة`;
   }
   if (pCnt > 0 && vBal === 0) {
-    return `قيمة تأمين عدد ${pCnt} بالتة سابقة`;
+    return `حساب تأمين البالتات - قيمة تأمين عدد ${pCnt} بالتة سابقة`;
   }
   return 'قيمة مديونية سابقة على العميل';
 }
@@ -4319,7 +4385,7 @@ function handleOrderModalClientSearch(val) {
 }
 
 function computeClientMetrics(pt) {
-  if (!pt) return { orders: [], txs: [], palletMoves: [], checks: [], pendingChecks: [], pendingChecksAmount: 0, collectedChecks: [], collectedChecksAmount: 0, totalInvoiced: 0, totalPaid: 0, netDebt: 0, palletsDelivered: 0, palletsReceived: 0, netPalletsAtClient: 0, palletUnitPrice: 0, palletsDeliveredValue: 0, palletsReceivedValue: 0, netPalletsValue: 0 };
+  if (!pt) return { orders: [], txs: [], palletMoves: [], checks: [], pendingChecks: [], pendingChecksAmount: 0, collectedChecks: [], collectedChecksAmount: 0, palletDepositTxs: [], palletDepositPaid: 0, palletDepositRefunded: 0, netPalletDepositPaid: 0, unpaidPalletDeposit: 0, refundablePalletDeposit: 0, veneerTotalDebit: 0, veneerTotalCredit: 0, veneerNetDebt: 0, totalInvoiced: 0, totalPaid: 0, netDebt: 0, palletsDelivered: 0, palletsReceived: 0, netPalletsAtClient: 0, palletUnitPrice: 0, palletsDeliveredValue: 0, palletsReceivedValue: 0, netPalletsValue: 0 };
 
   const orders = (state.productionOrders || []).filter(
     o => (o.clientId && o.clientId === pt.id) || (o.clientName && o.clientName.trim() === pt.name.trim())
@@ -4346,15 +4412,43 @@ function computeClientMetrics(pt) {
 
   let invoicesTotal = 0;
   let paymentsTotal = 0;
+  let veneerInvoicesTotal = 0;
+  let veneerPaymentsTotal = 0;
+  const palletDepositTxs = [];
+  let palletDepositPaid = Number(pt.openingPalletDepositPaid || 0);
+  let palletDepositRefunded = 0;
 
   for (const tx of txs) {
+    const isPalletDep = isPalletDepositTransaction(tx);
+    if (isPalletDep) {
+      palletDepositTxs.push(tx);
+      const pAmt = Number(tx.paidAmount || tx.totalAmount || 0);
+      if (tx.type === 'pallet_deposit_refund') {
+        palletDepositRefunded += pAmt;
+        paymentsTotal -= pAmt;
+      } else if (tx.type === 'pallet_deposit_charge') {
+        invoicesTotal += Number(tx.totalAmount || 0);
+        paymentsTotal += Number(tx.paidAmount || 0);
+      } else {
+        palletDepositPaid += pAmt;
+        paymentsTotal += pAmt;
+      }
+      continue;
+    }
+
     if (tx.type === 'sales_invoice') {
       invoicesTotal += Number(tx.totalAmount || 0);
       paymentsTotal += Number(tx.paidAmount || 0);
+      veneerInvoicesTotal += Number(tx.totalAmount || 0);
+      veneerPaymentsTotal += Number(tx.paidAmount || 0);
     } else if (tx.type === 'client_payment' || tx.type === 'receipt') {
-      paymentsTotal += Number(tx.paidAmount || tx.totalAmount || 0);
+      const amt = Number(tx.paidAmount || tx.totalAmount || 0);
+      paymentsTotal += amt;
+      veneerPaymentsTotal += amt;
     } else if (tx.type === 'client_credit') {
-      paymentsTotal += Number(tx.totalAmount || 0);
+      const amt = Number(tx.totalAmount || 0);
+      paymentsTotal += amt;
+      veneerPaymentsTotal += amt;
     }
   }
 
@@ -4363,6 +4457,10 @@ function computeClientMetrics(pt) {
   // netDebt > 0 means client owes the factory (مديونية على العميل)
   // netDebt < 0 means client has credit/receivables with the factory (مستحقات للعميل)
   const netDebt = +(totalDebit - totalCredit).toFixed(2);
+
+  const veneerTotalDebit = +(openingDebit + veneerInvoicesTotal).toFixed(2);
+  const veneerTotalCredit = +(openingCredit + veneerPaymentsTotal).toFixed(2);
+  const veneerNetDebt = +(veneerTotalDebit - veneerTotalCredit).toFixed(2);
 
   const palletUnitPrice = getWoodenPalletUnitPrice(pt);
   const palletsDelivered = Number(pt.openingPalletsDelivered || 0) + palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0), 0);
@@ -4379,6 +4477,12 @@ function computeClientMetrics(pt) {
   ).toFixed(2);
   const netPalletsValue = +(palletsDeliveredValue - palletsReceivedValue).toFixed(2);
 
+  palletDepositPaid = +palletDepositPaid.toFixed(2);
+  palletDepositRefunded = +palletDepositRefunded.toFixed(2);
+  const netPalletDepositPaid = +(palletDepositPaid - palletDepositRefunded).toFixed(2);
+  const unpaidPalletDeposit = Math.max(0, +(netPalletsValue - netPalletDepositPaid).toFixed(2));
+  const refundablePalletDeposit = Math.max(0, +(netPalletDepositPaid - netPalletsValue).toFixed(2));
+
   return {
     orders,
     txs,
@@ -4388,6 +4492,15 @@ function computeClientMetrics(pt) {
     pendingChecksAmount,
     collectedChecks,
     collectedChecksAmount,
+    palletDepositTxs,
+    palletDepositPaid,
+    palletDepositRefunded,
+    netPalletDepositPaid,
+    unpaidPalletDeposit,
+    refundablePalletDeposit,
+    veneerTotalDebit,
+    veneerTotalCredit,
+    veneerNetDebt,
     openingDebit,
     openingCredit,
     totalInvoiced: +invoicesTotal.toFixed(2),
@@ -4891,6 +5004,12 @@ function renderAccounting() {
   const totalPalletsDeliveredValueAll = enrichedClients.reduce((s, x) => s + x.metrics.palletsDeliveredValue, 0);
   const totalPalletsReceivedValueAll = enrichedClients.reduce((s, x) => s + x.metrics.palletsReceivedValue, 0);
   const totalNetPalletsOutValue = enrichedClients.reduce((s, x) => s + x.metrics.netPalletsValue, 0);
+  const totalPalletDepositPaidAll = enrichedClients.reduce((s, x) => s + x.metrics.netPalletDepositPaid, 0);
+  const totalUnpaidPalletDepositAll = enrichedClients.reduce((s, x) => s + x.metrics.unpaidPalletDeposit, 0);
+  const allPalletDepositTxs = (state.financialTransactions || []).filter(tx => isPalletDepositTransaction(tx));
+  const clientsWithPalletActivity = enrichedClients.filter(({ metrics: m }) =>
+    m.palletsDelivered > 0 || m.palletsReceived > 0 || m.netPalletsAtClient !== 0 || m.netPalletDepositPaid !== 0 || m.palletDepositTxs.length > 0
+  );
 
   const allChecks = state.checksUnderCollection || [];
   const pendingChecksList = allChecks.filter(c => (c.status || 'under_collection') === 'under_collection');
@@ -4920,16 +5039,21 @@ function renderAccounting() {
         </div>
       </div>
 
-      <div class="stat-card accent">
+      <div class="stat-card accent" style="border-right:4px solid #7c3aed;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">
-          <span class="stat-title">حساب البالتات الخشبية وقيمتها طرف العملاء</span>
-          <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.7rem;border-color:var(--accent);color:var(--accent);font-weight:800;" onclick="openSetDefaultPalletPriceModal()">
-            💰 تحديد قيمة البالتة (${fmtNum(defaultPalletPrice, 0)} ج)
-          </button>
+          <span class="stat-title" style="color:#6d28d9;font-weight:800;">🛡️ حساب تأمين البالتات الخشبية للعملاء</span>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm btn-primary" style="padding:2px 8px;font-size:0.68rem;background:#7c3aed;border-color:#7c3aed;" onclick="openPalletDepositAccountModal()">
+              🛡️ تسجيل تأمين بالتات
+            </button>
+            <button type="button" class="btn btn-sm btn-outline" style="padding:2px 7px;font-size:0.68rem;border-color:var(--accent);color:var(--accent);font-weight:800;" onclick="openSetDefaultPalletPriceModal()">
+              💰 البالتة (${fmtNum(defaultPalletPrice, 0)} ج)
+            </button>
+          </div>
         </div>
-        <div class="stat-value">${fmtNum(totalNetPalletsOut, 0)} بالتة | <span style="color:var(--primary);font-size:1.15rem;">${fmtMoney(totalNetPalletsOutValue)}</span></div>
+        <div class="stat-value">${fmtNum(totalNetPalletsOut, 0)} بالتة | <span style="color:var(--primary);font-size:1.1rem;">${fmtMoney(totalNetPalletsOutValue)}</span></div>
         <div class="stat-sub">
-          قيمة البالتة: <strong>${fmtMoney(defaultPalletPrice)}</strong> | مسلم: <strong>${totalPalletsDeliveredAll}</strong> (${fmtMoney(totalPalletsDeliveredValueAll)}) | مستلم: <strong>${totalPalletsReceivedAll}</strong> (${fmtMoney(totalPalletsReceivedValueAll)})
+          🛡️ محصل بحساب التأمين: <strong style="color:var(--success);">${fmtMoney(totalPalletDepositPaidAll)}</strong> | غير مسدد: <strong style="color:${totalUnpaidPalletDepositAll > 0 ? 'var(--danger)' : 'var(--text-muted)'};">${fmtMoney(totalUnpaidPalletDepositAll)}</strong> | البالتة: <strong>${fmtMoney(defaultPalletPrice)}</strong>
         </div>
       </div>
 
@@ -4944,14 +5068,15 @@ function renderAccounting() {
     <div class="card">
       <div class="card-header">
         <div>
-          <div class="card-title">🤝 حسابات ومبيعات العملاء (الأكواد، الطلبيات، المديونيات، الشيكات تحت التحصيل، وحسابات البالتات)</div>
+          <div class="card-title">🤝 حسابات ومبيعات العملاء (الأكواد، الطلبيات، المديونيات، الشيكات تحت التحصيل، وحساب تأمين البالتات)</div>
           <small style="color:var(--text-muted);">
-            اضغط على <strong>"📂 كشف الحساب"</strong> لأي عميل لمراجعة طلبياته، المديونية، الشيكات تحت التحصيل، وحساب البالتات
+            اضغط على <strong>"📂 كشف الحساب"</strong> أو <strong>"🛡️ تأمين البالتات"</strong> لأي عميل لمراجعة طلبياته، المديونية، الشيكات تحت التحصيل، وحساب تأمين البالتات
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <button class="btn btn-primary" onclick="openNewPartnerModal()">➕ إضافة عميل جديد بالكود</button>
           <button class="btn btn-accent" onclick="openNewClientOrderPrepModal()">📋 إنشاء أمر تجهيز طلبية لعميل</button>
+          <button class="btn" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal()">🛡️ حساب تأمين البالتات (تحصيل / رد تأمين)</button>
           <button class="btn" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal()">📝 تسجيل شيك تحت التحصيل</button>
           <button class="btn btn-outline" style="border-color:#d97706;color:#b45309;font-weight:800;" onclick="openSetDefaultPalletPriceModal()">🪵 تحديد قيمة البالتة (${fmtMoney(defaultPalletPrice)})</button>
           <button class="btn btn-outline" onclick="openNewFinancialTxModal()">💵 تسجيل سند مالي عام بالخزينة</button>
@@ -4981,7 +5106,7 @@ function renderAccounting() {
               <th>المسحوبات</th>
               <th>المدفوعات</th>
               <th>صافي المديونية</th>
-              <th>البالتات (العدد + القيمة)</th>
+              <th>🛡️ حساب تأمين البالتات</th>
               <th>إجراءات العميل</th>
             </tr>
           </thead>
@@ -5014,6 +5139,13 @@ function renderAccounting() {
                   <td><strong>${fmtMoney(m.totalDebit)}</strong></td>
                   <td>
                     <div style="color:var(--success);font-weight:700;">${fmtMoney(m.totalCredit)}</div>
+                    ${m.netPalletDepositPaid > 0 ? `
+                      <div style="margin-top:2px;">
+                        <span class="badge" style="background:rgba(124,58,237,0.12);color:#6d28d9;border:1px solid rgba(124,58,237,0.35);cursor:pointer;" onclick="openPalletDepositAccountModal('${pt.id}')" title="رصيد مسدد في حساب تأمين البالتات">
+                          🛡️ منه تأمين بالتات: ${fmtMoney(m.netPalletDepositPaid)}
+                        </span>
+                      </div>
+                    ` : ''}
                     ${m.pendingChecks && m.pendingChecks.length > 0 ? `
                       <div style="margin-top:3px;">
                         <span class="badge badge-warning" style="cursor:pointer;" onclick="openClientFullHistoryModal('${pt.id}', 'checks')" title="اضغط لعرض وتحصيل شيكات العميل وإضافتها لمدفوعاته">
@@ -5034,6 +5166,12 @@ function renderAccounting() {
                     ` : `
                       <span class="badge" style="background:#64748b;color:#fff;">خالص (0)</span>
                     `}
+                    ${m.netPalletDepositPaid > 0 ? `
+                      <div style="font-size:0.68rem;margin-top:3px;color:#6d28d9;font-weight:800;">
+                        القشرة: ${m.veneerNetDebt > 0 ? 'عليه ' + fmtMoney(m.veneerNetDebt) : m.veneerNetDebt < 0 ? 'له ' + fmtMoney(Math.abs(m.veneerNetDebt)) : 'خالص (0)'}<br/>
+                        🛡️ تأمين بالتات مسدد: ${fmtMoney(m.netPalletDepositPaid)}
+                      </div>
+                    ` : ''}
                   </td>
                   <td>
                     <div style="font-size:0.72rem;line-height:1.45;">
@@ -5043,8 +5181,18 @@ function renderAccounting() {
                         🪵 طرفه: ${m.netPalletsAtClient} بالتة
                       </span>
                       <div style="margin-top:3px;padding-top:2px;border-top:1px dashed var(--border-color);font-size:0.68rem;">
-                        <div>قيمة البالتة: <strong>${fmtMoney(m.palletUnitPrice)}</strong></div>
-                        <div>إجمالي قيمة البالتات: <strong style="color:var(--primary);">${fmtMoney(m.netPalletsValue)}</strong></div>
+                        <div>قيمة البالتة: <strong>${fmtMoney(m.palletUnitPrice)}</strong> | إجمالي التأمين: <strong style="color:var(--primary);">${fmtMoney(m.netPalletsValue)}</strong></div>
+                        ${m.netPalletDepositPaid > 0 ? `
+                          <div style="color:#6d28d9;font-weight:800;margin-top:1px;">
+                            🛡️ مسدد بحساب التأمين: <strong>${fmtMoney(m.netPalletDepositPaid)}</strong>
+                            ${m.unpaidPalletDeposit === 0 && m.netPalletsValue > 0 ? '<span style="color:var(--success);"> (مغطى ✅)</span>' : ''}
+                          </div>
+                        ` : ''}
+                        ${m.unpaidPalletDeposit > 0 ? `
+                          <div style="color:var(--danger);font-weight:800;margin-top:1px;">
+                            ⚠️ تأمين غير مسدد: <strong>${fmtMoney(m.unpaidPalletDeposit)}</strong>
+                          </div>
+                        ` : ''}
                       </div>
                     </div>
                   </td>
@@ -5055,6 +5203,9 @@ function renderAccounting() {
                       </button>
                       <button class="btn btn-sm btn-success" onclick="openClientPaymentModal('${pt.id}')">
                         💵 تحصيل
+                      </button>
+                      <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}')" title="تسجيل تحصيل أو رد تأمين بالتات في حساب تأمين البالتات">
+                        🛡️ تأمين البالتات
                       </button>
                       <button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal('${pt.id}')">
                         📝 شيك
@@ -5077,6 +5228,155 @@ function renderAccounting() {
           </tbody>
         </table>
       </div>
+    </div>
+
+    <!-- Dedicated Pallet Deposit Account Card (حساب تأمين البالتات للعملاء) -->
+    <div class="card" style="border:2px solid #7c3aed;">
+      <div class="card-header">
+        <div>
+          <div class="card-title" style="color:#6d28d9;">
+            🛡️ حساب تأمين البالتات للعملاء (إجمالي البالتات طرف العملاء: ${fmtNum(totalNetPalletsOut, 0)} بالتة = ${fmtMoney(totalNetPalletsOutValue)} | المسدد بحساب التأمين: ${fmtMoney(totalPalletDepositPaidAll)})
+          </div>
+          <small style="color:var(--text-muted);">
+            حساب مستقل لتتبع مبالغ <strong>تأمين البالتات الخشبية</strong> المحصلة من العملاء والمرتردة لهم عند إرجاع البالتات، مع إمكانية إدراجها أو خصمها في بيان الطلبية
+          </small>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal()">
+            🛡️ تسجيل تحصيل / رد تأمين بالتات
+          </button>
+          <button class="btn btn-sm btn-outline" style="border-color:#7c3aed;color:#6d28d9;font-weight:800;" onclick="openSetDefaultPalletPriceModal()">
+            💰 تحديد قيمة تأمين البالتة (${fmtNum(defaultPalletPrice, 0)} ج)
+          </button>
+          <button class="btn btn-sm btn-outline" onclick="printPalletDepositAccountReportPdf()">
+            🖨️ طباعة كشف حساب تأمين البالتات PDF
+          </button>
+        </div>
+      </div>
+
+      <div class="table-responsive" style="margin-bottom:${allPalletDepositTxs.length > 0 ? '14px' : '0'};">
+        <table>
+          <thead>
+            <tr>
+              <th>الكود والعميل</th>
+              <th>مسلم للعميل</th>
+              <th>مستلم من العميل</th>
+              <th>صافي البالتات طرفه</th>
+              <th>قيمة تأمين البالتة</th>
+              <th>إجمالي التأمين المطلوب</th>
+              <th>🛡️ المسدد في حساب تأمين البالتات</th>
+              <th>حالة تأمين البالتات</th>
+              <th>إجراءات حساب التأمين</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${clientsWithPalletActivity.length === 0 ? `
+              <tr>
+                <td colspan="9" style="text-align:center;padding:18px;color:var(--text-muted);">
+                  لا توجد أرصدة بالتات أو مبالغ تأمين بالتات مسجلة حالياً. اضغط على <strong>"🛡️ تسجيل تحصيل / رد تأمين بالتات"</strong> لإضافة حركة.
+                </td>
+              </tr>
+            ` : clientsWithPalletActivity.map(({ partner: pt, metrics: m }) => `
+              <tr>
+                <td>
+                  <span class="badge badge-info">${pt.code || 'CL'}</span>
+                  <strong style="margin-right:4px;">${pt.name}</strong>
+                </td>
+                <td><strong>${m.palletsDelivered} بالتة</strong></td>
+                <td><strong style="color:var(--success);">${m.palletsReceived} بالتة</strong></td>
+                <td>
+                  <span class="badge ${m.netPalletsAtClient > 0 ? 'badge-warning' : 'badge-success'}">
+                    🪵 ${m.netPalletsAtClient} بالتة
+                  </span>
+                </td>
+                <td><strong>${fmtMoney(m.palletUnitPrice)}</strong></td>
+                <td><strong style="color:var(--primary);">${fmtMoney(m.netPalletsValue)}</strong></td>
+                <td>
+                  <strong style="color:#6d28d9;font-size:0.86rem;">${fmtMoney(m.netPalletDepositPaid)}</strong>
+                  ${m.palletDepositRefunded > 0 ? `<div style="font-size:0.66rem;color:var(--text-muted);">مرترد سابقاً: ${fmtMoney(m.palletDepositRefunded)}</div>` : ''}
+                </td>
+                <td>
+                  ${m.netPalletDepositPaid > 0 && m.unpaidPalletDeposit === 0 ? `
+                    <span class="badge badge-success">✅ مسدد تأمين (${fmtMoney(m.netPalletDepositPaid)})</span>
+                  ` : m.unpaidPalletDeposit > 0 ? `
+                    <span class="badge badge-danger">⚠️ متبقي تأمين: ${fmtMoney(m.unpaidPalletDeposit)}</span>
+                  ` : `
+                    <span class="badge" style="background:#64748b;color:#fff;">خالص (0)</span>
+                  `}
+                </td>
+                <td>
+                  <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
+                    <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}', 'pallet_deposit_payment')">
+                      🛡️ تحصيل تأمين
+                    </button>
+                    ${m.netPalletDepositPaid > 0 ? `
+                      <button class="btn btn-sm btn-success" style="font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}', 'pallet_deposit_refund')">
+                        🔄 رد تأمين
+                      </button>
+                    ` : ''}
+                    <button class="btn btn-sm btn-accent" onclick="openClientPalletMovementModal('${pt.id}')">
+                      🪵 حركة بالتات
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      ${allPalletDepositTxs.length > 0 ? `
+        <div style="border-top:1px dashed var(--border-color);padding-top:10px;">
+          <div style="font-weight:800;font-size:0.84rem;color:#6d28d9;margin-bottom:6px;">
+            📒 سجل السندات المالية في حساب تأمين البالتات (${allPalletDepositTxs.length} سند):
+          </div>
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>رقم السند</th>
+                  <th>التاريخ</th>
+                  <th>العميل</th>
+                  <th>نوع الحركة في حساب تأمين البالتات</th>
+                  <th>البيان</th>
+                  <th>المبلغ</th>
+                  <th>طريقة الدفع</th>
+                  <th>إجراءات</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${allPalletDepositTxs.map(tx => {
+                  const isRefund = tx.type === 'pallet_deposit_refund';
+                  return `
+                    <tr style="background:rgba(124,58,237,0.04);">
+                      <td><strong style="color:#6d28d9;">${tx.voucherNo}</strong></td>
+                      <td>${tx.date}</td>
+                      <td><strong>${tx.partnerName || '-'}</strong></td>
+                      <td>
+                        <span class="badge ${isRefund ? 'badge-warning' : 'badge-success'}">
+                          ${isRefund ? '🔄 رد تأمين بالتات للعميل' : '🛡️ تحصيل تأمين بالتات من العميل'}
+                        </span>
+                      </td>
+                      <td><strong>${tx.description || '-'}</strong></td>
+                      <td><strong style="color:${isRefund ? 'var(--danger)' : 'var(--success)'};">${isRefund ? '-' : '+'}${fmtMoney(tx.paidAmount || tx.totalAmount || 0)}</strong></td>
+                      <td>${tx.paymentMethod || '-'}</td>
+                      <td>
+                        <div style="display:flex;gap:4px;">
+                          <button class="btn btn-sm btn-outline" style="padding:3px 7px;" onclick="printFinancialInvoice('${tx.id}')" title="طباعة السند">🖨️</button>
+                          ${isFullAdmin(currentUser) ? `
+                            <button class="btn btn-sm btn-outline" style="padding:3px 7px;" onclick="openEditFinancialTxModal('${tx.id}')" title="تعديل السند">✏️</button>
+                            <button class="btn btn-sm btn-danger" style="padding:3px 7px;" onclick="deleteFinancialTxRecord('${tx.id}')" title="حذف السند">🗑️</button>
+                          ` : ''}
+                        </div>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ` : ''}
     </div>
 
     <!-- Checks Under Collection Ledger Card (سجل الشيكات تحت التحصيل وإضافتها في مدفوعات العميل عند تحصيلها) -->
@@ -6269,7 +6569,7 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
   const defaultRetPalletsCnt = 0;
   const defaultPalletPrice = cm && Number(cm.palletUnitPrice) > 0 ? Number(cm.palletUnitPrice) : 500;
   const defaultOldDebt = +(defaultVeneerDebt + (defaultOldPalletsCnt * defaultPalletPrice)).toFixed(2);
-  const defaultOldDebtLabel = buildPreviousDebtStatementText(defaultVeneerDebt, defaultOldPalletsCnt, defaultPalletPrice);
+  const defaultOldDebtLabel = buildPreviousDebtStatementText(defaultVeneerDebt, defaultOldPalletsCnt, defaultPalletPrice, defaultClient);
   const defaultRetPalletsLabel = buildReturnedPalletsStatementText(defaultRetPalletsCnt, defaultOldPalletsCnt, defaultPalletPrice);
 
   draftOrderItems = [createDefaultDraftOrderItem()];
@@ -6808,9 +7108,10 @@ function recalcDraftOrderTotals(triggerSource = '') {
 
   const returnedPalletsCount = Math.max(0, Math.round(Number(retCntEl?.value || 0)));
   const returnedPalletsDeduction = +(returnedPalletsCount * palletUnitPrice).toFixed(2);
+  const selectedClientObj = (state.partners || []).find(c => c.id === (document.getElementById('ord-client')?.value || ''));
 
   if (lblDebtEl && !lblDebtEl.dataset.manual) {
-    lblDebtEl.value = buildPreviousDebtStatementText(oldVeneerDebt, oldPalletsCount, palletUnitPrice);
+    lblDebtEl.value = buildPreviousDebtStatementText(oldVeneerDebt, oldPalletsCount, palletUnitPrice, selectedClientObj);
   }
   if (lblRetEl && !lblRetEl.dataset.manual) {
     lblRetEl.value = buildReturnedPalletsStatementText(returnedPalletsCount, oldPalletsCount, palletUnitPrice);
@@ -6890,7 +7191,7 @@ function collectDraftOrderObjectForStatement() {
   const palletDepositUnitPrice = Math.max(0, Number(document.getElementById('ord-pallet-unit-price')?.value || 500));
   const oldPalletsDepositAmount = +(oldPalletsCount * palletDepositUnitPrice).toFixed(2);
   const previousDebtAmount = Number(document.getElementById('ord-old-debt')?.value ?? (oldVeneerDebt + oldPalletsDepositAmount));
-  const previousDebtLabel = (document.getElementById('ord-old-debt-label')?.value || buildPreviousDebtStatementText(oldVeneerDebt, oldPalletsCount, palletDepositUnitPrice)).trim();
+  const previousDebtLabel = (document.getElementById('ord-old-debt-label')?.value || buildPreviousDebtStatementText(oldVeneerDebt, oldPalletsCount, palletDepositUnitPrice, clientObj)).trim();
 
   const returnedPalletsCount = Math.max(0, Math.round(Number(document.getElementById('ord-ret-pallets-cnt')?.value || 0)));
   const returnedPalletsDeduction = +(returnedPalletsCount * palletDepositUnitPrice).toFixed(2);
@@ -7120,7 +7421,7 @@ function openClientOrderStatementModal(orderId) {
   const defaultOldDebt = +(defaultVeneerDebt + (defaultOldPalletsCnt * defaultPalletPrice)).toFixed(2);
   const defaultOldDebtLabel = (ord.manualDebtOverride && ord.previousDebtLabel)
     ? ord.previousDebtLabel
-    : buildPreviousDebtStatementText(defaultVeneerDebt, defaultOldPalletsCnt, defaultPalletPrice);
+    : buildPreviousDebtStatementText(defaultVeneerDebt, defaultOldPalletsCnt, defaultPalletPrice, clientObj);
   const defaultRetPalletsLabel = ord.returnedPalletsLabel !== undefined ? ord.returnedPalletsLabel : buildReturnedPalletsStatementText(defaultRetPalletsCnt, defaultOldPalletsCnt, defaultPalletPrice);
   const defaultDelivPlace = (!ord.deliveryPlace || ord.deliveryPlace === 'أرض مصنع العاصمة للصناعات المتخصصة') ? 'بالمصنع ك 44 بطريق بلبيس القاهرة الصحراوي' : ord.deliveryPlace;
 
@@ -7318,9 +7619,29 @@ function openClientOrderStatementModal(orderId) {
               <input id="stmt-disc-val" type="number" step="0.5" min="0" class="form-control" value="${ord.discountValue || 0}" oninput="recalcStatementModalLive('${ord.id}')" />
             </div>
 
+            ${cm && (cm.netPalletsAtClient > 0 || cm.netPalletDepositPaid > 0) ? `
+            <div style="grid-column: 1 / -1;background:rgba(124,58,237,0.08);border:1.5px solid #7c3aed;border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+              <div style="font-size:0.82rem;">
+                🛡️ <strong style="color:#6d28d9;">حساب تأمين البالتات للعميل (${ord.clientName}):</strong>
+                طرفه <strong>${cm.netPalletsAtClient} بالتة</strong> بقيمة <strong>${fmtMoney(cm.netPalletsValue)}</strong> |
+                المسدد في حساب تأمين البالتات: <strong style="color:#6d28d9;">${fmtMoney(cm.netPalletDepositPaid)}</strong>
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                ${cm.netPalletDepositPaid > 0 ? `
+                  <button type="button" class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;font-size:0.72rem;" onclick="applyStmtPalletDepositMode('${ord.id}', 'deduct_paid')">
+                    🛡️ خصم تأمين البالتات المسدد للعميل (-${fmtMoney(cm.netPalletDepositPaid)})
+                  </button>
+                ` : ''}
+                <button type="button" class="btn btn-sm btn-outline" style="border-color:#7c3aed;color:#6d28d9;font-weight:800;font-size:0.72rem;" onclick="applyStmtPalletDepositMode('${ord.id}', 'separate_zero')">
+                  📒 فصل تأمين البالتات في حسابه المستقل (بدون خصم من البيان)
+                </button>
+              </div>
+            </div>
+            ` : ''}
+
             <div class="form-group">
-              <label style="color:var(--danger);font-weight:800;">📒 الرصيد السابق للعميل (مديونية عليه [+] أو له مبلغ مسدد [-])</label>
-              <input id="stmt-old-veneer-debt" type="number" step="0.5" class="form-control" value="${defaultVeneerDebt}" oninput="this.dataset.manual='1'; recalcStatementModalLive('${ord.id}', null, 'veneer')" style="font-weight:800;border-color:var(--danger);" title="موجب = مديونية سابقة على العميل | سالب = رصيد سابق لصالح العميل يُخصم من الطلبية" />
+              <label style="color:var(--danger);font-weight:800;">📒 الرصيد السابق للعميل (مديونية عليه [+] أو له تأمين بالتات مسدد [-])</label>
+              <input id="stmt-old-veneer-debt" type="number" step="0.5" class="form-control" value="${defaultVeneerDebt}" oninput="this.dataset.manual='1'; recalcStatementModalLive('${ord.id}', null, 'veneer')" style="font-weight:800;border-color:var(--danger);" title="موجب = مديونية سابقة على العميل | سالب = رصيد حساب تأمين البالتات أو مبلغ مسدد لصالح العميل" />
             </div>
 
             <div class="form-group">
@@ -7537,9 +7858,10 @@ function recalcStatementModalLive(orderId, changedRowIdx = null, triggerSource =
 
   const returnedPalletsCount = Math.max(0, Math.round(Number(retCntEl?.value ?? ord.returnedPalletsCount ?? 0)));
   const returnedPalletsDeduction = +(returnedPalletsCount * palletUnitPrice).toFixed(2);
+  const clientObj = (state.partners || []).find(p => p.id === ord.clientId || p.name === ord.clientName);
 
   if (lblDebtEl && triggerSource && !lblDebtEl.dataset.manual) {
-    lblDebtEl.value = buildPreviousDebtStatementText(oldVeneerDebt, oldPalletsCount, palletUnitPrice);
+    lblDebtEl.value = buildPreviousDebtStatementText(oldVeneerDebt, oldPalletsCount, palletUnitPrice, clientObj);
   }
   if (lblRetEl && triggerSource && !lblRetEl.dataset.manual) {
     lblRetEl.value = buildReturnedPalletsStatementText(returnedPalletsCount, oldPalletsCount, palletUnitPrice);
@@ -7569,6 +7891,40 @@ function recalcStatementModalLive(orderId, changedRowIdx = null, triggerSource =
       ` : ''}
     `;
   }
+}
+
+function applyStmtPalletDepositMode(orderId, mode) {
+  const ord = (state.productionOrders || []).find(o => o.id === orderId);
+  if (!ord) return;
+  const clientObj = (state.partners || []).find(p => p.id === ord.clientId || p.name === ord.clientName);
+  const cm = clientObj ? computeClientMetrics(clientObj) : null;
+  const vDebtEl = document.getElementById('stmt-old-veneer-debt');
+  const pCntEl = document.getElementById('stmt-old-pallets-cnt');
+  const oldDebtEl = document.getElementById('stmt-old-debt');
+  const lblDebtEl = document.getElementById('stmt-old-debt-label');
+
+  if (mode === 'deduct_paid' && cm) {
+    const depPaid = Number(cm.netPalletDepositPaid || 0);
+    const pCnt = cm.netPalletsAtClient || Math.round(depPaid / (cm.palletUnitPrice || 500));
+    if (vDebtEl) { vDebtEl.value = -depPaid; vDebtEl.dataset.manual = '1'; }
+    if (pCntEl) { pCntEl.value = 0; pCntEl.dataset.manual = '1'; }
+    if (oldDebtEl) { oldDebtEl.value = -depPaid; oldDebtEl.dataset.manual = '1'; }
+    if (lblDebtEl) {
+      lblDebtEl.value = pCnt > 0
+        ? `حساب تأمين البالتات - رصيد تأمين عدد ${pCnt} بالتة مسدد للعميل`
+        : 'حساب تأمين البالتات - رصيد تأمين بالتات مسدد للعميل';
+      lblDebtEl.dataset.manual = '1';
+    }
+  } else if (mode === 'separate_zero') {
+    if (vDebtEl) { vDebtEl.value = 0; vDebtEl.dataset.manual = '1'; }
+    if (pCntEl) { pCntEl.value = 0; pCntEl.dataset.manual = '1'; }
+    if (oldDebtEl) { oldDebtEl.value = 0; oldDebtEl.dataset.manual = '1'; }
+    if (lblDebtEl) {
+      lblDebtEl.value = 'المديونية السابقة مسددة بالكامل';
+      lblDebtEl.dataset.manual = '1';
+    }
+  }
+  recalcStatementModalLive(orderId, null, 'veneer');
 }
 
 function saveAndPrintClientOrderStatement(orderId) {
@@ -7709,7 +8065,8 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
   const palletDepositUnitPrice = Math.max(0, Number(document.getElementById('stmt-pallet-unit-price')?.value ?? ord.palletDepositUnitPrice ?? 500));
   const oldPalletsDepositAmount = +(oldPalletsCount * palletDepositUnitPrice).toFixed(2);
   const oldDebt = Number(oldDebtEl?.value ?? ord.previousDebtAmount ?? (oldVeneerDebt + oldPalletsDepositAmount));
-  const previousDebtLabel = (document.getElementById('stmt-old-debt-label')?.value || ord.previousDebtLabel || buildPreviousDebtStatementText(oldVeneerDebt, oldPalletsCount, palletDepositUnitPrice)).trim();
+  const stmtClientObj = (state.partners || []).find(p => p.id === ord.clientId || p.name === ord.clientName);
+  const previousDebtLabel = (document.getElementById('stmt-old-debt-label')?.value || ord.previousDebtLabel || buildPreviousDebtStatementText(oldVeneerDebt, oldPalletsCount, palletDepositUnitPrice, stmtClientObj)).trim();
 
   const returnedPalletsCount = Math.max(0, Math.round(Number(document.getElementById('stmt-ret-pallets-cnt')?.value ?? ord.returnedPalletsCount ?? 0)));
   const returnedPalletsDeduction = +(returnedPalletsCount * palletDepositUnitPrice).toFixed(2);
@@ -9177,13 +9534,13 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
               <span style="font-size:0.76rem;color:var(--success);">محصل سابقاً: ${m.collectedChecks.length} شيك (${fmtMoney(m.collectedChecksAmount)})</span>
             </div>
           </div>
-          <div style="background:var(--bg-elevated);padding:12px;border-radius:10px;border-right:4px solid #d97706;">
-            <small style="color:var(--text-muted);">رصيد وقيمة البالتات الخشبية</small>
-            <div style="font-weight:900;font-size:0.9rem;">
+          <div style="background:var(--bg-elevated);padding:12px;border-radius:10px;border-right:4px solid #7c3aed;">
+            <small style="color:#6d28d9;font-weight:800;">🛡️ حساب تأمين البالتات الخشبية</small>
+            <div style="font-weight:900;font-size:0.88rem;line-height:1.45;">
               مسلم له: ${m.palletsDelivered} | مستلم منه: ${m.palletsReceived}<br/>
-              <span style="color:#d97706;">متبقي طرف العميل: ${m.netPalletsAtClient} بالتة</span><br/>
-              <span style="font-size:0.78rem;color:var(--text-muted);">قيمة البالتة: <strong>${fmtMoney(m.palletUnitPrice)}</strong></span><br/>
-              <span style="color:var(--primary);">إجمالي قيمة البالتات: ${fmtMoney(m.netPalletsValue)}</span>
+              <span style="color:#d97706;">طُرفه: ${m.netPalletsAtClient} بالتة × ${fmtMoney(m.palletUnitPrice)} = ${fmtMoney(m.netPalletsValue)}</span><br/>
+              <span style="color:#6d28d9;">🛡️ مسدد بحساب التأمين: ${fmtMoney(m.netPalletDepositPaid)}</span>
+              ${m.unpaidPalletDeposit > 0 ? `<br/><span style="color:var(--danger);">متبقي غير مسدد: ${fmtMoney(m.unpaidPalletDeposit)}</span>` : ''}
             </div>
           </div>
         </div>
@@ -9191,6 +9548,7 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
           <button class="btn btn-sm btn-primary" onclick="closeModal(); openNewClientOrderPrepModal('${pt.id}');">📋 إنشاء طلبية جديدة لهذا العميل</button>
           <button class="btn btn-sm btn-success" onclick="openClientPaymentModal('${pt.id}')">💵 تسجيل تحصيل دفعة مالية / تسوية مديونية</button>
+          <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}')">🛡️ تسجيل تحصيل / رد في حساب تأمين البالتات</button>
           <button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal('${pt.id}')">📝 تسجيل شيك تحت التحصيل</button>
           <button class="btn btn-sm btn-accent" onclick="openClientPalletMovementModal('${pt.id}')">🪵 تسجيل تسليم / استلام بالتات خشبية</button>
         </div>
@@ -9356,9 +9714,53 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
             `}
           </div>
 
-          <!-- 3. Wooden Pallets Delivered & Received Ledger -->
+          <!-- 3. Wooden Pallets & Pallet Deposit Account Ledger -->
           <div>
-            <h4 style="margin-bottom:8px;color:var(--primary);">3️⃣ حساب البالتات الخشبية المسلمة للعميل والمستلمة منه وقيمتها (${m.palletMoves.length} حركة):</h4>
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+              <h4 style="margin:0;color:#6d28d9;">3️⃣ حساب تأمين البالتات الخشبية وحركة التسليم والاستلام للعميل (المسدد بحساب التأمين: ${fmtMoney(m.netPalletDepositPaid)}):</h4>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}')">🛡️ تسجيل تحصيل / رد تأمين بالتات</button>
+                <button class="btn btn-sm btn-accent" onclick="openClientPalletMovementModal('${pt.id}')">🪵 تسجيل تسليم / استلام بالتات</button>
+              </div>
+            </div>
+
+            ${m.palletDepositTxs.length > 0 ? `
+              <div style="margin-bottom:10px;background:rgba(124,58,237,0.06);border:1.5px solid #7c3aed;border-radius:10px;padding:10px;">
+                <div style="font-weight:800;font-size:0.82rem;color:#6d28d9;margin-bottom:6px;">
+                  🛡️ حركات حساب تأمين البالتات المالية (${m.palletDepositTxs.length} سند — صافي التأمين المسدد: ${fmtMoney(m.netPalletDepositPaid)}):
+                </div>
+                <div class="table-responsive">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>رقم السند</th>
+                        <th>التاريخ</th>
+                        <th>نوع الحركة</th>
+                        <th>البيان</th>
+                        <th>المبلغ</th>
+                        <th>طريقة الدفع</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${m.palletDepositTxs.map(tx => {
+                        const isRef = tx.type === 'pallet_deposit_refund';
+                        return `
+                          <tr>
+                            <td><strong>${tx.voucherNo}</strong></td>
+                            <td>${tx.date}</td>
+                            <td><span class="badge ${isRef ? 'badge-warning' : 'badge-success'}">${isRef ? '🔄 رد تأمين بالتات' : '🛡️ تحصيل تأمين بالتات'}</span></td>
+                            <td><strong>${tx.description}</strong></td>
+                            <td><strong style="color:${isRef ? 'var(--danger)' : 'var(--success)'};">${isRef ? '-' : '+'}${fmtMoney(tx.paidAmount || tx.totalAmount || 0)}</strong></td>
+                            <td>${tx.paymentMethod || '-'}</td>
+                          </tr>
+                        `;
+                      }).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ` : ''}
+
             <div class="table-responsive">
               <table>
                 <thead>
@@ -9417,7 +9819,7 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
                     <td>+${m.palletsDelivered} بالتة (${fmtMoney(m.palletsDeliveredValue)})</td>
                     <td>-${m.palletsReceived} بالتة (${fmtMoney(m.palletsReceivedValue)})</td>
                     <td>${fmtMoney(m.palletUnitPrice)}</td>
-                    <td style="color:var(--primary);font-size:0.95rem;">صافي (${m.netPalletsAtClient} بالتة) = ${fmtMoney(m.netPalletsValue)}</td>
+                    <td style="color:var(--primary);font-size:0.95rem;">صافي (${m.netPalletsAtClient} بالتة) = ${fmtMoney(m.netPalletsValue)} | مسدد تأمين: ${fmtMoney(m.netPalletDepositPaid)}</td>
                     <td colspan="${isFullAdmin(currentUser) ? 2 : 1}"></td>
                   </tr>
                 </tfoot>
@@ -9442,9 +9844,10 @@ function openClientPaymentModal(clientId) {
       <div class="modal-box" style="max-width:600px;">
         <div class="card-header">
           <div>
-            <div class="card-title">💵 تسجيل تحصيل دفعة مالية / شيك تحت التحصيل (${pt.code || 'CL'} - ${pt.name})</div>
+            <div class="card-title">💵 تسجيل تحصيل دفعة مالية / تأمين بالتات / شيك (${pt.code || 'CL'} - ${pt.name})</div>
             <small style="color:var(--text-muted);">
               الرصيد الحالي قبل السند: <strong>${m.netDebt > 0 ? 'مدين (عليه للمصنع): ' + fmtMoney(m.netDebt) : m.netDebt < 0 ? 'دائن (له مستحقات): ' + fmtMoney(Math.abs(m.netDebt)) : 'خالص (0 ج.م)'}</strong>
+              ${m.netPalletDepositPaid > 0 ? ` | <span style="color:#6d28d9;font-weight:800;">🛡️ مسدد بحساب تأمين البالتات: ${fmtMoney(m.netPalletDepositPaid)}</span>` : ''}
             </small>
           </div>
           <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
@@ -9459,7 +9862,9 @@ function openClientPaymentModal(clientId) {
             <div class="form-group">
               <label>نوع التسوية المالية</label>
               <select id="cpay-type" class="form-control" onchange="toggleClientPaymentCheckFields()">
-                <option value="client_payment">💵 تحصيل دفعة مسددة فوراً من العميل (تخصم من مديونيته)</option>
+                <option value="client_payment">💵 تحصيل دفعة قشرة مسددة فوراً من العميل (تخصم من مديونيته)</option>
+                <option value="pallet_deposit_payment">🛡️ تحصيل تأمين بالتات (يُضاف في حساب تأمين البالتات للعميل)</option>
+                <option value="pallet_deposit_refund">🔄 رد مبلغ تأمين بالتات للعميل (عند إرجاع البالتات للمصنع)</option>
                 <option value="check_under_collection">📝 تسجيل شيك تحت التحصيل (يُضاف لمدفوعات العميل عند تحصيله)</option>
                 <option value="sales_invoice">🧾 إضافة مديونية / مطالبة مالية على العميل</option>
                 <option value="client_credit">🎁 إشعار خصم مكتسب / تسوية لصالح العميل</option>
@@ -9502,7 +9907,7 @@ function openClientPaymentModal(clientId) {
 
             <div class="form-group" style="grid-column: 1 / -1;">
               <label>بيان السند / الملاحظات</label>
-              <input id="cpay-notes" class="form-control" placeholder="مثال: دفعة من حساب الطلبيات السابقة..." required />
+              <input id="cpay-notes" class="form-control" placeholder="مثال: دفعة من حساب الطلبيات السابقة أو تأمين بالتات..." required />
             </div>
           </div>
 
@@ -9568,6 +9973,8 @@ function submitClientPayment(e, clientId) {
     return;
   }
 
+  const isPalletDeposit = txType === 'pallet_deposit_payment' || txType === 'pallet_deposit_refund' || isPalletDepositTransaction({ description: notes });
+
   if (txType === 'sales_invoice') {
     state.financialTransactions.unshift({
       id: uid('fin'),
@@ -9587,15 +9994,25 @@ function submitClientPayment(e, clientId) {
       updatedAt: now
     });
   } else {
+    const finalType = txType === 'pallet_deposit_refund' ? 'pallet_deposit_refund' : isPalletDeposit ? 'pallet_deposit_payment' : txType;
+    const finalTypeLabel = finalType === 'pallet_deposit_refund'
+      ? 'حساب تأمين البالتات (رد تأمين بالتات للعميل)'
+      : finalType === 'pallet_deposit_payment'
+        ? 'حساب تأمين البالتات (تحصيل تأمين بالتات)'
+        : txType === 'client_credit'
+          ? 'إشعار خصم / مستحقات للعميل'
+          : 'سند تحصيل دفعة من عميل';
+
     state.financialTransactions.unshift({
       id: uid('fin'),
       voucherNo: vchNo,
       date: opDate,
-      type: txType,
-      typeLabel: txType === 'client_credit' ? 'إشعار خصم / مستحقات للعميل' : 'سند تحصيل دفعة من عميل',
+      type: finalType,
+      accountType: isPalletDeposit ? 'pallet_deposit' : 'veneer',
+      typeLabel: finalTypeLabel,
       partnerId: pt.id,
       partnerName: pt.name,
-      description: notes || `دفعة محصلة من العميل ${pt.name}`,
+      description: notes || (isPalletDeposit ? `تأمين بالتات - العميل ${pt.name}` : `دفعة محصلة من العميل ${pt.name}`),
       totalAmount: amount,
       paidAmount: amount,
       remainingAmount: 0,
@@ -9605,7 +10022,13 @@ function submitClientPayment(e, clientId) {
       updatedAt: now
     });
 
-    if (txType === 'client_payment') {
+    if (finalType === 'pallet_deposit_refund') {
+      if (method.includes('بنك') || method.includes('شيك')) {
+        state.treasuryBalances.bankAccount = Number(state.treasuryBalances.bankAccount || 0) - amount;
+      } else if (method.includes('نقدي')) {
+        state.treasuryBalances.cashVault = Number(state.treasuryBalances.cashVault || 0) - amount;
+      }
+    } else if (finalType === 'client_payment' || finalType === 'pallet_deposit_payment') {
       if (method.includes('بنك') || method.includes('شيك')) {
         state.treasuryBalances.bankAccount = Number(state.treasuryBalances.bankAccount || 0) + amount;
       } else if (method.includes('نقدي')) {
@@ -9615,7 +10038,318 @@ function submitClientPayment(e, clientId) {
   }
 
   closeModal();
-  saveState(`💵 تسجيل حركة مالية للعميل (${pt.code || ''} - ${pt.name}) بقيمة ${fmtMoney(amount)} بتاريخ ${opDate}`);
+  saveState(`${isPalletDeposit ? '🛡️ تسجيل حركة في حساب تأمين البالتات' : '💵 تسجيل حركة مالية'} للعميل (${pt.code || ''} - ${pt.name}) بقيمة ${fmtMoney(amount)} بتاريخ ${opDate}`);
+}
+
+// ============================================================================
+// DEDICATED PALLET DEPOSIT ACCOUNT MODAL (حساب تأمين البالتات للعملاء)
+// ============================================================================
+function openPalletDepositAccountModal(preselectedClientId = '', defaultOpType = 'pallet_deposit_payment') {
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  const clients = (state.partners || []).filter(p => p.type !== 'supplier');
+  const defaultClient = clients.find(c => c.id === preselectedClientId) || clients[0] || null;
+  const m = defaultClient ? computeClientMetrics(defaultClient) : null;
+  const defaultUnitPrice = getWoodenPalletUnitPrice(defaultClient) || 500;
+  const defaultCount = m && m.netPalletsAtClient > 0 ? m.netPalletsAtClient : 5;
+  const defaultAmount = +(defaultCount * defaultUnitPrice).toFixed(2);
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:650px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title" style="color:#6d28d9;">🛡️ حساب تأمين البالتات الخشبية للعميل (تحصيل / رد تأمين بالتات)</div>
+            <small style="color:var(--text-muted);">
+              تسجيل مبالغ تأمين البالتات المحصلة من العميل أو المرتردة له في <strong>حساب تأمين البالتات</strong> المستقل
+            </small>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <form onsubmit="submitPalletDepositAccountModal(event)">
+          <div class="form-grid">
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="color:#6d28d9;font-weight:800;">🤝 العميل</label>
+              <select id="pdep-client" class="form-control" required style="font-weight:800;border-color:#7c3aed;" onchange="onPalletDepositClientChange(this.value)">
+                ${clients.map(c => {
+                  const cm = computeClientMetrics(c);
+                  return `<option value="${c.id}" ${c.id === (defaultClient?.id || '') ? 'selected' : ''}>[${c.code || 'CL'}] ${c.name} — طرفه: ${cm.netPalletsAtClient} بالتة (${fmtMoney(cm.netPalletsValue)}) | مسدد تأمين: ${fmtMoney(cm.netPalletDepositPaid)}</option>`;
+                }).join('')}
+              </select>
+            </div>
+
+            <div id="pdep-client-status-banner" style="grid-column: 1 / -1;background:rgba(124,58,237,0.08);border:1.5px solid #7c3aed;border-radius:10px;padding:10px 12px;font-size:0.82rem;"></div>
+
+            <div class="form-group">
+              <label>تاريخ السند</label>
+              <input id="pdep-date" type="date" class="form-control" value="${todayStr()}" required />
+            </div>
+
+            <div class="form-group">
+              <label style="color:#6d28d9;font-weight:800;">نوع العملية في حساب تأمين البالتات</label>
+              <select id="pdep-type" class="form-control" style="font-weight:800;border-color:#7c3aed;" onchange="recalcPalletDepositModalLive()">
+                <option value="pallet_deposit_payment" ${defaultOpType !== 'pallet_deposit_refund' ? 'selected' : ''}>🛡️ تحصيل مبلغ تأمين بالتات من العميل (إيداع بحساب التأمين)</option>
+                <option value="pallet_deposit_refund" ${defaultOpType === 'pallet_deposit_refund' ? 'selected' : ''}>🔄 رد مبلغ تأمين بالتات للعميل (عند إرجاع البالتات للمصنع)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label style="color:#b45309;font-weight:800;">🪵 عدد البالتات</label>
+              <input id="pdep-count" type="number" min="1" class="form-control" value="${defaultCount}" oninput="recalcPalletDepositModalLive('count')" required style="font-weight:800;" />
+            </div>
+
+            <div class="form-group">
+              <label style="color:#b45309;font-weight:800;">💰 قيمة تأمين البالتة الواحدة (ج.م)</label>
+              <input id="pdep-unit-price" type="number" step="10" min="0" class="form-control" value="${defaultUnitPrice}" oninput="recalcPalletDepositModalLive('price')" required style="font-weight:800;" />
+            </div>
+
+            <div class="form-group">
+              <label style="color:var(--success);font-weight:800;">💎 إجمالي مبلغ تأمين البالتات (ج.م)</label>
+              <input id="pdep-amount" type="number" step="0.5" min="1" class="form-control" value="${defaultAmount}" oninput="recalcPalletDepositModalLive('amount')" required style="font-weight:900;font-size:1.05rem;border-color:#7c3aed;" />
+            </div>
+
+            <div class="form-group">
+              <label>طريقة الدفع / الخزينة</label>
+              <select id="pdep-method" class="form-control">
+                <option value="نقدي بالخزينة">💵 نقدي بالخزينة</option>
+                <option value="تحويل بنكي">🏦 تحويل بنكي</option>
+                <option value="شيك بنكي محصل فوراً">✅ شيك بنكي محصل فوراً</option>
+                <option value="تسوية حسابية">📒 تسوية مع حساب العميل</option>
+              </select>
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:800;font-size:0.84rem;">
+                <input id="pdep-also-move-pallets" type="checkbox" />
+                <span id="pdep-also-move-label">تسجيل حركة تسليم/استلام هذا العدد من البالتات الخشبية في سجل حركة البالتات أيضاً</span>
+              </label>
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label>البيان / الملاحظات</label>
+              <input id="pdep-notes" class="form-control" value="تأمين عدد ${defaultCount} بالتة" oninput="this.dataset.manual='1'" required style="font-weight:700;" />
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-primary" style="background:#7c3aed;border-color:#7c3aed;font-weight:800;">
+              🛡️ حفظ في حساب تأمين البالتات
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  onPalletDepositClientChange(defaultClient?.id || '');
+}
+
+function onPalletDepositClientChange(clientId) {
+  const pt = (state.partners || []).find(c => c.id === clientId);
+  const banner = document.getElementById('pdep-client-status-banner');
+  if (!pt) return;
+  const m = computeClientMetrics(pt);
+  if (banner) {
+    banner.innerHTML = `
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <span>🪵 البالتات طرف العميل: <strong>${m.netPalletsAtClient} بالتة</strong> (إجمالي قيمتها: <strong>${fmtMoney(m.netPalletsValue)}</strong>)</span>
+        <span>🛡️ المسدد في حساب تأمين البالتات: <strong style="color:#6d28d9;">${fmtMoney(m.netPalletDepositPaid)}</strong></span>
+        <span>${m.unpaidPalletDeposit > 0 ? `⚠️ غير مسدد: <strong style="color:var(--danger);">${fmtMoney(m.unpaidPalletDeposit)}</strong>` : `<strong style="color:var(--success);">✅ التأمين مغطى</strong>`}</span>
+      </div>
+    `;
+  }
+  const cntEl = document.getElementById('pdep-count');
+  const prEl = document.getElementById('pdep-unit-price');
+  if (cntEl && m.netPalletsAtClient > 0) cntEl.value = m.netPalletsAtClient;
+  if (prEl && m.palletUnitPrice > 0) prEl.value = m.palletUnitPrice;
+  recalcPalletDepositModalLive('count');
+}
+
+function recalcPalletDepositModalLive(trigger = '') {
+  const opType = document.getElementById('pdep-type')?.value || 'pallet_deposit_payment';
+  const cntEl = document.getElementById('pdep-count');
+  const prEl = document.getElementById('pdep-unit-price');
+  const amtEl = document.getElementById('pdep-amount');
+  const notesEl = document.getElementById('pdep-notes');
+  const moveLbl = document.getElementById('pdep-also-move-label');
+
+  const cnt = Math.max(0, Number(cntEl?.value || 0));
+  const pr = Math.max(0, Number(prEl?.value || 500));
+
+  if (trigger !== 'amount' && amtEl) {
+    amtEl.value = +(cnt * pr).toFixed(2);
+  }
+  if (moveLbl) {
+    moveLbl.textContent = opType === 'pallet_deposit_refund'
+      ? `تسجيل استلام عدد (${cnt}) بالتة مرتجعة من العميل في سجل حركة البالتات أيضاً`
+      : `تسجيل تسليم عدد (${cnt}) بالتة للعميل في سجل حركة البالتات أيضاً`;
+  }
+  if (notesEl && !notesEl.dataset.manual) {
+    notesEl.value = opType === 'pallet_deposit_refund'
+      ? `رد تأمين عدد ${cnt} بالتة للعميل`
+      : `تأمين عدد ${cnt} بالتة`;
+  }
+}
+
+function submitPalletDepositAccountModal(e) {
+  if (e) e.preventDefault();
+  const clientId = document.getElementById('pdep-client')?.value || '';
+  const pt = (state.partners || []).find(c => c.id === clientId);
+  if (!pt) return;
+
+  const opDate = document.getElementById('pdep-date')?.value || todayStr();
+  const opType = document.getElementById('pdep-type')?.value || 'pallet_deposit_payment';
+  const count = Math.max(0, Number(document.getElementById('pdep-count')?.value || 0));
+  const unitPrice = Math.max(0, Number(document.getElementById('pdep-unit-price')?.value || 500));
+  const amount = Math.max(0, Number(document.getElementById('pdep-amount')?.value || 0));
+  const method = document.getElementById('pdep-method')?.value || 'نقدي بالخزينة';
+  const alsoMove = Boolean(document.getElementById('pdep-also-move-pallets')?.checked);
+  const notes = (document.getElementById('pdep-notes')?.value || '').trim();
+  const now = new Date().toISOString();
+  const vchNo = `PDEP-${Date.now().toString().slice(-5)}`;
+  const isRefund = opType === 'pallet_deposit_refund';
+
+  state.financialTransactions = state.financialTransactions || [];
+  state.financialTransactions.unshift({
+    id: uid('fin'),
+    voucherNo: vchNo,
+    date: opDate,
+    type: isRefund ? 'pallet_deposit_refund' : 'pallet_deposit_payment',
+    accountType: 'pallet_deposit',
+    palletsCount: count,
+    palletUnitPrice: unitPrice,
+    typeLabel: isRefund ? 'حساب تأمين البالتات (رد تأمين بالتات للعميل)' : 'حساب تأمين البالتات (تحصيل تأمين بالتات)',
+    partnerId: pt.id,
+    partnerName: pt.name,
+    description: notes || (isRefund ? `رد تأمين عدد ${count} بالتة` : `تأمين عدد ${count} بالتة`),
+    totalAmount: amount,
+    paidAmount: amount,
+    remainingAmount: 0,
+    paymentMethod: method,
+    createdBy: currentUser?.name || 'الحسابات',
+    approvedBy: currentUser?.name || 'الحسابات',
+    updatedAt: now
+  });
+
+  if (isRefund) {
+    if (method.includes('بنك') || method.includes('شيك')) {
+      state.treasuryBalances.bankAccount = Number(state.treasuryBalances.bankAccount || 0) - amount;
+    } else if (method.includes('نقدي')) {
+      state.treasuryBalances.cashVault = Number(state.treasuryBalances.cashVault || 0) - amount;
+    }
+  } else {
+    if (method.includes('بنك') || method.includes('شيك')) {
+      state.treasuryBalances.bankAccount = Number(state.treasuryBalances.bankAccount || 0) + amount;
+    } else if (method.includes('نقدي')) {
+      state.treasuryBalances.cashVault = Number(state.treasuryBalances.cashVault || 0) + amount;
+    }
+  }
+
+  if (alsoMove && count > 0) {
+    state.palletMovements = state.palletMovements || [];
+    state.palletMovements.unshift({
+      id: uid('plm'),
+      voucherNo: `PLT-${Date.now().toString().slice(-5)}`,
+      date: opDate,
+      clientId: pt.id,
+      clientCode: pt.code || 'CL',
+      clientName: pt.name,
+      deliveredCount: isRefund ? 0 : count,
+      receivedCount: isRefund ? count : 0,
+      palletUnitPrice: unitPrice,
+      totalDeliveredValue: isRefund ? 0 : +(count * unitPrice).toFixed(2),
+      totalReceivedValue: isRefund ? +(count * unitPrice).toFixed(2) : 0,
+      carPlateNumber: '',
+      notes: notes || (isRefund ? `استلام ${count} بالتة ورد التأمين` : `تسليم ${count} بالتة وتحصيل التأمين`),
+      createdBy: currentUser?.name || 'الحسابات',
+      updatedAt: now
+    });
+  }
+
+  closeModal();
+  saveState(`🛡️ ${isRefund ? 'رد تأمين بالتات من حساب تأمين البالتات' : 'تحصيل تأمين بالتات في حساب تأمين البالتات'} للعميل (${pt.code || ''} - ${pt.name}) بعدد (${count} بالتة) بقيمة ${fmtMoney(amount)}`);
+}
+
+function printPalletDepositAccountReportPdf() {
+  const allClients = (state.partners || []).filter(p => p.type !== 'supplier');
+  const enriched = allClients.map(c => ({ partner: c, metrics: computeClientMetrics(c) }))
+    .filter(({ metrics: m }) => m.palletsDelivered > 0 || m.palletsReceived > 0 || m.netPalletsAtClient !== 0 || m.netPalletDepositPaid !== 0 || m.palletDepositTxs.length > 0);
+  const totalPalletsOut = enriched.reduce((s, x) => s + x.metrics.netPalletsAtClient, 0);
+  const totalPalletsVal = enriched.reduce((s, x) => s + x.metrics.netPalletsValue, 0);
+  const totalDepositPaid = enriched.reduce((s, x) => s + x.metrics.netPalletDepositPaid, 0);
+  const allPalletTxs = (state.financialTransactions || []).filter(tx => isPalletDepositTransaction(tx));
+
+  const html = `
+    <div class="pdf-report-wrap">
+      ${buildStandardPdfHeaderHtml('كشف حساب تأمين البالتات الخشبية للعملاء', `إجمالي البالتات طرف العملاء: ${totalPalletsOut} بالتة (${fmtMoney(totalPalletsVal)}) | إجمالي المسدد بحساب التأمين: ${fmtMoney(totalDepositPaid)}`)}
+      <table class="pdf-report-table">
+        <thead>
+          <tr>
+            <th>م</th>
+            <th>الكود والعميل</th>
+            <th>مسلم للعميل</th>
+            <th>مستلم من العميل</th>
+            <th>صافي البالتات طرفه</th>
+            <th>قيمة البالتة</th>
+            <th>إجمالي التأمين المطلوب</th>
+            <th>المسدد في حساب تأمين البالتات</th>
+            <th>المتبقي غير المسدد</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${enriched.map(({ partner: pt, metrics: m }, idx) => `
+            <tr>
+              <td>${idx + 1}</td>
+              <td><strong>${pt.name}</strong> (${pt.code || 'CL'})</td>
+              <td>${m.palletsDelivered}</td>
+              <td>${m.palletsReceived}</td>
+              <td><strong>${m.netPalletsAtClient} بالتة</strong></td>
+              <td>${fmtMoney(m.palletUnitPrice)}</td>
+              <td><strong>${fmtMoney(m.netPalletsValue)}</strong></td>
+              <td><strong>${fmtMoney(m.netPalletDepositPaid)}</strong></td>
+              <td>${fmtMoney(m.unpaidPalletDeposit)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+
+      ${allPalletTxs.length > 0 ? `
+        <h4 style="margin:12px 0 6px;">سجل السندات المالية في حساب تأمين البالتات (${allPalletTxs.length} سند):</h4>
+        <table class="pdf-report-table">
+          <thead>
+            <tr>
+              <th>م</th>
+              <th>رقم السند</th>
+              <th>التاريخ</th>
+              <th>العميل</th>
+              <th>نوع الحركة</th>
+              <th>البيان</th>
+              <th>المبلغ</th>
+              <th>طريقة الدفع</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${allPalletTxs.map((tx, idx) => `
+              <tr>
+                <td>${idx + 1}</td>
+                <td><strong>${tx.voucherNo}</strong></td>
+                <td>${tx.date}</td>
+                <td><strong>${tx.partnerName || '-'}</strong></td>
+                <td>${tx.type === 'pallet_deposit_refund' ? 'رد تأمين بالتات' : 'تحصيل تأمين بالتات'}</td>
+                <td>${tx.description || '-'}</td>
+                <td><strong>${fmtMoney(tx.paidAmount || tx.totalAmount || 0)}</strong></td>
+                <td>${tx.paymentMethod || '-'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      ` : ''}
+      ${buildStandardPdfFooterHtml()}
+    </div>
+  `;
+  openUniversalPrintDocument(html, 'كشف حساب تأمين البالتات الخشبية للعملاء', false);
 }
 
 // ============================================================================
@@ -12407,7 +13141,7 @@ function buildOfficialOrderStatementPdfHtml(ord) {
     : +(oldVeneerDebt + (oldPalletsCount * palletUnitPrice)).toFixed(2);
   const previousDebtLabel = (ord.manualDebtOverride && ord.previousDebtLabel)
     ? ord.previousDebtLabel.replace(/[{}ـ]/g, '').trim()
-    : buildPreviousDebtStatementText(oldVeneerDebt, oldPalletsCount, palletUnitPrice);
+    : buildPreviousDebtStatementText(oldVeneerDebt, oldPalletsCount, palletUnitPrice, clientObj);
 
   const returnedPalletsCount = ord.returnedPalletsCount !== undefined
     ? Math.max(0, Number(ord.returnedPalletsCount || 0))
@@ -12965,8 +13699,8 @@ function printClientFullStatement(clientId) {
           <td style="border:1px solid #000;padding:8px;"><strong>بالتات مسلمة للعميل:</strong> ${m.palletsDelivered} بالتة (${fmtMoney(m.palletsDeliveredValue || 0)})</td>
           <td style="border:1px solid #000;padding:8px;"><strong>بالتات مستلمة من العميل:</strong> ${m.palletsReceived} بالتة (${fmtMoney(m.palletsReceivedValue || 0)})</td>
           <td style="border:1px solid #000;padding:8px;font-size:14px;">
-            <strong>صافي البالتات طرف العميل:</strong> ${m.netPalletsAtClient} بالتة<br/>
-            <span style="font-size:12px;">قيمة البالتة: <strong>${fmtMoney(m.palletUnitPrice || 0)}</strong> | إجمالي قيمة البالتات: <strong>${fmtMoney(Math.abs(m.netPalletsValue || 0))}</strong></span>
+            <strong>حساب تأمين البالتات طرف العميل:</strong> ${m.netPalletsAtClient} بالتة (${fmtMoney(Math.abs(m.netPalletsValue || 0))})<br/>
+            <span style="font-size:12px;">قيمة البالتة: <strong>${fmtMoney(m.palletUnitPrice || 0)}</strong> | المسدد في حساب تأمين البالتات: <strong>${fmtMoney(m.netPalletDepositPaid || 0)}</strong></span>
           </td>
         </tr>
       </table>
