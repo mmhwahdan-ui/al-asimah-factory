@@ -4689,6 +4689,9 @@ function renderProductionLogTableSection() {
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#d97706,#b45309);color:#fff;font-weight:900;" onclick="openAiLogToMultiPalletProductionModal()">
+            🪵⚙️ تشغيل جذع + إنتاج بالتات متعددة (جودة وتخانة) للمخزن
+          </button>
           <button class="btn btn-sm btn-primary" onclick="openWarehouseOpShortcut('in')">
             📥 تسجيل إضافة إنتاج جديد للمخزن
           </button>
@@ -16429,6 +16432,7 @@ function getRoleSpecificAiSuggestions() {
   if (!showPrices) {
     // Warehouse Keeper suggestions (100% quantities, orders, calculator sheets, voice operations — NO prices)
     return [
+      { label: '🪵⚙️ تشغيل جذع + إنتاج بالتات متعددة (جودة وتخانة)', cmd: 'تشغيل جذع 87314 وإنتاج 400 فرخ 1.5 قص C و 300 فرخ 1.2 قص ABC+' },
       { label: '📦 إجمالي رصيد المخزن الآن', cmd: 'كم إجمالي رصيد مخزن القشرة الآن؟' },
       { label: '⏳ الطلبيات المطلوبة مني بالمخزن', cmd: 'ما هي الطلبيات المعلقة المطلوب تجهيزها أو صرفها؟' },
       { label: '🧮 كم فرخ في المتر المكعب تخانة 1.5؟', cmd: 'كم عدد الأفرخ في المتر المكعب لتخانة 1.5 مم؟' },
@@ -16441,6 +16445,7 @@ function getRoleSpecificAiSuggestions() {
   }
 
   return [
+    { label: '🪵⚙️ تشغيل جذع + إنتاج بالتات متعددة (جودة وتخانة)', cmd: 'تشغيل جذع 87314 وإنتاج 400 فرخ 1.5 قص C و 300 فرخ 1.2 قص ABC+ و 200 فرخ 1.5 سدا R' },
     { label: '📊 ملخص المخزن والمبيعات والمديونيات', cmd: 'اعطني ملخص شامل للمصنع والمخزن والمبيعات' },
     { label: '⏳ الطلبيات المعلقة للموافقة أو الصرف', cmd: 'ما هي الطلبيات المعلقة حالياً؟' },
     { label: '🧮 احسب تخانة 1.5 بسعر متر 22000', cmd: 'احسب عدد الأفرخ وسعر الفرخ لتخانة 1.5 بسعر متر 22000' },
@@ -16467,8 +16472,9 @@ function openSmartAiAssistantModal(initialCommand = '') {
         </div>
         <div style="font-size:0.86rem;line-height:1.6;">
           يمكنك التحدث معي <strong>بالصوت باللغة العربية 🎤</strong> أو بالكتابة لتنفيذ المهام فوراً:<br/>
+          • <strong>🪵⚙️ تشغيل الجذع وإنتاج بالتات متعددة الجودة والتخانة:</strong> قل مثلاً <em>"تشغيل جذع 87314 وإنتاج 400 فرخ 1.5 قص C و 300 فرخ 1.2 قص ABC+"</em> أو اضغط زر <strong>"🪵⚙️ تشغيل جذع وإنتاج بالتات متعددة للمخزن"</strong> بالأسفل لربط الجذع بتنزيل البالتات وحساب الاستخراج والهالك فوراً!<br/>
           • <strong>استعلام لحظي:</strong> اسأل عن رصيد أي تخانة أو جودة (مثل: <em>"رصيد 1.5 قص"</em> أو <em>"إجمالي المخزن"</em>).<br/>
-          • <strong>أوامر تشغيل سريعة بالصوت:</strong> قل مثلاً <em>"إضافة إنتاج 400 فرخ 1.5 قص جودة C"</em> أو <em>"صرف مبيعات 150 قطعة 1.3 قص"</em> وسأفتح لك النافذة جاهزة بالأرقام للتأكيد!<br/>
+          • <strong>أوامر تشغيل سريعة بالصوت:</strong> قل مثلاً <em>"إضافة إنتاج 400 فرخ 1.5 قص جودة C"</em> أو <em>"صرف مبيعات 150 قطعة 1.3 قص"</em>.<br/>
           • <strong>حاسبة القشرة الفورية:</strong> قل <em>"كم فرخ في المتر المكعب تخانة 1.5${showPrices ? ' وسعر المتر 22000' : ''}؟"</em>.<br/>
           • <strong>متابعة الطلبيات والعملاء:</strong> اسأل عن <em>"الطلبيات المعلقة"</em> أو اسم أي عميل.
         </div>
@@ -16510,6 +16516,9 @@ function openSmartAiAssistantModal(initialCommand = '') {
         <div style="margin-bottom:10px;">
           <div style="font-size:0.76rem;font-weight:800;color:var(--text-muted);margin-bottom:5px;">⚡ أوامر واستعلامات سريعة بضغطة واحدة (أو اضغط الميكروفون وتحدث):</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm" style="font-size:0.76rem;padding:5px 11px;background:linear-gradient(135deg,#d97706,#b45309);color:#fff;font-weight:900;box-shadow:0 3px 10px rgba(217,119,6,0.3);" onclick="openAiLogToMultiPalletProductionModal()">
+              🪵⚙️ تشغيل الجذع + إنتاج بالتات متعددة الجودة والتخانة للمخزن
+            </button>
             <button type="button" class="btn btn-sm" style="font-size:0.75rem;padding:4px 10px;background:linear-gradient(135deg,#0f766e,#0d9488);color:#fff;font-weight:800;" onclick="runSmartAiQuickChip('عرض حاويات وسيريالات الجذوع')">
               🚢 حاويات الجذوع (Packing List)
             </button>
@@ -16743,11 +16752,24 @@ function processSmartAiCommand(rawText) {
   const isSalesOutCmd = /(خروج|صرف|بيع|مبيعات)/.test(norm) && /(فرخ|افرخ|قطع|تخانه|مم|قص|سدا)/.test(norm);
   const isReworkCmd = /(اعاده تشغيل|تدوير|فرز)/.test(norm) && /(فرخ|افرخ|قطع|تخانه|مم)/.test(norm);
 
-  // 0. Detect Log Containers / Packing List PDF / Log Serials Commands
-  const isLogSerialProcessCmd = /(تشغيل|شغل)\s*(جذع|جزع|سيريال|سريال)/.test(norm) && /\d{3,}/.test(norm);
-  const isLogsOrPackingQuery = /(حاويه|حاويات|جذوع|جزوع|سيريال|سريال|packing|باكنج|5559|dedoncker)/.test(norm);
+  // 0. Detect Combined "Operate Log + Multi-Grade/Thickness Pallets Production" OR Multi-Pallet Production Command
+  const parsedLogMultiPlan = parseAiLogAndMultiPalletsCommand(rawText);
+  const isCombinedLogProdCmd =
+    (/(تشغيل|شغل|تقشير)\s*(ال)?(جذع|جزع|جذوع|جزوع|سيريال|سريال)/.test(norm) && /(انتاج|بالت|بلت|فرخ|افرخ|قطع|تخانه|جوده|مخزن)/.test(norm)) ||
+    /(بالتات متعدده|بلتات متعدده|متعدده الجوده|متعدد الجوده)/.test(norm) ||
+    (isProdInCmd && parsedLogMultiPlan.palletRows.length > 1) ||
+    (parsedLogMultiPlan.matchedLogs.length > 0 && parsedLogMultiPlan.palletRows.length > 0);
 
-  if (isLogSerialProcessCmd) {
+  // 0.b Detect Log Containers / Packing List PDF / Log Serials Commands
+  const isLogSerialProcessCmd = !isCombinedLogProdCmd && /(تشغيل|شغل)\s*(جذع|جزع|سيريال|سريال)/.test(norm) && /\d{3,}/.test(norm);
+  const isLogsOrPackingQuery = !isCombinedLogProdCmd && /(حاويه|حاويات|جذوع|جزوع|سيريال|سريال|packing|باكنج|5559|dedoncker)/.test(norm);
+
+  if (isCombinedLogProdCmd) {
+    const planResult = buildAiLogAndMultiPalletChatResponse(parsedLogMultiPlan);
+    speechSummary = planResult.speechSummary;
+    responseHtml = planResult.responseHtml;
+  }
+  else if (isLogSerialProcessCmd) {
     if (!canManageLogSerialsAndProduction(currentUser)) {
       speechSummary = 'عفواً، صلاحية تشغيل سيريال الجذوع مخصصة للمدير التنفيذي ومدير المشروعات والمدير الإداري فقط.';
       responseHtml = `<div style="color:var(--danger);font-weight:800;">⛔ صلاحية إدخال وتشغيل سيريال الجذوع مخصصة للمدير التنفيذي ومدير المشروعات والمدير الإداري فقط.</div>`;
@@ -16760,7 +16782,12 @@ function processSmartAiCommand(rawText) {
           <div style="border-right:4px solid #7c3aed;padding-right:10px;">
             <div style="font-weight:900;color:#5b21b6;margin-bottom:6px;">⚙️ تم تنفيذ أمر تشغيل الجذوع بالسيريال فوراً:</div>
             <p style="margin:4px 0;">السيريالات المطلوبة: <strong>${serialTokens.join(' ، ')}</strong></p>
-            <button type="button" class="btn btn-sm btn-primary" onclick="closeSmartAiModal(); setTab('raw');">🌲 فتح شاشة حاويات وسيريالات الجذوع</button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+              <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#d97706,#b45309);color:#fff;font-weight:900;" onclick="openAiLogToMultiPalletProductionModal('${serialTokens[0]}')">
+                🪵📥 تسجيل إنتاج البالتات الناتجة من الجذع (${serialTokens[0]}) للمخزن
+              </button>
+              <button type="button" class="btn btn-sm btn-primary" onclick="closeSmartAiModal(); setTab('raw');">🌲 فتح شاشة حاويات وسيريالات الجذوع</button>
+            </div>
           </div>
         `;
       }
@@ -17407,6 +17434,11 @@ function renderLogContainersAndSerialsSection() {
           <button type="button" class="btn btn-sm btn-outline" onclick="printLogContainersAndSerialsReportPdf()">
             🖨️ طباعة بيان الحاويات والجذوع PDF
           </button>
+          ${(canOperateLogs || hasPerm('warehouseIssueReceive')) ? `
+            <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#d97706,#b45309);color:#fff;font-weight:900;" onclick="openAiLogToMultiPalletProductionModal()">
+              🪵⚙️ تشغيل جذع + إنتاج بالتات متعددة الجودة والتخانة للمخزن
+            </button>
+          ` : ''}
           ${canOperateLogs ? `
             <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;font-weight:800;" onclick="openQuickLogSerialDispatchModal()">
               ⚙️ إدخال سيريال جذوع للتشغيل (المدير التنفيذي / المشروعات / الإداري)
@@ -17623,14 +17655,19 @@ function renderLogContainersAndSerialsSection() {
                         `}
                       </td>
                       <td>
-                        ${isProc ? `<small>📅 ${fmtDate(l.processedAt)}<br/>بواسطة: <strong>${l.processedBy || '-'}</strong></small>` : '-'}
+                        ${isProc ? `<small>📅 ${fmtDate(l.processedAt)}<br/>بواسطة: <strong>${l.processedBy || '-'}</strong>${l.producedSummary ? `<br/><span style="color:var(--success);font-weight:800;">🪵 ${l.producedSummary}</span>` : ''}</small>` : '-'}
                       </td>
                       <td>
                         <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                          ${(canOperateLogs || hasPerm('warehouseIssueReceive')) && !isProc ? `
+                            <button type="button" class="btn btn-sm" style="padding:3px 8px;background:linear-gradient(135deg,#d97706,#b45309);color:#fff;font-weight:800;" onclick="openAiLogToMultiPalletProductionModal('${l.id}')" title="تشغيل هذا الجذع وتسجيل إنتاج بالتات متعددة الجودة والتخانة في المخزن">
+                              🪵📥 تشغيل + إنتاج بالتات
+                            </button>
+                          ` : ''}
                           ${canOperateLogs ? `
                             ${!isProc ? `
                               <button type="button" class="btn btn-sm btn-primary" style="padding:3px 8px;background:#7c3aed;border-color:#7c3aed;" onclick="toggleSingleLogProcessStatus('${l.id}', true)">
-                                ⚙️ تشغيل الجذع
+                                ⚙️ تشغيل فقط
                               </button>
                             ` : `
                               <button type="button" class="btn btn-sm btn-outline" style="padding:3px 8px;" onclick="toggleSingleLogProcessStatus('${l.id}', false)" title="إلغاء التشغيل وإرجاع الجذع للرصيد المتاح">
@@ -19654,6 +19691,1095 @@ function printLogContainersAndSerialsReportPdf() {
       </table>
     `,
     true
+  );
+}
+
+// ============================================================================
+// SMART AI LOG OPERATION + MULTI-GRADE & MULTI-THICKNESS PALLETS PRODUCTION
+// (تشغيل الجذع وربطه بالنظام + إنتاج بالتات متعددة الجودة والتخانة ودخولها المخزن)
+// ============================================================================
+let draftAiLogProdSelectedIds = [];
+let draftAiLogProdContainerFilter = 'all';
+let draftAiLogProdSearchQuery = '';
+let draftAiLogProdRows = [];
+
+function createDefaultAiLogPalletRow(overrides = {}) {
+  const thicknesses = getSortedThicknesses();
+  const grades = state.catalog?.grades || [];
+  const firstWood = state.catalog?.woodTypes?.[0] || { id: 'wt-general', name: 'قشرة خشبية (250×125)' };
+
+  const chosenThk = overrides.thkObj || thicknesses.find(t => Number(t.mm) === 1.5 && (t.direction || 'qas') === 'qas') || thicknesses[0] || {
+    id: 'th-1.5-qas',
+    mm: 1.5,
+    direction: 'qas',
+    directionLabel: 'اتجاه قص'
+  };
+  const chosenGrade = overrides.gradeObj || grades[0] || { id: 'gr-c', code: 'C', name: 'جودة C' };
+  const nextSeq = (state.pallets?.length || 0) + (draftAiLogProdRows?.length || 0) + 1;
+  const autoPrice = getCellUnitPrice(chosenThk.id, chosenGrade.id, chosenThk.mm, chosenThk.direction);
+
+  return {
+    id: uid('aiprod'),
+    palletCode: overrides.palletCode || `PLT-2026-${String(nextSeq).padStart(3, '0')}`,
+    woodTypeId: overrides.woodTypeId || firstWood.id,
+    woodTypeName: overrides.woodTypeName || firstWood.name,
+    lengthCm: Number(overrides.lengthCm || 250),
+    widthCm: Number(overrides.widthCm || 125),
+    thicknessId: chosenThk.id,
+    thicknessMm: Number(chosenThk.mm || 1.5),
+    direction: chosenThk.direction || 'qas',
+    directionLabel: (chosenThk.direction || 'qas') === 'sada' ? 'اتجاه سدا' : 'اتجاه قص',
+    gradeId: chosenGrade.id,
+    gradeCode: chosenGrade.code || 'C',
+    gradeName: chosenGrade.name || 'جودة C',
+    palletsCount: Math.max(1, Number(overrides.palletsCount || 1)),
+    sheetsCount: Math.max(1, Number(overrides.sheetsCount || 400)),
+    unitPrice: overrides.unitPrice !== undefined ? Number(overrides.unitPrice) : autoPrice,
+    notes: overrides.notes || ''
+  };
+}
+
+function parseSinglePalletClauseFromAi(clauseNorm, seqIdx = 0) {
+  const thicknesses = getSortedThicknesses();
+  const grades = state.catalog?.grades || [];
+  const dir = /(سدا|سدي)/.test(clauseNorm) ? 'sada' : 'qas';
+
+  let matchedThk = null;
+  for (const t of thicknesses) {
+    const mmStr = String(t.mm);
+    const regex = new RegExp(`(^|\\s|تخانه)${mmStr.replace('.', '\\.')}(\\s|مم|ملي|$)`);
+    if (regex.test(clauseNorm) && (t.direction || 'qas') === dir) {
+      matchedThk = t;
+      break;
+    }
+  }
+  if (!matchedThk) {
+    for (const t of thicknesses) {
+      const mmStr = String(t.mm);
+      if (clauseNorm.includes(mmStr) && (t.direction || 'qas') === dir) {
+        matchedThk = t;
+        break;
+      }
+    }
+  }
+  if (!matchedThk) {
+    matchedThk = thicknesses.find(t => (t.direction || 'qas') === dir) || thicknesses[0] || { id: 'th-1.5-qas', mm: 1.5, direction: 'qas' };
+  }
+
+  let matchedGrade = null;
+  if (/abc\+|اي بي سي|ايه بي سي/.test(clauseNorm)) {
+    matchedGrade = grades.find(g => g.code.toLowerCase().includes('abc'));
+  } else if (/c\+|ps|k-b|سي بلس/.test(clauseNorm)) {
+    matchedGrade = grades.find(g => g.code.toLowerCase().includes('c+') || g.code.toLowerCase().includes('ps'));
+  } else if (/قطع|p-\s*c/.test(clauseNorm)) {
+    matchedGrade = grades.find(g => g.name.includes('قطع') || g.code.includes('قطع') || g.code.toLowerCase().includes('p-'));
+  } else if (/(جوده\s*r|درجه\s*r|\br\b|ار)/.test(clauseNorm)) {
+    matchedGrade = grades.find(g => g.code.toUpperCase() === 'R');
+  } else if (/(جوده\s*c|درجه\s*c|\bc\b|سي)/.test(clauseNorm)) {
+    matchedGrade = grades.find(g => g.code.toUpperCase() === 'C');
+  }
+  if (!matchedGrade) matchedGrade = grades[seqIdx % Math.max(1, grades.length)] || { id: 'gr-c', code: 'C', name: 'جودة C' };
+
+  let palletsCount = 1;
+  const palMatch = clauseNorm.match(/(\d+)\s*(بالته|بالتات|بلته|بلتات|طبليه|طبليات)/);
+  if (palMatch) {
+    palletsCount = Math.max(1, Number(palMatch[1]));
+  }
+
+  const allNums = (clauseNorm.match(/\d+(\.\d+)?/g) || []).map(Number);
+  let sheetsCount = 400 * palletsCount;
+  const shMatch = clauseNorm.match(/(\d+)\s*(فرخ|افرخ|قطعه|قطع|ورقه)/);
+  if (shMatch) {
+    sheetsCount = Math.max(1, Number(shMatch[1]));
+  } else {
+    for (const n of allNums) {
+      if (n !== Number(matchedThk.mm) && n !== palletsCount && n !== 125 && n !== 250 && n >= 20 && n < 10000 && Number.isInteger(n)) {
+        sheetsCount = n;
+        break;
+      }
+    }
+  }
+
+  const nextSeq = (state.pallets?.length || 0) + seqIdx + 1;
+  return createDefaultAiLogPalletRow({
+    palletCode: `PLT-2026-${String(nextSeq).padStart(3, '0')}`,
+    thkObj: matchedThk,
+    gradeObj: matchedGrade,
+    palletsCount,
+    sheetsCount
+  });
+}
+
+function parseAiLogAndMultiPalletsCommand(rawText) {
+  const norm = normalizeArabicAiText(rawText || '').toLowerCase();
+  const allLogs = state.logItems || [];
+
+  // 1. Identify any log serials mentioned in rawText
+  const matchedLogs = [];
+  const matchedSerialSet = new Set();
+  const tokens = norm.match(/[a-z0-9\-]{3,}/gi) || [];
+  for (const tk of tokens) {
+    const foundLog = allLogs.find(l => String(l.serialNumber || '').toLowerCase() === tk.toLowerCase());
+    if (foundLog && !matchedSerialSet.has(foundLog.id)) {
+      matchedSerialSet.add(foundLog.id);
+      matchedLogs.push(foundLog);
+    }
+  }
+
+  // Remove matched log serial numbers from text before parsing pallet quantities so serials (like 87314) aren't mistaken for sheetsCount
+  let prodText = norm;
+  for (const l of matchedLogs) {
+    const serEsc = String(l.serialNumber).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    prodText = prodText.replace(new RegExp(serEsc, 'gi'), ' ');
+  }
+
+  // Split by conjunctions separating multiple pallet items (e.g. "و 300 فرخ", "+ 200 فرخ", "،")
+  const rawClauses = prodText
+    .split(/(?:\s+و\s*(?=\d|\s*(?:بالت|بلت|فرخ|تخانه|جوده|اضاف|انتاج))|\s*\+\s*|\s*[،,;؛]\s*|\n+)/)
+    .map(s => s.trim())
+    .filter(s => s.length > 0 && /(\d|فرخ|افرخ|قطع|تخانه|مم|قص|سدا|بالته|بالتات|بلته|بلتات)/.test(s));
+
+  const palletRows = [];
+  if (rawClauses.length > 0) {
+    rawClauses.forEach((cl, idx) => {
+      // Only add if it has either a quantity, thickness, or grade keyword
+      if (/(\d+\s*(فرخ|افرخ|قطعه|قطع|بالته|بالتات|بلته|بلتات|مم)|تخانه|جوده|قص|سدا|abc|\bc\b|\br\b)/.test(cl)) {
+        palletRows.push(parseSinglePalletClauseFromAi(cl, idx));
+      }
+    });
+  }
+
+  return {
+    matchedLogs,
+    palletRows
+  };
+}
+
+function buildAiLogAndMultiPalletChatResponse(plan) {
+  const showPrices = canSeeFinancialPrices();
+  let logsToUse = plan.matchedLogs || [];
+  // If user didn't specify a serial number, pick the first available in_stock log as a smart suggestion
+  if (logsToUse.length === 0) {
+    const firstAvailLog = (state.logItems || []).find(l => l.status !== 'processed');
+    if (firstAvailLog) logsToUse = [firstAvailLog];
+  }
+
+  let rowsToUse = plan.palletRows && plan.palletRows.length > 0 ? plan.palletRows : [
+    createDefaultAiLogPalletRow({ sheetsCount: 400, palletsCount: 1 }),
+    createDefaultAiLogPalletRow({
+      thkObj: getSortedThicknesses().find(t => Number(t.mm) === 1.2) || getSortedThicknesses()[0],
+      gradeObj: (state.catalog?.grades || [])[1] || (state.catalog?.grades || [])[0],
+      sheetsCount: 300,
+      palletsCount: 1,
+      palletCode: `PLT-2026-${String((state.pallets?.length || 0) + 2).padStart(3, '0')}`
+    })
+  ];
+
+  window._lastAiLogMultiPalletPlan = {
+    logIds: logsToUse.map(l => l.id),
+    palletRows: rowsToUse
+  };
+
+  const totalLogVolM3 = +logsToUse.reduce((s, l) => s + Number(l.volumeM3 || 0), 0).toFixed(4);
+  const totalPalletsCnt = rowsToUse.reduce((s, r) => s + Number(r.palletsCount || 1), 0);
+  const totalSheetsCnt = rowsToUse.reduce((s, r) => s + Number(r.sheetsCount || 0), 0);
+  const totalProdVolM3 = +rowsToUse.reduce((s, r) => {
+    const m = calculateVeneerMetrics(r.lengthCm || 250, r.widthCm || 125, r.thicknessMm || 1.5, r.sheetsCount || 0);
+    return s + m.totalVolumeM3;
+  }, 0).toFixed(4);
+
+  const actualYieldPct = totalLogVolM3 > 0 ? +((totalProdVolM3 / totalLogVolM3) * 100).toFixed(1) : 65;
+  const scrapM3 = totalLogVolM3 > 0 ? +Math.max(0, totalLogVolM3 - totalProdVolM3).toFixed(4) : 0;
+  const avgDensity = logsToUse.length > 0
+    ? Number((state.logContainers || []).find(c => c.id === logsToUse[0].containerId)?.densityTonPerM3 || 0.90)
+    : 0.90;
+  const scrapTon = +(scrapM3 * avgDensity).toFixed(3);
+
+  const speechSummary = `تم تجهيز خطة تشغيل ${logsToUse.length > 0 ? `الجذع سيريال ${logsToUse.map(l => l.serialNumber).join(' و ')} بتكعيب ${fmtNum(totalLogVolM3, 3)} متر مكعب` : 'الجذوع'} وإنتاج ${totalPalletsCnt} بالتة متعددة الجودة والتخانة بإجمالي ${totalSheetsCnt} فرخ وتكعيب ${fmtNum(totalProdVolM3, 3)} متر مكعب. اضغط على اعتماد وتنفيذ فوري أو افتح شاشة التوزيع.`;
+
+  const responseHtml = `
+    <div style="border-right:4px solid #d97706;padding-right:10px;">
+      <div style="font-weight:900;color:#b45309;margin-bottom:6px;font-size:0.95rem;">
+        🪵⚙️ منظومة المساعد الذكي: تشغيل الجذع + إنتاج بالتات متعددة الجودة والتخانة ودخولها المخزن
+      </div>
+
+      <!-- 1. Selected Log(s) Info -->
+      <div style="background:rgba(124,58,237,0.08);border:1.5px solid #7c3aed;border-radius:10px;padding:8px 12px;margin-bottom:8px;">
+        <div style="font-weight:800;color:#5b21b6;font-size:0.82rem;margin-bottom:4px;">
+          1️⃣ الجذع / الجذوع المربوطة بالتشغيل (يتم تحويل حالتها إلى "تم التشغيل" وخصمها من الخامات):
+        </div>
+        ${logsToUse.length === 0 ? `<small style="color:var(--text-muted);">لم يتم تحديد جذع بعد — يمكنك اختيار الجذع من شاشة التشغيل.</small>` : `
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            ${logsToUse.map(l => `
+              <span class="badge" style="background:#5b21b6;color:#fff;font-size:0.78rem;padding:4px 9px;">
+                🌲 سيريال: ${l.serialNumber} | حاوية: ${l.containerNumber} | الطول: ${l.lengthM}م × القطر: ${l.diameterCm}سم | التكعيب: ${fmtNum(l.volumeM3, 3)} م³
+              </span>
+            `).join('')}
+          </div>
+        `}
+      </div>
+
+      <!-- 2. Multi-Grade & Multi-Thickness Pallets Table -->
+      <div style="margin-bottom:8px;">
+        <div style="font-weight:800;color:var(--primary);font-size:0.82rem;margin-bottom:4px;">
+          2️⃣ البالتات متعددة الجودة والتخانة الجاهزة للدخول إلى مخزن القشرة التامة وجدول الإنتاج:
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>كود البالتة</th>
+                <th>المقاس</th>
+                <th>التخانة والاتجاه</th>
+                <th>درجة الجودة</th>
+                <th>عدد البالتات</th>
+                <th>عدد القطع (الأفرخ)</th>
+                <th>التكعيب (م³)</th>
+                ${showPrices ? '<th>القيمة</th>' : ''}
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsToUse.map((r, i) => {
+                const m = calculateVeneerMetrics(r.lengthCm, r.widthCm, r.thicknessMm, r.sheetsCount);
+                return `
+                  <tr>
+                    <td>${i + 1}</td>
+                    <td><strong>${r.palletCode}</strong></td>
+                    <td>${r.widthCm}×${r.lengthCm} سم</td>
+                    <td><strong>${r.thicknessMm} مم (${r.direction === 'sada' ? 'سدا' : 'قص'})</strong></td>
+                    <td><span class="badge badge-info">${r.gradeCode}</span></td>
+                    <td><strong>${r.palletsCount} بالتة</strong></td>
+                    <td><strong style="color:var(--success);">${fmtNum(r.sheetsCount, 0)} فرخ</strong></td>
+                    <td><strong>${fmtNum(m.totalVolumeM3, 4)} م³</strong></td>
+                    ${showPrices ? `<td>${fmtMoney(r.sheetsCount * (r.unitPrice || 0))}</td>` : ''}
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 3. Yield & Scrap Summary -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:6px;background:var(--bg-elevated);padding:8px 10px;border-radius:8px;margin-bottom:10px;font-size:0.78rem;">
+        <div><span>تكعيب الجذع الخام:</span><br/><strong style="color:#5b21b6;">${fmtNum(totalLogVolM3, 3)} م³</strong></div>
+        <div><span>إجمالي الإنتاج التام:</span><br/><strong style="color:var(--success);">${totalPalletsCnt} بالتة (${fmtNum(totalSheetsCnt, 0)} ق = ${fmtNum(totalProdVolM3, 3)} م³)</strong></div>
+        <div><span>نسبة الاستخراج الفعلية:</span><br/><strong style="color:var(--primary);">${fmtNum(actualYieldPct, 1)}%</strong></div>
+        <div><span>الهالك المرحّل للمخزن:</span><br/><strong style="color:var(--danger);">${fmtNum(scrapTon, 3)} طن (${fmtNum(scrapM3, 3)} م³)</strong></div>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button type="button" class="btn btn-success" style="font-weight:900;flex:1;min-width:220px;" onclick="executeLastAiLogMultiPalletPlanNow()">
+          ✅ اعتماد وتنفيذ فوري الآن (تشغيل الجذع + دخول البالتات للمخزن)
+        </button>
+        <button type="button" class="btn btn-primary" style="font-weight:900;flex:1;min-width:220px;background:linear-gradient(135deg,#d97706,#b45309);border:none;" onclick="openAiLogToMultiPalletProductionModalFromAiPlan()">
+          🛠️ فتح شاشة تشغيل الجذع وتوزيع البالتات المتعددة (للتعديل أو الإضافة)
+        </button>
+      </div>
+    </div>
+  `;
+
+  return { speechSummary, responseHtml };
+}
+
+function openAiLogToMultiPalletProductionModalFromAiPlan() {
+  const plan = window._lastAiLogMultiPalletPlan || { logIds: [], palletRows: [] };
+  openAiLogToMultiPalletProductionModal(plan.logIds, plan.palletRows);
+}
+
+function executeLastAiLogMultiPalletPlanNow() {
+  const plan = window._lastAiLogMultiPalletPlan;
+  if (!plan || !Array.isArray(plan.palletRows) || plan.palletRows.length === 0) {
+    openAiLogToMultiPalletProductionModal();
+    return;
+  }
+  const res = executeLogAndMultiPalletProductionBatch({
+    logIds: plan.logIds || [],
+    palletRows: plan.palletRows,
+    opDate: todayStr(),
+    recordScrap: true,
+    batchNotes: 'تشغيل جذع وإنتاج بالتات متعددة عبر المساعد الذكي'
+  });
+
+  const timeStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+  aiChatHistory.push({
+    sender: 'ai',
+    time: timeStr,
+    html: `
+      <div style="border-right:4px solid var(--success);padding-right:10px;">
+        <div style="font-weight:900;color:var(--success);margin-bottom:6px;">
+          🎉 تم تنفيذ تشغيل الجذع وإدخال البالتات متعددة الجودة والتخانة في المخزن بنجاح!
+        </div>
+        <div style="font-size:0.84rem;line-height:1.6;">
+          • <strong>الجذوع التي تم تشغيلها:</strong> ${res.processedSerials.length > 0 ? res.processedSerials.join(' ، ') + ` (${fmtNum(res.totalLogVolM3, 3)} م³)` : 'بدون جذع محدد'}<br/>
+          • <strong>إجمالي البالتات والقطع المضافة للمخزن:</strong> <strong>${res.totalPalletsAdded} بالتة</strong> بإجمالي <strong>${fmtNum(res.totalSheetsAdded, 0)} قطعة (${fmtNum(res.totalProdVolM3, 4)} م³)</strong> موزعة على (${res.rowsCount}) جودة وتخانة.<br/>
+          • <strong>نسبة الاستخراج والهالك:</strong> استخراج فعلي <strong>${fmtNum(res.actualYieldPct, 1)}%</strong> | هالك مرحّل لمخزن الهالك: <strong>${fmtNum(res.scrapTon, 3)} طن</strong>.<br/>
+          • <strong>المستخدم المنفذ المسجل في جدول الإنتاج:</strong> 👤 <strong>${currentUser?.name || 'الإدارة'}</strong>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+          <button type="button" class="btn btn-sm btn-primary" onclick="closeSmartAiModal(); activeWarehouseSubTab='finished'; setTab('warehouses');">
+            1️⃣ فتح مخزن القشرة التامة
+          </button>
+          <button type="button" class="btn btn-sm btn-success" onclick="closeSmartAiModal(); activeWarehouseSubTab='production_log'; setTab('warehouses');">
+            📊 فتح جدول الإنتاج اليومي والأسبوعي والشهري
+          </button>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeSmartAiModal(); activeWarehouseSubTab='raw'; setTab('warehouses');">
+            2️⃣ فتح سيريالات الجذوع والحاويات
+          </button>
+        </div>
+      </div>
+    `
+  });
+  speakArabicAiResponse(`تم تشغيل الجذع بنجاح وإدخال ${res.totalPalletsAdded} بالتة بإجمالي ${res.totalSheetsAdded} فرخ في مخزن القشرة التامة وجدول الإنتاج.`);
+  const msgBox = document.getElementById('ai-assistant-messages');
+  if (msgBox) {
+    msgBox.innerHTML = renderSmartAiMessagesHtml();
+    scrollSmartAiMessagesBottom();
+  }
+}
+
+function executeLogAndMultiPalletProductionBatch({ logIds = [], palletRows = [], opDate = todayStr(), recordScrap = true, batchNotes = '' }) {
+  const now = getMonotonicIso();
+  const allLogs = state.logItems || [];
+  const containers = state.logContainers || [];
+
+  // 1. Process selected logs
+  const matchedLogs = [];
+  for (const idOrSer of logIds) {
+    const l = allLogs.find(x => x.id === idOrSer || String(x.serialNumber).toLowerCase() === String(idOrSer).toLowerCase());
+    if (l && !matchedLogs.includes(l)) {
+      matchedLogs.push(l);
+    }
+  }
+
+  const totalLogVolM3 = +matchedLogs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0).toFixed(4);
+  const processedSerials = matchedLogs.map(l => l.serialNumber);
+  const containerNums = Array.from(new Set(matchedLogs.map(l => l.containerNumber).filter(Boolean)));
+  const sourceLogLabel = processedSerials.length > 0
+    ? `جذع سيريال (${processedSerials.join('، ')}) — حاوية (${containerNums.join('، ')})`
+    : 'إنتاج متعدد الجودة والتخانة';
+
+  // 2. Process multi-grade & multi-thickness pallet rows into state.pallets and state.warehouseMovements
+  let totalPalletsAdded = 0;
+  let totalSheetsAdded = 0;
+  let totalProdVolM3 = 0;
+  const producedBreakdownLabels = [];
+
+  for (const r of palletRows) {
+    const sheets = Math.max(0, Number(r.sheetsCount || 0));
+    if (sheets <= 0) continue;
+    const palletsCnt = Math.max(1, Number(r.palletsCount || 1));
+    const len = Math.max(10, Number(r.lengthCm || 250));
+    const wid = Math.max(10, Number(r.widthCm || 125));
+    const thkMm = Math.max(0.1, Number(r.thicknessMm || 1.5));
+    const dir = r.direction === 'sada' ? 'sada' : 'qas';
+    const dirLabel = dir === 'sada' ? 'اتجاه سدا' : 'اتجاه قص';
+
+    const ensuredThk = ensureCatalogThicknessExists(thkMm, dir, Number(r.unitPrice || 0), r.gradeId);
+    const thkId = ensuredThk ? ensuredThk.id : (r.thicknessId || `th-${thkMm}-${dir}`);
+    const gradeObj = (state.catalog?.grades || []).find(g => g.id === r.gradeId || g.code === r.gradeCode) || {
+      id: r.gradeId || 'gr-c',
+      code: r.gradeCode || 'C',
+      name: r.gradeName || 'جودة C'
+    };
+    const woodObj = (state.catalog?.woodTypes || []).find(w => w.id === r.woodTypeId) || state.catalog?.woodTypes?.[0] || {
+      id: 'wt-general',
+      name: 'قشرة خشبية (250×125)'
+    };
+
+    const unitPrice = Number(r.unitPrice || getCellUnitPrice(thkId, gradeObj.id, thkMm, dir) || 0);
+    if (unitPrice > 0 && canSeeFinancialPrices()) {
+      state.catalog.cellPrices = state.catalog.cellPrices || {};
+      state.catalog.cellPrices[getCellPriceKey(thkId, gradeObj.id)] = unitPrice;
+    }
+
+    const rowNote = [sourceLogLabel, r.notes || batchNotes].filter(Boolean).join(' | ');
+
+    // Split sheets across palletsCnt if palletsCnt > 1, or add via addSheetsToCellPallets
+    const baseSheetsPerPal = Math.floor(sheets / palletsCnt);
+    let remSheets = sheets % palletsCnt;
+
+    for (let pIdx = 0; pIdx < palletsCnt; pIdx++) {
+      const thisPalSheets = baseSheetsPerPal + (remSheets > 0 ? 1 : 0);
+      if (remSheets > 0) remSheets--;
+      if (thisPalSheets <= 0) continue;
+
+      addSheetsToCellPallets(thkId, gradeObj.id, woodObj.id, thisPalSheets, rowNote, opDate, unitPrice, len, wid);
+      // Tag the newest pallet in state.pallets with sourceLogSerials & custom palletCode
+      const topPallet = state.pallets?.[0];
+      if (topPallet && topPallet.status === 'in_stock') {
+        if (r.palletCode) {
+          topPallet.palletCode = palletsCnt > 1 ? `${r.palletCode}-${pIdx + 1}` : r.palletCode;
+        }
+        topPallet.sourceLogSerials = processedSerials;
+        topPallet.sourceContainerNumber = containerNums.join(', ');
+      }
+    }
+
+    const m = calculateVeneerMetrics(len, wid, thkMm, sheets);
+    const totalAmount = +(sheets * unitPrice).toFixed(2);
+    const dimLabel = formatVeneerDimensions(len, wid, true);
+    const cellKey = getCellPriceKey(thkId, gradeObj.id);
+
+    state.warehouseMovements = state.warehouseMovements || [];
+    state.warehouseMovements.unshift({
+      id: uid('mov'),
+      voucherNumber: `IN-${Date.now().toString().slice(-5)}-${Math.floor(Math.random() * 90 + 10)}`,
+      date: opDate,
+      warehouseType: 'finished_veneers',
+      warehouseLabel: 'مخزن القشرة التامة (إضافة كميات إنتاج من تشغيل الجذوع)',
+      direction: 'in',
+      directionLabel: 'إضافة كميات إنتاج',
+      movementCategory: 'production_in',
+      cellKey,
+      woodTypeId: woodObj.id,
+      woodTypeName: woodObj.name,
+      thicknessId: thkId,
+      thicknessMm: thkMm,
+      thkDirection: dir,
+      directionLabelThk: dirLabel,
+      gradeId: gradeObj.id,
+      gradeCode: gradeObj.code,
+      gradeName: gradeObj.name,
+      lengthCm: len,
+      widthCm: wid,
+      palletsCount: palletsCnt,
+      sheetsCount: sheets,
+      areaM2: m.totalAreaM2,
+      volumeM3: m.totalVolumeM3,
+      unitSheetPrice: unitPrice,
+      totalSaleAmount: totalAmount,
+      sourceLogSerials: processedSerials,
+      sourceContainerNumber: containerNums.join(', '),
+      itemSummary: `إضافة كميات إنتاج قشرة ${woodObj.name} — مقاس (${dimLabel}) — تخانة ${thkMm} مم (${dirLabel}) × ${gradeObj.name} (${palletsCnt} بالتة — ${rowNote})`,
+      referenceCode: `${thkMm}mm-${dir}-${gradeObj.code}`,
+      quantitySummary: `${palletsCnt} بالتة | ${sheets} قطعة (${formatVeneerDimensions(len, wid, false)}) | ${m.totalVolumeM3} م³`,
+      performedBy: currentUser?.name || 'الإدارة',
+      performedByRole: currentUser?.roleTitle || '',
+      approvedBy: currentUser?.name || 'الإدارة',
+      updatedAt: getMonotonicIso()
+    });
+
+    totalPalletsAdded += palletsCnt;
+    totalSheetsAdded += sheets;
+    totalProdVolM3 = +(totalProdVolM3 + m.totalVolumeM3).toFixed(4);
+    producedBreakdownLabels.push(`${palletsCnt} بالتة (${sheets} ق) ${thkMm}مم ${dir === 'sada' ? 'سدا' : 'قص'} [${gradeObj.code}]`);
+  }
+
+  // 3. Update processed status & link produced pallets summary on each operated log and its parent container
+  if (matchedLogs.length > 0) {
+    const prodSummaryShort = `${totalPalletsAdded} بالتة (${totalSheetsAdded} ق = ${fmtNum(totalProdVolM3, 3)} م³): ${producedBreakdownLabels.join(' + ')}`;
+    for (const l of matchedLogs) {
+      l.status = 'processed';
+      l.processedAt = now;
+      l.processedBy = currentUser?.name || 'الإدارة';
+      l.producedSummary = prodSummaryShort;
+      l.producedVolumeM3 = +(Number(l.producedVolumeM3 || 0) + (totalProdVolM3 / matchedLogs.length)).toFixed(4);
+      l.updatedAt = now;
+    }
+
+    // Update parent container actualFinishedM3
+    const affectedContainerIds = new Set(matchedLogs.map(l => l.containerId).filter(Boolean));
+    for (const cid of affectedContainerIds) {
+      const cont = containers.find(c => c.id === cid);
+      if (cont) {
+        const contLogs = allLogs.filter(l => l.containerId === cid && l.status === 'processed');
+        const sumProdM3 = +contLogs.reduce((s, l) => s + Number(l.producedVolumeM3 || 0), 0).toFixed(4);
+        if (sumProdM3 > 0) {
+          cont.actualFinishedM3 = sumProdM3;
+        }
+        cont.updatedAt = now;
+      }
+    }
+
+    syncRawMaterialsWithLogContainers(now);
+
+    state.warehouseMovements.unshift({
+      id: uid('mov'),
+      voucherNumber: `ISS-LOG-${Date.now().toString().slice(-4)}`,
+      date: opDate,
+      warehouseType: 'raw_materials',
+      warehouseLabel: 'مخزن الخامات (تشغيل جذوع وإنتاج بالتات)',
+      direction: 'out',
+      directionLabel: 'إذن صرف وتشغيل جذوع بالسيريال',
+      itemSummary: `تشغيل (${matchedLogs.length}) جذع بالسيريال [${processedSerials.join(', ')}] ⬅ إنتاج (${totalPalletsAdded} بالتة = ${totalSheetsAdded} قطعة = ${fmtNum(totalProdVolM3, 3)} م³)`,
+      referenceCode: containerNums[0] || 'LOG-PROD',
+      quantitySummary: `${matchedLogs.length} جذع (${fmtNum(totalLogVolM3, 4)} م³)`,
+      performedBy: currentUser?.name || 'الإدارة',
+      approvedBy: currentUser?.name || 'الإدارة',
+      updatedAt: getMonotonicIso()
+    });
+  }
+
+  // 4. Calculate Yield & Record Resulting Peeling Scrap in Tons if enabled
+  const actualYieldPct = totalLogVolM3 > 0 ? +((totalProdVolM3 / totalLogVolM3) * 100).toFixed(1) : 65;
+  const scrapM3 = totalLogVolM3 > 0 ? +Math.max(0, totalLogVolM3 - totalProdVolM3).toFixed(4) : 0;
+  const avgDensity = matchedLogs.length > 0
+    ? Number(containers.find(c => c.id === matchedLogs[0].containerId)?.densityTonPerM3 || 0.90)
+    : 0.90;
+  const scrapTon = +(scrapM3 * avgDensity).toFixed(3);
+
+  if (recordScrap && scrapTon > 0) {
+    state.scrapItems = state.scrapItems || [];
+    state.scrapItems.unshift({
+      id: uid('sc'),
+      code: `SCR-LOG-${processedSerials[0] || Date.now().toString().slice(-4)}`,
+      name: `هوالك تقشير ${sourceLogLabel} (كثافة ${avgDensity} طن/م³)`,
+      woodTypeName: matchedLogs[0]?.woodTypeName || 'خشب حور بلجيكي',
+      category: 'هوالك تقشير جذوع (بالطن)',
+      unit: 'طن',
+      quantity: scrapTon,
+      estimatedPricePerUnit: 0,
+      notes: `تكعيب الجذع: ${fmtNum(totalLogVolM3, 3)} م³ | القشرة التامة المستخرجة: ${fmtNum(totalProdVolM3, 3)} م³ (${actualYieldPct}%) | الهالك: ${fmtNum(scrapM3, 3)} م³ = ${fmtNum(scrapTon, 3)} طن`,
+      updatedAt: now
+    });
+  }
+
+  saveState(
+    `🪵⚙️ تشغيل ${matchedLogs.length > 0 ? `الجذع سيريال (${processedSerials.join('، ')}) بتكعيب (${fmtNum(totalLogVolM3, 3)} م³)` : 'إنتاج مجمع'} وإدخال (${totalPalletsAdded} بالتة = ${fmtNum(totalSheetsAdded, 0)} قطعة = ${fmtNum(totalProdVolM3, 3)} م³) متعددة الجودة والتخانة للمخزن بواسطة ${currentUser?.name}`
+  );
+
+  return {
+    processedSerials,
+    totalLogVolM3,
+    totalPalletsAdded,
+    totalSheetsAdded,
+    totalProdVolM3,
+    rowsCount: palletRows.length,
+    actualYieldPct,
+    scrapM3,
+    scrapTon
+  };
+}
+
+function openAiLogToMultiPalletProductionModal(preselectedLogs = '', prefilledPallets = null) {
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+
+  const allLogs = state.logItems || [];
+  const containers = state.logContainers || [];
+
+  // Initialize selected logs
+  draftAiLogProdSelectedIds = [];
+  if (Array.isArray(preselectedLogs) && preselectedLogs.length > 0) {
+    for (const item of preselectedLogs) {
+      const found = allLogs.find(l => l.id === item || String(l.serialNumber).toLowerCase() === String(item).toLowerCase());
+      if (found && !draftAiLogProdSelectedIds.includes(found.id)) {
+        draftAiLogProdSelectedIds.push(found.id);
+      }
+    }
+  } else if (typeof preselectedLogs === 'string' && preselectedLogs.trim() !== '') {
+    const found = allLogs.find(l => l.id === preselectedLogs || String(l.serialNumber).toLowerCase() === preselectedLogs.trim().toLowerCase());
+    if (found) draftAiLogProdSelectedIds.push(found.id);
+  }
+
+  if (draftAiLogProdSelectedIds.length === 0) {
+    const firstInStock = allLogs.find(l => l.status !== 'processed');
+    if (firstInStock) draftAiLogProdSelectedIds.push(firstInStock.id);
+  }
+
+  // Initialize multi-grade & multi-thickness pallet rows
+  if (Array.isArray(prefilledPallets) && prefilledPallets.length > 0) {
+    draftAiLogProdRows = prefilledPallets.map(r => ({ ...r, id: r.id || uid('aiprod') }));
+  } else {
+    const sortedThk = getSortedThicknesses();
+    const grades = state.catalog?.grades || [];
+    const baseSeq = (state.pallets?.length || 0) + 1;
+    draftAiLogProdRows = [
+      createDefaultAiLogPalletRow({
+        palletCode: `PLT-2026-${String(baseSeq).padStart(3, '0')}`,
+        thkObj: sortedThk.find(t => Number(t.mm) === 1.5 && t.direction === 'qas') || sortedThk[0],
+        gradeObj: grades.find(g => g.code === 'ABC+') || grades[0],
+        palletsCount: 1,
+        sheetsCount: 250
+      }),
+      createDefaultAiLogPalletRow({
+        palletCode: `PLT-2026-${String(baseSeq + 1).padStart(3, '0')}`,
+        thkObj: sortedThk.find(t => Number(t.mm) === 1.5 && t.direction === 'qas') || sortedThk[0],
+        gradeObj: grades.find(g => g.code === 'C') || grades[1] || grades[0],
+        palletsCount: 1,
+        sheetsCount: 300
+      }),
+      createDefaultAiLogPalletRow({
+        palletCode: `PLT-2026-${String(baseSeq + 2).padStart(3, '0')}`,
+        thkObj: sortedThk.find(t => Number(t.mm) === 1.2 && t.direction === 'qas') || sortedThk[1] || sortedThk[0],
+        gradeObj: grades.find(g => g.code === 'R') || grades[2] || grades[0],
+        palletsCount: 1,
+        sheetsCount: 200
+      })
+    ];
+  }
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:1060px;">
+        <div class="card-header" style="border-bottom:2px solid rgba(217,119,6,0.25);padding-bottom:10px;">
+          <div>
+            <div class="card-title" style="color:#b45309;font-size:1.08rem;">
+              🪵⚙️ المساعد الذكي: تشغيل الجذع وربطه بالنظام + إنتاج بالتات متعددة الجودة والتخانة ودخولها المخزن
+            </div>
+            <small style="color:var(--text-muted);">
+              اختر الجذع (أو عدة جذوع) بالسيريال، وحدد البالتات الناتجة بمختلف الجودات والتخانات ليتم خصم الجذع وإدخال البالتات في مخزن القشرة وجدول الإنتاج وحساب الاستخراج والهالك تلقائياً!
+            </small>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button type="button" class="btn btn-sm btn-outline" onclick="openSmartAiAssistantModal()">🤖 عودة للمساعد الذكي</button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+          </div>
+        </div>
+
+        <form onsubmit="submitAiLogToMultiPalletProduction(event)">
+          <!-- Step 1: Select Log(s) to Operate -->
+          <div style="background:rgba(124,58,237,0.06);border:1.5px solid #7c3aed;border-radius:12px;padding:12px 14px;margin-bottom:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+              <div style="font-weight:900;color:#5b21b6;font-size:0.9rem;">
+                1️⃣ اختيار الجذع / الجذوع المراد تشغيلها وربطها بالإنتاج:
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                <select id="ailog-cnt-filter" class="form-control" style="max-width:210px;padding:4px 8px;font-size:0.78rem;font-weight:800;" onchange="draftAiLogProdContainerFilter=this.value; renderAiLogSelectionArea();">
+                  <option value="all">🚢 كل الحاويات (${containers.length} حاوية)</option>
+                  ${containers.map(c => `<option value="${c.id}" ${draftAiLogProdContainerFilter === c.id ? 'selected' : ''}>حاوية: ${c.containerNumber}</option>`).join('')}
+                </select>
+                <input id="ailog-serial-search" class="form-control" style="max-width:190px;padding:4px 10px;font-size:0.78rem;font-weight:800;" placeholder="🔍 ابحث برقم السيريال..." value="${draftAiLogProdSearchQuery}" oninput="draftAiLogProdSearchQuery=this.value; renderAiLogSelectionArea();" />
+                <button type="button" class="btn btn-sm btn-outline" style="font-size:0.74rem;padding:3px 8px;" onclick="draftAiLogProdSelectedIds=[]; renderAiLogSelectionArea(); recalcAiLogMultiPalletSummary();">
+                  إلغاء تحديد الجذوع
+                </button>
+              </div>
+            </div>
+
+            <div id="ailog-selection-box"></div>
+          </div>
+
+          <!-- Step 2: Multi-Grade & Multi-Thickness Produced Pallets Table -->
+          <div style="background:var(--bg-elevated);border:1.5px solid var(--border-color);border-radius:12px;padding:12px 14px;margin-bottom:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+              <div>
+                <div style="font-weight:900;color:var(--primary);font-size:0.92rem;">
+                  2️⃣ جدول إنتاج البالتات متعددة الجودة والتخانة الداخلة للمخزن:
+                </div>
+                <small style="color:var(--text-muted);">
+                  يمكنك إضافة أكثر من بالتة بتخانات واتجاهات (قص / سدا) ودرجات جودة مختلفة ناتجة من تشغيل الجذع
+                </small>
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;font-weight:800;" onclick="autoSplitSelectedLogIntoMultiPallets()">
+                  🤖 توزيع ذكي تلقائي لتكعيب الجذع على عدة جودات وتخانات
+                </button>
+                <button type="button" class="btn btn-sm btn-primary" style="font-weight:900;" onclick="addAiLogProdPalletRow()">
+                  ➕ إضافة بالتة أخرى (جودة / تخانة جديدة)
+                </button>
+              </div>
+            </div>
+
+            <div id="ailog-pallets-table-container" class="table-responsive"></div>
+          </div>
+
+          <!-- Step 3: Operation Date, Scrap Option & Notes -->
+          <div class="form-grid" style="margin-bottom:12px;">
+            <div class="form-group">
+              <label style="font-weight:800;color:var(--primary);">📅 تاريخ التشغيل ودخول الإنتاج للمخزن</label>
+              <input id="ailog-op-date" type="date" class="form-control" value="${todayStr()}" required style="font-weight:800;border-color:var(--primary);" />
+            </div>
+            <div class="form-group">
+              <label style="font-weight:800;">📝 ملاحظات التشغيلة / الوردية</label>
+              <input id="ailog-batch-notes" class="form-control" placeholder="مثال: ناتج تقشير جذوع الوردية الصباحية..." value="ناتج تقشير وتشغيل جذوع للمخزن" />
+            </div>
+            <div class="form-group" style="display:flex;align-items:flex-end;padding-bottom:6px;">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:800;font-size:0.84rem;color:#b45309;">
+                <input id="ailog-record-scrap" type="checkbox" checked onchange="recalcAiLogMultiPalletSummary()" />
+                <span>♻️ ترحيل فرق الهالك الناتج بالطن إلى (مخزن الهالك والقصاقيص) تلقائياً</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Step 4: Live Yield, Scrap & Warehouse Impact Summary -->
+          <div id="ailog-live-summary-box" class="calc-preview-box" style="margin-bottom:14px;"></div>
+
+          <div style="display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+            <button type="submit" class="btn btn-success" style="font-weight:900;padding:10px 24px;font-size:0.95rem;">
+              🚀 تنفيذ تشغيل الجذع + إدخال جميع البالتات للمخزن وجدول الإنتاج الآن
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  renderAiLogSelectionArea();
+  renderAiLogProdPalletsTable();
+}
+
+function renderAiLogSelectionArea() {
+  const box = document.getElementById('ailog-selection-box');
+  if (!box) return;
+  const allLogs = state.logItems || [];
+  const q = normalizeArabicAiText(draftAiLogProdSearchQuery).toLowerCase();
+
+  const availableLogs = allLogs.filter(l => {
+    if (l.status === 'processed' && !draftAiLogProdSelectedIds.includes(l.id)) return false;
+    if (draftAiLogProdContainerFilter !== 'all' && l.containerId !== draftAiLogProdContainerFilter) return false;
+    if (q) {
+      const ser = String(l.serialNumber || '').toLowerCase();
+      const cnt = String(l.containerNumber || '').toLowerCase();
+      if (!ser.includes(q) && !cnt.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const selectedLogObjs = allLogs.filter(l => draftAiLogProdSelectedIds.includes(l.id));
+  const totalSelectedVol = +selectedLogObjs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0).toFixed(4);
+
+  box.innerHTML = `
+    <div style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+      <div>
+        <span style="font-size:0.8rem;font-weight:800;">الجذوع المختارة للتشغيل حالياً (${selectedLogObjs.length} جذع — إجمالي تكعيب: <strong style="color:#5b21b6;">${fmtNum(totalSelectedVol, 3)} م³</strong>):</span>
+        ${selectedLogObjs.length === 0 ? `<span class="badge badge-warning">لم يتم اختيار جذع (سيتم إدخال البالتات كإنتاج مباشر)</span>` : selectedLogObjs.map(l => `
+          <span class="badge" style="background:#5b21b6;color:#fff;font-size:0.78rem;padding:4px 8px;margin-right:4px;cursor:pointer;" onclick="toggleAiLogProdSelection('${l.id}')" title="اضغط لإلغاء اختيار هذا الجذع">
+            ✅ سيريال ${l.serialNumber} (${fmtNum(l.volumeM3, 3)} م³ — ${l.containerNumber}) ✕
+          </span>
+        `).join('')}
+      </div>
+    </div>
+    <div style="max-height:115px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:5px;background:var(--bg-card);padding:8px;border-radius:8px;border:1px solid var(--border-color);">
+      ${availableLogs.slice(0, 60).map(l => {
+        const isSel = draftAiLogProdSelectedIds.includes(l.id);
+        return `
+          <button type="button" class="btn btn-sm ${isSel ? 'btn-primary' : 'btn-outline'}" style="font-size:0.73rem;padding:3px 8px;${isSel ? 'background:#7c3aed;border-color:#7c3aed;font-weight:900;' : ''}" onclick="toggleAiLogProdSelection('${l.id}')">
+            ${isSel ? '✅' : '➕'} ${l.serialNumber} (${fmtNum(l.volumeM3, 3)} م³ | ${l.lengthM}م×${l.diameterCm}سم | ${l.containerNumber})
+          </button>
+        `;
+      }).join('')}
+      ${availableLogs.length > 60 ? `<small style="color:var(--text-muted);align-self:center;padding:4px;">... استخدم مربع البحث لإظهار باقي الـ ${availableLogs.length} جذع</small>` : ''}
+    </div>
+  `;
+}
+
+function toggleAiLogProdSelection(logId) {
+  const idx = draftAiLogProdSelectedIds.indexOf(logId);
+  if (idx >= 0) {
+    draftAiLogProdSelectedIds.splice(idx, 1);
+  } else {
+    draftAiLogProdSelectedIds.push(logId);
+  }
+  renderAiLogSelectionArea();
+  recalcAiLogMultiPalletSummary();
+}
+
+function addAiLogProdPalletRow() {
+  const sortedThk = getSortedThicknesses();
+  const grades = state.catalog?.grades || [];
+  const nextIdx = draftAiLogProdRows.length;
+  const thkObj = sortedThk[nextIdx % Math.max(1, sortedThk.length)];
+  const gradeObj = grades[nextIdx % Math.max(1, grades.length)];
+  const nextSeq = (state.pallets?.length || 0) + nextIdx + 1;
+
+  draftAiLogProdRows.push(createDefaultAiLogPalletRow({
+    palletCode: `PLT-2026-${String(nextSeq).padStart(3, '0')}`,
+    thkObj,
+    gradeObj,
+    palletsCount: 1,
+    sheetsCount: 300
+  }));
+  renderAiLogProdPalletsTable();
+}
+
+function removeAiLogProdPalletRow(idx) {
+  if (draftAiLogProdRows.length <= 1) {
+    alert('يجب وجود بالتة واحدة على الأقل في جدول الإنتاج!');
+    return;
+  }
+  draftAiLogProdRows.splice(idx, 1);
+  renderAiLogProdPalletsTable();
+}
+
+function autoSplitSelectedLogIntoMultiPallets() {
+  const allLogs = state.logItems || [];
+  const selectedLogs = allLogs.filter(l => draftAiLogProdSelectedIds.includes(l.id));
+  const totalLogVol = selectedLogs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0) || 2.5;
+  const targetFinishedVol = +(totalLogVol * 0.65).toFixed(4); // 65% standard veneer yield
+
+  const sortedThk = getSortedThicknesses();
+  const grades = state.catalog?.grades || [];
+  const baseSeq = (state.pallets?.length || 0) + 1;
+
+  const thk15Qas = sortedThk.find(t => Number(t.mm) === 1.5 && t.direction === 'qas') || sortedThk[0] || { id: 'th-1.5-qas', mm: 1.5, direction: 'qas' };
+  const thk12Qas = sortedThk.find(t => Number(t.mm) === 1.2 && t.direction === 'qas') || sortedThk[1] || thk15Qas;
+  const thk15Sada = sortedThk.find(t => Number(t.mm) === 1.5 && t.direction === 'sada') || thk15Qas;
+
+  const grAbc = grades.find(g => g.code.includes('ABC')) || grades[0] || { id: 'gr-abc', code: 'ABC+', name: 'جودة ABC+' };
+  const grC = grades.find(g => g.code === 'C') || grades[1] || grAbc;
+  const grR = grades.find(g => g.code === 'R') || grades[2] || grC;
+
+  // Split targetFinishedVol: 40% to 1.5mm ABC+, 35% to 1.5mm C, 25% to 1.2mm R
+  const vol1 = targetFinishedVol * 0.40;
+  const vol2 = targetFinishedVol * 0.35;
+  const vol3 = targetFinishedVol * 0.25;
+
+  const sheetVol1 = 2.5 * 1.25 * (Number(thk15Qas.mm || 1.5) / 1000);
+  const sheetVol2 = 2.5 * 1.25 * (Number(thk15Sada.mm || 1.5) / 1000);
+  const sheetVol3 = 2.5 * 1.25 * (Number(thk12Qas.mm || 1.2) / 1000);
+
+  draftAiLogProdRows = [
+    createDefaultAiLogPalletRow({
+      palletCode: `PLT-2026-${String(baseSeq).padStart(3, '0')}`,
+      thkObj: thk15Qas,
+      gradeObj: grAbc,
+      palletsCount: 1,
+      sheetsCount: Math.max(50, Math.round(vol1 / sheetVol1))
+    }),
+    createDefaultAiLogPalletRow({
+      palletCode: `PLT-2026-${String(baseSeq + 1).padStart(3, '0')}`,
+      thkObj: thk15Sada,
+      gradeObj: grC,
+      palletsCount: 1,
+      sheetsCount: Math.max(50, Math.round(vol2 / sheetVol2))
+    }),
+    createDefaultAiLogPalletRow({
+      palletCode: `PLT-2026-${String(baseSeq + 2).padStart(3, '0')}`,
+      thkObj: thk12Qas,
+      gradeObj: grR,
+      palletsCount: 1,
+      sheetsCount: Math.max(50, Math.round(vol3 / sheetVol3))
+    })
+  ];
+
+  renderAiLogProdPalletsTable();
+}
+
+function updateAiLogProdRowField(idx, field, val) {
+  const row = draftAiLogProdRows[idx];
+  if (!row) return;
+  if (field === 'palletCode') {
+    row.palletCode = String(val || '').trim();
+  } else if (field === 'dimensionPreset') {
+    const [l, w] = String(val).split('x').map(Number);
+    if (l > 0 && w > 0) {
+      row.lengthCm = l;
+      row.widthCm = w;
+    }
+    renderAiLogProdPalletsTable();
+    return;
+  } else if (field === 'thicknessId') {
+    const thkObj = (state.catalog?.thicknesses || []).find(t => t.id === val);
+    if (thkObj) {
+      row.thicknessId = thkObj.id;
+      row.thicknessMm = Number(thkObj.mm);
+      row.direction = thkObj.direction || 'qas';
+      row.directionLabel = row.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص';
+      row.unitPrice = getCellUnitPrice(row.thicknessId, row.gradeId, row.thicknessMm, row.direction);
+    }
+    renderAiLogProdPalletsTable();
+    return;
+  } else if (field === 'gradeId') {
+    const gObj = (state.catalog?.grades || []).find(g => g.id === val);
+    if (gObj) {
+      row.gradeId = gObj.id;
+      row.gradeCode = gObj.code;
+      row.gradeName = gObj.name;
+      row.unitPrice = getCellUnitPrice(row.thicknessId, row.gradeId, row.thicknessMm, row.direction);
+    }
+    renderAiLogProdPalletsTable();
+    return;
+  } else if (field === 'palletsCount') {
+    row.palletsCount = Math.max(1, Number(val || 1));
+  } else if (field === 'sheetsCount') {
+    row.sheetsCount = Math.max(1, Number(val || 0));
+    const m = calculateVeneerMetrics(row.lengthCm, row.widthCm, row.thicknessMm, row.sheetsCount);
+    const volEl = document.getElementById(`ailog-row-vol-${idx}`);
+    if (volEl) volEl.value = m.totalVolumeM3;
+  } else if (field === 'volumeM3') {
+    const v = Math.max(0, Number(val || 0));
+    const singleSheetVol = (Number(row.lengthCm || 250) / 100) * (Number(row.widthCm || 125) / 100) * (Number(row.thicknessMm || 1.5) / 1000);
+    if (singleSheetVol > 0 && v > 0) {
+      row.sheetsCount = Math.max(1, Math.round(v / singleSheetVol));
+      const shEl = document.getElementById(`ailog-row-sheets-${idx}`);
+      if (shEl) shEl.value = row.sheetsCount;
+    }
+  } else if (field === 'unitPrice') {
+    row.unitPrice = Math.max(0, Number(val || 0));
+  }
+  recalcAiLogMultiPalletSummary();
+}
+
+function renderAiLogProdPalletsTable() {
+  const container = document.getElementById('ailog-pallets-table-container');
+  if (!container) return;
+  const showPrices = canSeeFinancialPrices();
+  const sortedThk = getSortedThicknesses();
+  const grades = state.catalog?.grades || [];
+  const presetDims = getPresetVeneerDimensions();
+
+  container.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th style="width:30px;">#</th>
+          <th>كود البالتة</th>
+          <th>📐 المقاس</th>
+          <th>📏 التخانة والاتجاه (قص / سدا)</th>
+          <th>⭐ درجة الجودة</th>
+          <th>🪵 عدد البالتات</th>
+          <th>📦 عدد القطع (الأفرخ)</th>
+          <th>التكعيب (م³)</th>
+          ${showPrices ? '<th>💰 سعر القطعة</th>' : ''}
+          <th style="width:40px;">حذف</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${draftAiLogProdRows.map((r, idx) => {
+          const m = calculateVeneerMetrics(r.lengthCm, r.widthCm, r.thicknessMm, r.sheetsCount);
+          const dimKey = `${r.lengthCm}x${r.widthCm}`;
+          return `
+            <tr>
+              <td><strong>${idx + 1}</strong></td>
+              <td>
+                <input class="form-control" style="padding:4px 7px;width:115px;font-weight:800;font-size:0.78rem;" value="${r.palletCode}" oninput="updateAiLogProdRowField(${idx}, 'palletCode', this.value)" required />
+              </td>
+              <td>
+                <select class="form-control" style="padding:4px 6px;font-size:0.78rem;font-weight:700;" onchange="updateAiLogProdRowField(${idx}, 'dimensionPreset', this.value)">
+                  ${presetDims.map(d => `<option value="${d.lengthCm}x${d.widthCm}" ${`${d.lengthCm}x${d.widthCm}` === dimKey ? 'selected' : ''}>${d.widthCm}×${d.lengthCm} سم</option>`).join('')}
+                </select>
+              </td>
+              <td>
+                <select class="form-control" style="padding:4px 6px;font-size:0.8rem;font-weight:800;border-color:var(--primary);" onchange="updateAiLogProdRowField(${idx}, 'thicknessId', this.value)">
+                  ${sortedThk.map(t => `
+                    <option value="${t.id}" ${t.id === r.thicknessId ? 'selected' : ''}>
+                      ${t.mm} مم — ${t.direction === 'sada' ? '📏 سدا' : '✂️ قص'}
+                    </option>
+                  `).join('')}
+                </select>
+              </td>
+              <td>
+                <select class="form-control" style="padding:4px 6px;font-size:0.8rem;font-weight:800;border-color:#0f766e;" onchange="updateAiLogProdRowField(${idx}, 'gradeId', this.value)">
+                  ${grades.map(g => `
+                    <option value="${g.id}" ${g.id === r.gradeId ? 'selected' : ''}>
+                      ${g.code} (${g.name})
+                    </option>
+                  `).join('')}
+                </select>
+              </td>
+              <td>
+                <input type="number" min="1" class="form-control" style="padding:4px 6px;width:70px;font-weight:800;text-align:center;" value="${r.palletsCount || 1}" oninput="updateAiLogProdRowField(${idx}, 'palletsCount', this.value)" required />
+              </td>
+              <td>
+                <input id="ailog-row-sheets-${idx}" type="number" min="1" class="form-control" style="padding:4px 8px;width:95px;font-weight:900;color:var(--success);border-color:var(--success);" value="${r.sheetsCount}" oninput="updateAiLogProdRowField(${idx}, 'sheetsCount', this.value)" required />
+              </td>
+              <td>
+                <input id="ailog-row-vol-${idx}" type="number" step="0.0001" min="0.0001" class="form-control" style="padding:4px 7px;width:95px;font-weight:800;color:var(--primary);" value="${m.totalVolumeM3}" oninput="updateAiLogProdRowField(${idx}, 'volumeM3', this.value)" title="يمكنك كتابة التكعيب بالمتر المكعب ليحسب عدد القطع تلقائياً" />
+              </td>
+              ${showPrices ? `
+                <td>
+                  <input type="number" step="0.5" min="0" class="form-control" style="padding:4px 6px;width:82px;font-weight:700;" value="${r.unitPrice || 0}" oninput="updateAiLogProdRowField(${idx}, 'unitPrice', this.value)" />
+                </td>
+              ` : ''}
+              <td>
+                <button type="button" class="btn btn-sm btn-danger" style="padding:3px 7px;" onclick="removeAiLogProdPalletRow(${idx})">✕</button>
+              </td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+
+  recalcAiLogMultiPalletSummary();
+}
+
+function recalcAiLogMultiPalletSummary() {
+  const box = document.getElementById('ailog-live-summary-box');
+  if (!box) return;
+  const showPrices = canSeeFinancialPrices();
+  const allLogs = state.logItems || [];
+  const containers = state.logContainers || [];
+  const selectedLogs = allLogs.filter(l => draftAiLogProdSelectedIds.includes(l.id));
+
+  const totalLogVolM3 = +selectedLogs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0).toFixed(4);
+  const avgDensity = selectedLogs.length > 0
+    ? Number(containers.find(c => c.id === selectedLogs[0].containerId)?.densityTonPerM3 || 0.90)
+    : 0.90;
+  const totalLogWeightTon = +(totalLogVolM3 * avgDensity).toFixed(3);
+
+  let totalPalletsCnt = 0;
+  let totalSheetsCnt = 0;
+  let totalProdVolM3 = 0;
+  let totalProdAreaM2 = 0;
+  let totalProdValue = 0;
+
+  for (const r of draftAiLogProdRows) {
+    const sh = Math.max(0, Number(r.sheetsCount || 0));
+    const pals = Math.max(1, Number(r.palletsCount || 1));
+    const m = calculateVeneerMetrics(r.lengthCm || 250, r.widthCm || 125, r.thicknessMm || 1.5, sh);
+    totalPalletsCnt += pals;
+    totalSheetsCnt += sh;
+    totalProdVolM3 += m.totalVolumeM3;
+    totalProdAreaM2 += m.totalAreaM2;
+    totalProdValue += sh * Number(r.unitPrice || 0);
+  }
+  totalProdVolM3 = +totalProdVolM3.toFixed(4);
+  totalProdAreaM2 = +totalProdAreaM2.toFixed(2);
+  totalProdValue = +totalProdValue.toFixed(2);
+
+  const actualYieldPct = totalLogVolM3 > 0 ? +((totalProdVolM3 / totalLogVolM3) * 100).toFixed(1) : 65;
+  const scrapM3 = totalLogVolM3 > 0 ? +Math.max(0, totalLogVolM3 - totalProdVolM3).toFixed(4) : 0;
+  const scrapTon = +(scrapM3 * avgDensity).toFixed(3);
+
+  box.innerHTML = `
+    <div class="calc-preview-item">
+      <span>🌲 الجذوع الداخلة للتشغيل (${selectedLogs.length} جذع)</span>
+      <strong style="color:#5b21b6;">${fmtNum(totalLogVolM3, 3)} م³ (${fmtNum(totalLogWeightTon, 3)} طن)</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>🪵 إجمالي البالتات والقطع الداخلة للمخزن</span>
+      <strong style="color:var(--success);">${totalPalletsCnt} بالتة | ${fmtNum(totalSheetsCnt, 0)} قطعة (${draftAiLogProdRows.length} صنف)</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>📐 إجمالي تكعيب ومساحة القشرة المنتجة</span>
+      <strong style="color:var(--primary);">${fmtNum(totalProdVolM3, 4)} م³ (${fmtNum(totalProdAreaM2, 2)} م²)</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>📊 نسبة الاستخراج الفعلية من الجذع</span>
+      <strong style="color:${actualYieldPct >= 60 ? 'var(--success)' : '#d97706'};">${totalLogVolM3 > 0 ? fmtNum(actualYieldPct, 1) + '%' : 'إنتاج مباشر بدون جذع'}</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>♻️ الهالك الناتج بالطن (كثافة ${avgDensity} طن/م³)</span>
+      <strong style="color:var(--danger);">${fmtNum(scrapTon, 3)} طن (${fmtNum(scrapM3, 3)} م³)</strong>
+    </div>
+    ${showPrices ? `
+      <div class="calc-preview-item">
+        <span>💰 إجمالي القيمة التقديرية للبالتات المنتجة</span>
+        <strong style="color:var(--success);">${fmtMoney(totalProdValue)}</strong>
+      </div>
+    ` : ''}
+  `;
+}
+
+function submitAiLogToMultiPalletProduction(e) {
+  if (e) e.preventDefault();
+  if (!draftAiLogProdRows || draftAiLogProdRows.length === 0) {
+    alert('يرجى إضافة بالتة واحدة على الأقل في جدول الإنتاج!');
+    return;
+  }
+  const opDate = document.getElementById('ailog-op-date')?.value || todayStr();
+  const batchNotes = (document.getElementById('ailog-batch-notes')?.value || '').trim();
+  const recordScrap = Boolean(document.getElementById('ailog-record-scrap')?.checked);
+
+  const res = executeLogAndMultiPalletProductionBatch({
+    logIds: draftAiLogProdSelectedIds,
+    palletRows: draftAiLogProdRows,
+    opDate,
+    recordScrap,
+    batchNotes
+  });
+
+  closeModal();
+  alert(
+    `✅ تم بنجاح تنفيذ عملية التشغيل وإدخال البالتات للمخزن!\n` +
+    (res.processedSerials.length > 0 ? `• الجذوع التي تم تشغيلها: [${res.processedSerials.join(' ، ')}] (${fmtNum(res.totalLogVolM3, 3)} م³)\n` : '') +
+    `• البالتات المضافة للمخزن: (${res.totalPalletsAdded} بالتة) بإجمالي (${fmtNum(res.totalSheetsAdded, 0)} قطعة = ${fmtNum(res.totalProdVolM3, 4)} م³)\n` +
+    (res.totalLogVolM3 > 0 ? `• نسبة الاستخراج الفعلية: ${fmtNum(res.actualYieldPct, 1)}% | الهالك: ${fmtNum(res.scrapTon, 3)} طن\n` : '') +
+    `• تم تسجيل الإنتاج في مخزن القشرة التامة وفي جدول الإنتاج اليومي والأسبوعي والشهري باسم (${currentUser?.name}).`
   );
 }
 
