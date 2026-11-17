@@ -16,6 +16,7 @@
     * {
       box-sizing: border-box;
       font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif;
+      letter-spacing: normal !important;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
     }
@@ -307,7 +308,7 @@
         filename: safeFile,
         pagebreak: { mode: ['css', 'legacy'] },
         image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollY: 0 },
+        html2canvas: { scale: 2, useCORS: true, letterRendering: false, backgroundColor: '#ffffff', scrollY: 0 },
         jsPDF: { unit: 'mm', format: 'a4', orientation: window._isLandscapeDoc ? 'landscape' : 'portrait' }
       }).from(container).toPdf();
 

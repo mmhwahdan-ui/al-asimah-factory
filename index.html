@@ -15,18 +15,17 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./icons/logo.svg" />
   <link rel="apple-touch-icon" href="./icons/logo.svg" />
-  <link rel="stylesheet" href="./styles.css?v=41" />
+  <link rel="stylesheet" href="./styles.css?v=42" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" defer></script>
   <script>
     (function() {
-      var TARGET_VER = 'v41';
+      var TARGET_VER = 'v42';
       var rawState = localStorage.getItem('al_asimah_factory_v1_state') || '';
       if (rawState.indexOf('\uFFFD') !== -1) {
         localStorage.removeItem('al_asimah_factory_v1_state');
       }
       if (localStorage.getItem('al_asimah_app_ver') !== TARGET_VER) {
         localStorage.setItem('al_asimah_app_ver', TARGET_VER);
-        localStorage.removeItem('al_asimah_factory_v1_state');
         if ('caches' in window) {
           caches.keys().then(function(names) {
             return Promise.all(names.map(function(n) { return caches.delete(n); }));
@@ -51,7 +50,7 @@
   <div id="modal-root"></div>
   <div id="print-area"></div>
 
-  <script src="./app.js?v=41"></script>
+  <script src="./app.js?v=42"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.addEventListener('message', (e) => {
@@ -60,7 +59,7 @@
         }
       });
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js?v=41').then(reg => {
+        navigator.serviceWorker.register('./sw.js?v=42').then(reg => {
           reg.update();
         }).catch(() => {});
       });
