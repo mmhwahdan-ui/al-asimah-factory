@@ -3274,6 +3274,9 @@ function renderWarehouses() {
       <button class="tab-btn ${activeWarehouseSubTab === 'finished' ? 'active' : ''}" onclick="activeWarehouseSubTab='finished'; render();">
         1️⃣ مخزن المنتج التام (القشرة 250×125)
       </button>
+      <button class="tab-btn ${activeWarehouseSubTab === 'production_log' ? 'active' : ''}" style="${activeWarehouseSubTab === 'production_log' ? '' : 'border-color:var(--primary);color:var(--primary);font-weight:800;'}" onclick="activeWarehouseSubTab='production_log'; render();">
+        📊 جدول الإنتاج (يومي / أسبوعي / شهري)
+      </button>
       <button class="tab-btn ${activeWarehouseSubTab === 'raw' ? 'active' : ''}" onclick="activeWarehouseSubTab='raw'; render();">
         2️⃣ مخزن الخامات (الجذوع والمستلزمات)
       </button>
@@ -3289,6 +3292,7 @@ function renderWarehouses() {
     </div>
 
     ${activeWarehouseSubTab === 'finished' ? renderFinishedVeneerWarehouse() : ''}
+    ${activeWarehouseSubTab === 'production_log' ? renderProductionLogTableSection() : ''}
     ${activeWarehouseSubTab === 'raw' ? renderRawMaterialsWarehouse() : ''}
     ${activeWarehouseSubTab === 'scrap' ? renderScrapWarehouse() : ''}
     ${activeWarehouseSubTab === 'spare' ? renderSparePartsWarehouse() : ''}
@@ -3461,6 +3465,7 @@ function renderFinishedVeneerWarehouse() {
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button class="btn btn-sm btn-primary" onclick="openWarehouseOpShortcut('in')">📥 إضافة كميات إنتاج</button>
+          <button class="btn btn-sm" style="background:#0284c7;color:#fff;font-weight:800;" onclick="activeWarehouseSubTab='production_log'; render();">📊 جدول الإنتاج (يومي / أسبوعي / شهري)</button>
           <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openWarehouseOpShortcut('sales_return')">🔄 إضافة مرتجع مبيعات</button>
           <button class="btn btn-sm btn-success" onclick="openWarehouseOpShortcut('out')">📤 خروج الكميات حسب المبيعات</button>
           <button class="btn btn-sm btn-accent" onclick="openWarehouseOpShortcut('rework')">♻️ خروج الكميات لإعادة التشغيل</button>
@@ -4211,6 +4216,666 @@ function renderSparePartsWarehouse() {
       </div>
     </div>
   `;
+}
+
+// ============================================================================
+// ON-DEMAND DAILY / WEEKLY / MONTHLY PRODUCTION LOG TABLE (جدول الإنتاج اليومي والأسبوعي والشهري حسب الطلب)
+// ============================================================================
+let prodLogPeriodMode = 'weekly'; // 'daily' | 'weekly' | 'monthly' | 'custom' | 'all'
+let prodLogSelectedDate = '';
+let prodLogSelectedMonth = '';
+let prodLogCustomFrom = '';
+let prodLogCustomTo = '';
+let prodLogFilterThk = 'all';
+let prodLogFilterDir = 'all';
+let prodLogFilterGrade = 'all';
+let prodLogFilterUser = 'all';
+let prodLogIncludeOtherIn = false;
+
+function extractProductionEntryDetails(m) {
+  if (!m || typeof m !== 'object') return null;
+  const dateStr = String(m.operationDate || m.date || m.updatedAt || '').slice(0, 10);
+  let timeStr = '';
+  if (m.updatedAt && String(m.updatedAt).includes('T')) {
+    try {
+      const dt = new Date(m.updatedAt);
+      if (!isNaN(dt.getTime())) {
+        timeStr = dt.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+      }
+    } catch (_) {}
+  }
+
+  let thkMm = m.thicknessMm !== undefined && m.thicknessMm !== null ? Number(m.thicknessMm) : null;
+  let direction = m.direction === 'sada' || m.thkDirection === 'sada' ? 'sada' : (m.thkDirection === 'qas' ? 'qas' : '');
+  let gradeId = m.gradeId || '';
+  let gradeCode = m.gradeCode || '';
+  let gradeName = m.gradeName || '';
+
+  // Parse from cellKey e.g. "th-1_dot_5-qas__gr-mwc1l1bl-zevo"
+  const rawCellKey = String(m.cellKey || '');
+  if (rawCellKey.includes('__')) {
+    const [thkPart, grdPart] = rawCellKey.split('__');
+    if (!gradeId && grdPart) {
+      gradeId = grdPart.replace(/_dot_/g, '.');
+    }
+    const cleanThkPart = thkPart.replace(/_dot_/g, '.');
+    const thkMatch = cleanThkPart.match(/^th-([0-9.]+)-(qas|sada)$/i);
+    if (thkMatch) {
+      if (thkMm === null || isNaN(thkMm)) thkMm = Number(thkMatch[1]);
+      if (!direction) direction = thkMatch[2].toLowerCase() === 'sada' ? 'sada' : 'qas';
+    }
+  }
+
+  // Fallback parse from referenceCode e.g. "1.5mm-qas-C+/PS/K-B" or itemSummary
+  const refCode = String(m.referenceCode || '');
+  const summary = String(m.itemSummary || '');
+  if (thkMm === null || isNaN(thkMm)) {
+    const mRef = refCode.match(/([0-9.]+)\s*mm/i) || summary.match(/تخانة\s*([0-9.]+)\s*مم/);
+    if (mRef) thkMm = Number(mRef[1]);
+  }
+  if (!direction) {
+    if (refCode.includes('-sada') || summary.includes('سدا')) direction = 'sada';
+    else direction = 'qas';
+  }
+
+  const directionLabel = direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص';
+
+  // Lookup grade in state.catalog.grades
+  const gradesList = state?.catalog?.grades || [];
+  let gObj = gradesList.find(g => g.id === gradeId || g.id.replace(/\./g, '_dot_') === gradeId);
+  if (!gObj && refCode) {
+    const refParts = refCode.split(/-(?:qas|sada)-/i);
+    if (refParts.length > 1) {
+      const candidateCode = refParts[1].trim();
+      gObj = gradesList.find(g => g.code === candidateCode || g.name === candidateCode);
+      if (!gradeCode) gradeCode = candidateCode;
+    }
+  }
+  if (!gObj && summary) {
+    const gMatch = summary.match(/جودة\s*\(([^)]+)\)/) || summary.match(/×\s*جودة\s*([^\s(]+)/);
+    if (gMatch) {
+      const candidate = gMatch[1].trim();
+      gObj = gradesList.find(g => g.code === candidate || g.name === candidate || g.name === `جودة (${candidate})`);
+      if (!gradeCode) gradeCode = candidate;
+    }
+  }
+  if (gObj) {
+    gradeId = gObj.id;
+    gradeCode = gObj.code;
+    gradeName = gObj.name;
+  } else {
+    if (!gradeCode) gradeCode = gradeName || 'عام';
+    if (!gradeName) gradeName = `جودة (${gradeCode})`;
+  }
+
+  const lengthCm = Number(m.lengthCm || 250);
+  const widthCm = Number(m.widthCm || 125);
+  const sheetsCount = Number(m.sheetsCount || 0);
+  const metrics = calculateVeneerMetrics(lengthCm, widthCm, thkMm || 1.5, sheetsCount);
+  const areaM2 = Number(m.areaM2 || metrics.totalAreaM2 || 0);
+  const volumeM3 = Number(m.volumeM3 || metrics.totalVolumeM3 || 0);
+  const unitSheetPrice = Number(m.unitSheetPrice || getCellUnitPrice(`th-${thkMm || 1.5}-${direction}`, gradeId, thkMm, direction) || 0);
+  const totalAmount = Number(m.totalSaleAmount || +(sheetsCount * unitSheetPrice).toFixed(2));
+  const performedBy = (m.performedBy || m.approvedBy || 'غير محدد').trim();
+  const userObj = (state?.users || []).find(u => u.name === performedBy || u.roleTitle === performedBy);
+  const performedByRole = m.performedByRole || (userObj ? userObj.roleTitle : '');
+
+  let woodTypeName = m.woodTypeName || 'قشرة خشبية (حور / طبيعي)';
+  let batchNotes = 'إنتاج جديد مضاف للمخزن';
+  const noteMatch = summary.match(/×\s*[^()]+\((?:[^)]+)\)\s*\(([^)]+)\)\s*$/);
+  if (noteMatch && noteMatch[1]) {
+    batchNotes = noteMatch[1].trim();
+  } else if (m.movementCategory === 'sales_return_in') {
+    batchNotes = 'دخول مرتجع مبيعات معتمد';
+  } else if (m.movementCategory === 'adjustment') {
+    batchNotes = 'تسوية / إثبات رصيد بالمخزن';
+  } else if (String(m.voucherNumber || '').startsWith('COV-')) {
+    batchNotes = 'تغطية رصيد المخزن لطلبية عميل';
+  }
+
+  return {
+    id: m.id,
+    rawMovement: m,
+    voucherNumber: m.voucherNumber || '-',
+    dateStr,
+    timeStr,
+    movementCategory: m.movementCategory || 'production_in',
+    directionLabel: m.directionLabel || 'إضافة كميات إنتاج',
+    woodTypeName,
+    batchNotes,
+    lengthCm,
+    widthCm,
+    thkMm: thkMm !== null && !isNaN(thkMm) ? thkMm : 1.5,
+    direction,
+    directionLabel,
+    gradeId,
+    gradeCode,
+    gradeName,
+    sheetsCount,
+    areaM2: +areaM2.toFixed(2),
+    volumeM3: +volumeM3.toFixed(4),
+    unitSheetPrice,
+    totalAmount: +totalAmount.toFixed(2),
+    performedBy,
+    performedByRole
+  };
+}
+
+function getFilteredProductionLogData() {
+  const allInMovements = (state?.warehouseMovements || [])
+    .filter(m => {
+      if (!m || m.direction !== 'in') return false;
+      if (Number(m.sheetsCount || 0) <= 0) return false;
+      if (!prodLogIncludeOtherIn) {
+        return m.movementCategory === 'production_in' || String(m.voucherNumber || '').startsWith('IN-') || String(m.voucherNumber || '').startsWith('COV-');
+      }
+      return true;
+    })
+    .map(m => extractProductionEntryDetails(m))
+    .filter(Boolean);
+
+  // Discover all distinct production dates & months for quick selection
+  const dateCountsMap = new Map();
+  const monthCountsMap = new Map();
+  const distinctThks = new Set();
+  const distinctGradesMap = new Map();
+  const distinctUsers = new Set();
+
+  for (const row of allInMovements) {
+    if (row.dateStr) {
+      dateCountsMap.set(row.dateStr, (dateCountsMap.get(row.dateStr) || 0) + 1);
+      const mKey = row.dateStr.slice(0, 7);
+      if (mKey.length === 7) {
+        monthCountsMap.set(mKey, (monthCountsMap.get(mKey) || 0) + 1);
+      }
+    }
+    distinctThks.add(String(row.thkMm));
+    distinctGradesMap.set(row.gradeCode, row.gradeName);
+    if (row.performedBy) distinctUsers.add(row.performedBy);
+  }
+
+  const availableDates = Array.from(dateCountsMap.keys()).sort((a, b) => b.localeCompare(a));
+  const availableMonths = Array.from(monthCountsMap.keys()).sort((a, b) => b.localeCompare(a));
+
+  const latestProdDate = availableDates[0] || todayStr();
+  if (!prodLogSelectedDate) prodLogSelectedDate = latestProdDate;
+  if (!prodLogSelectedMonth) prodLogSelectedMonth = (availableMonths[0] || todayStr().slice(0, 7));
+  if (!prodLogCustomTo) prodLogCustomTo = latestProdDate;
+  if (!prodLogCustomFrom) {
+    const dObj = new Date(latestProdDate + 'T12:00:00Z');
+    dObj.setUTCDate(dObj.getUTCDate() - 6);
+    prodLogCustomFrom = isNaN(dObj.getTime()) ? latestProdDate : dObj.toISOString().slice(0, 10);
+  }
+
+  let periodLabel = '';
+  let fromDate = '';
+  let toDate = '';
+
+  if (prodLogPeriodMode === 'daily') {
+    fromDate = prodLogSelectedDate;
+    toDate = prodLogSelectedDate;
+    periodLabel = `الإنتاج اليومي ليوم (${prodLogSelectedDate})`;
+  } else if (prodLogPeriodMode === 'weekly') {
+    const endStr = prodLogSelectedDate || latestProdDate;
+    const dEnd = new Date(endStr + 'T12:00:00Z');
+    const dStart = new Date(dEnd.getTime());
+    dStart.setUTCDate(dStart.getUTCDate() - 6);
+    fromDate = isNaN(dStart.getTime()) ? endStr : dStart.toISOString().slice(0, 10);
+    toDate = endStr;
+    periodLabel = `الإنتاج الأسبوعي (من ${fromDate} إلى ${toDate})`;
+  } else if (prodLogPeriodMode === 'monthly') {
+    const ym = prodLogSelectedMonth || todayStr().slice(0, 7);
+    fromDate = `${ym}-01`;
+    toDate = `${ym}-31`;
+    periodLabel = `الإنتاج الشهري لشهر (${ym})`;
+  } else if (prodLogPeriodMode === 'custom') {
+    fromDate = prodLogCustomFrom || '';
+    toDate = prodLogCustomTo || '';
+    periodLabel = `إنتاج الفترة المخصصة (${fromDate || 'البداية'} إلى ${toDate || 'النهاية'})`;
+  } else {
+    periodLabel = 'إجمالي كل الإنتاج المسجل بالمخزن';
+  }
+
+  const filteredRows = allInMovements.filter(r => {
+    if (prodLogPeriodMode !== 'all') {
+      if (fromDate && r.dateStr < fromDate) return false;
+      if (toDate && r.dateStr > toDate) return false;
+    }
+    if (prodLogFilterThk !== 'all' && String(r.thkMm) !== String(prodLogFilterThk)) return false;
+    if (prodLogFilterDir !== 'all' && r.direction !== prodLogFilterDir) return false;
+    if (prodLogFilterGrade !== 'all' && r.gradeCode !== prodLogFilterGrade && r.gradeId !== prodLogFilterGrade) return false;
+    if (prodLogFilterUser !== 'all' && r.performedBy !== prodLogFilterUser) return false;
+    return true;
+  });
+
+  const totalEntriesCount = filteredRows.length;
+  const totalSheets = filteredRows.reduce((s, r) => s + r.sheetsCount, 0);
+  const totalAreaM2 = +filteredRows.reduce((s, r) => s + r.areaM2, 0).toFixed(2);
+  const totalVolumeM3 = +filteredRows.reduce((s, r) => s + r.volumeM3, 0).toFixed(4);
+  const totalValue = +filteredRows.reduce((s, r) => s + r.totalAmount, 0).toFixed(2);
+
+  // Group by User (المستخدم الذي قام بتنزيل الإنتاج)
+  const userSummaryMap = new Map();
+  for (const r of filteredRows) {
+    const uKey = r.performedBy || 'غير محدد';
+    if (!userSummaryMap.has(uKey)) {
+      userSummaryMap.set(uKey, { userName: uKey, roleTitle: r.performedByRole, entriesCount: 0, sheets: 0, volumeM3: 0, totalValue: 0 });
+    }
+    const uEntry = userSummaryMap.get(uKey);
+    uEntry.entriesCount += 1;
+    uEntry.sheets += r.sheetsCount;
+    uEntry.volumeM3 = +(uEntry.volumeM3 + r.volumeM3).toFixed(4);
+    uEntry.totalValue = +(uEntry.totalValue + r.totalAmount).toFixed(2);
+  }
+  const userSummaryList = Array.from(userSummaryMap.values()).sort((a, b) => b.sheets - a.sheets);
+
+  // Group by (Thickness + Direction + Grade)
+  const itemSummaryMap = new Map();
+  for (const r of filteredRows) {
+    const iKey = `${r.thkMm}__${r.direction}__${r.gradeCode}`;
+    if (!itemSummaryMap.has(iKey)) {
+      itemSummaryMap.set(iKey, {
+        thkMm: r.thkMm,
+        direction: r.direction,
+        directionLabel: r.directionLabel,
+        gradeCode: r.gradeCode,
+        gradeName: r.gradeName,
+        entriesCount: 0,
+        sheets: 0,
+        volumeM3: 0,
+        areaM2: 0,
+        totalValue: 0,
+        usersSet: new Set()
+      });
+    }
+    const iEntry = itemSummaryMap.get(iKey);
+    iEntry.entriesCount += 1;
+    iEntry.sheets += r.sheetsCount;
+    iEntry.volumeM3 = +(iEntry.volumeM3 + r.volumeM3).toFixed(4);
+    iEntry.areaM2 = +(iEntry.areaM2 + r.areaM2).toFixed(2);
+    iEntry.totalValue = +(iEntry.totalValue + r.totalAmount).toFixed(2);
+    if (r.performedBy) iEntry.usersSet.add(r.performedBy);
+  }
+  const itemSummaryList = Array.from(itemSummaryMap.values()).sort((a, b) => {
+    if (a.thkMm !== b.thkMm) return a.thkMm - b.thkMm;
+    return b.sheets - a.sheets;
+  });
+
+  return {
+    allInMovements,
+    filteredRows,
+    periodLabel,
+    fromDate,
+    toDate,
+    availableDates,
+    dateCountsMap,
+    availableMonths,
+    monthCountsMap,
+    distinctThks: Array.from(distinctThks).sort((a, b) => Number(a) - Number(b)),
+    distinctGrades: Array.from(distinctGradesMap.entries()).map(([code, name]) => ({ code, name })),
+    distinctUsers: Array.from(distinctUsers),
+    totalEntriesCount,
+    totalSheets,
+    totalAreaM2,
+    totalVolumeM3,
+    totalValue,
+    userSummaryList,
+    itemSummaryList
+  };
+}
+
+function renderProductionLogTableSection() {
+  const data = getFilteredProductionLogData();
+  const showPrices = canSeeFinancialPrices();
+
+  return `
+    <div class="card" style="border:2px solid var(--primary);">
+      <div class="card-header">
+        <div>
+          <div class="card-title" style="color:var(--primary);font-size:1.05rem;">
+            📊 جدول الإنتاج اليومي والأسبوعي والشهري حسب الطلب (الأصناف الداخلة للمخزن شاملاً التخانة والجودة والمستخدم المنفذ)
+          </div>
+          <small style="color:var(--text-muted);">
+            اختر الفترة المطلوبة (<strong>يومي / أسبوعي / شهري / فترة مخصصة</strong>) أو فلتر بالتخانة أو الجودة أو اسم المستخدم لعرض وطباعة الأصناف التي دخلت المخزن
+          </small>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-sm btn-primary" onclick="openWarehouseOpShortcut('in')">
+            📥 تسجيل إضافة إنتاج جديد للمخزن
+          </button>
+          <button class="btn btn-sm btn-accent" style="font-weight:800;" onclick="printProductionLogReportPdf()">
+            🖨️ طباعة جدول الإنتاج (${data.periodLabel}) PDF
+          </button>
+        </div>
+      </div>
+
+      <!-- 1. Period Mode Selector Bar (يومي / أسبوعي / شهري / مخصص / الكل) -->
+      <div style="background:var(--bg-elevated);padding:12px 14px;border-radius:12px;border:1px solid var(--border-color);margin-bottom:14px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+            <span style="font-weight:800;font-size:0.85rem;color:var(--primary);">⏱️ عرض الإنتاج حسب الفترة:</span>
+            <button type="button" class="btn btn-sm ${prodLogPeriodMode === 'daily' ? 'btn-primary' : 'btn-outline'}" onclick="prodLogPeriodMode='daily'; render();">
+              📅 الإنتاج اليومي
+            </button>
+            <button type="button" class="btn btn-sm ${prodLogPeriodMode === 'weekly' ? 'btn-primary' : 'btn-outline'}" onclick="prodLogPeriodMode='weekly'; render();">
+              📆 الإنتاج الأسبوعي (7 أيام)
+            </button>
+            <button type="button" class="btn btn-sm ${prodLogPeriodMode === 'monthly' ? 'btn-primary' : 'btn-outline'}" onclick="prodLogPeriodMode='monthly'; render();">
+              🗓️ الإنتاج الشهري
+            </button>
+            <button type="button" class="btn btn-sm ${prodLogPeriodMode === 'custom' ? 'btn-primary' : 'btn-outline'}" onclick="prodLogPeriodMode='custom'; render();">
+              🔍 فترة مخصصة (من - إلى)
+            </button>
+            <button type="button" class="btn btn-sm ${prodLogPeriodMode === 'all' ? 'btn-primary' : 'btn-outline'}" onclick="prodLogPeriodMode='all'; render();">
+              📋 كل الإنتاج (${data.allInMovements.length})
+            </button>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            ${prodLogPeriodMode === 'daily' ? `
+              <label style="font-size:0.8rem;font-weight:800;">اختر اليوم:</label>
+              <input type="date" class="form-control" style="padding:4px 10px;font-weight:800;border-color:var(--primary);" value="${prodLogSelectedDate}" onchange="prodLogSelectedDate=this.value; render();" />
+            ` : prodLogPeriodMode === 'weekly' ? `
+              <label style="font-size:0.8rem;font-weight:800;">نهاية الأسبوع (7 أيام حتى تاريخ):</label>
+              <input type="date" class="form-control" style="padding:4px 10px;font-weight:800;border-color:var(--primary);" value="${prodLogSelectedDate}" onchange="prodLogSelectedDate=this.value; render();" />
+            ` : prodLogPeriodMode === 'monthly' ? `
+              <label style="font-size:0.8rem;font-weight:800;">اختر الشهر:</label>
+              <input type="month" class="form-control" style="padding:4px 10px;font-weight:800;border-color:var(--primary);" value="${prodLogSelectedMonth}" onchange="prodLogSelectedMonth=this.value; render();" />
+            ` : prodLogPeriodMode === 'custom' ? `
+              <label style="font-size:0.8rem;font-weight:800;">من:</label>
+              <input type="date" class="form-control" style="padding:4px 8px;font-weight:800;" value="${prodLogCustomFrom}" onchange="prodLogCustomFrom=this.value; render();" />
+              <label style="font-size:0.8rem;font-weight:800;">إلى:</label>
+              <input type="date" class="form-control" style="padding:4px 8px;font-weight:800;" value="${prodLogCustomTo}" onchange="prodLogCustomTo=this.value; render();" />
+            ` : ''}
+          </div>
+        </div>
+
+        <!-- Quick Clickable Days with Production -->
+        ${data.availableDates.length > 0 ? `
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-top:8px;border-top:1px dashed var(--border-color);margin-bottom:10px;">
+            <small style="font-weight:800;color:var(--text-muted);">📌 أيام مسجل بها إنتاج (اضغط لعرض إنتاج اليوم مباشرة):</small>
+            ${data.availableDates.slice(0, 10).map(d => {
+              const cnt = data.dateCountsMap.get(d) || 0;
+              const isSelectedDay = prodLogPeriodMode === 'daily' && prodLogSelectedDate === d;
+              return `
+                <button type="button" class="btn btn-sm ${isSelectedDay ? 'btn-success' : 'btn-outline'}" style="padding:2px 8px;font-size:0.72rem;font-weight:800;" onclick="prodLogPeriodMode='daily'; prodLogSelectedDate='${d}'; render();">
+                  📅 ${d} (${cnt} حركة)
+                </button>
+              `;
+            }).join('')}
+          </div>
+        ` : ''}
+
+        <!-- On-Demand Filters: Thickness, Direction, Grade, User -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(170px, 1fr));gap:8px;padding-top:8px;border-top:1px dashed var(--border-color);">
+          <div>
+            <label style="font-size:0.75rem;font-weight:800;display:block;margin-bottom:3px;">📏 فلتر التخانة:</label>
+            <select class="form-control" style="padding:4px 8px;font-size:0.8rem;font-weight:700;" onchange="prodLogFilterThk=this.value; render();">
+              <option value="all" ${prodLogFilterThk === 'all' ? 'selected' : ''}>كل التخانات</option>
+              ${data.distinctThks.map(thk => `<option value="${thk}" ${String(prodLogFilterThk) === String(thk) ? 'selected' : ''}>تخانة ${thk} مم</option>`).join('')}
+            </select>
+          </div>
+
+          <div>
+            <label style="font-size:0.75rem;font-weight:800;display:block;margin-bottom:3px;">🧭 فلتر الاتجاه (قص / سدا):</label>
+            <select class="form-control" style="padding:4px 8px;font-size:0.8rem;font-weight:700;" onchange="prodLogFilterDir=this.value; render();">
+              <option value="all" ${prodLogFilterDir === 'all' ? 'selected' : ''}>كل الاتجاهات (قص + سدا)</option>
+              <option value="qas" ${prodLogFilterDir === 'qas' ? 'selected' : ''}>✂️ اتجاه قص فقط</option>
+              <option value="sada" ${prodLogFilterDir === 'sada' ? 'selected' : ''}>📏 اتجاه سدا فقط</option>
+            </select>
+          </div>
+
+          <div>
+            <label style="font-size:0.75rem;font-weight:800;display:block;margin-bottom:3px;">⭐ فلتر درجة الجودة:</label>
+            <select class="form-control" style="padding:4px 8px;font-size:0.8rem;font-weight:700;" onchange="prodLogFilterGrade=this.value; render();">
+              <option value="all" ${prodLogFilterGrade === 'all' ? 'selected' : ''}>كل درجات الجودة</option>
+              ${data.distinctGrades.map(g => `<option value="${g.code}" ${prodLogFilterGrade === g.code ? 'selected' : ''}>${g.code} (${g.name})</option>`).join('')}
+            </select>
+          </div>
+
+          <div>
+            <label style="font-size:0.75rem;font-weight:800;display:block;margin-bottom:3px;">👤 المستخدم الذي قام بتنزيل الإنتاج:</label>
+            <select class="form-control" style="padding:4px 8px;font-size:0.8rem;font-weight:700;border-color:#7c3aed;" onchange="prodLogFilterUser=this.value; render();">
+              <option value="all" ${prodLogFilterUser === 'all' ? 'selected' : ''}>👥 كل المستخدمين</option>
+              ${data.distinctUsers.map(u => `<option value="${u}" ${prodLogFilterUser === u ? 'selected' : ''}>👤 ${u}</option>`).join('')}
+            </select>
+          </div>
+
+          <div style="display:flex;align-items:flex-end;gap:6px;">
+            <label style="display:flex;align-items:center;gap:5px;font-size:0.74rem;font-weight:700;cursor:pointer;padding-bottom:6px;">
+              <input type="checkbox" ${prodLogIncludeOtherIn ? 'checked' : ''} onchange="prodLogIncludeOtherIn=this.checked; render();" />
+              <span>شامل التسويات والمرتجعات</span>
+            </label>
+            ${(prodLogFilterThk !== 'all' || prodLogFilterDir !== 'all' || prodLogFilterGrade !== 'all' || prodLogFilterUser !== 'all') ? `
+              <button type="button" class="btn btn-sm btn-outline" style="margin-bottom:3px;" onclick="prodLogFilterThk='all'; prodLogFilterDir='all'; prodLogFilterGrade='all'; prodLogFilterUser='all'; render();">
+                إلغاء الفلاتر
+              </button>
+            ` : ''}
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. KPI Summary Cards for Selected Period -->
+      <div class="stats-grid" style="margin-bottom:14px;">
+        <div class="stat-card" style="border-right:4px solid var(--primary);">
+          <span class="stat-title">الفترة المعروضة حالياً</span>
+          <div class="stat-value" style="font-size:1rem;color:var(--primary);">${data.periodLabel}</div>
+          <div class="stat-sub">عدد أذون تنزيل الإنتاج: <strong>${data.totalEntriesCount} حركة إدخال</strong></div>
+        </div>
+
+        <div class="stat-card success">
+          <span class="stat-title">إجمالي كمية الإنتاج الداخلة للمخزن</span>
+          <div class="stat-value">${fmtNum(data.totalSheets, 0)} قطعة (فرخ)</div>
+          <div class="stat-sub">إجمالي المساحة: <strong>${fmtNum(data.totalAreaM2, 2)} م²</strong></div>
+        </div>
+
+        <div class="stat-card accent">
+          <span class="stat-title">إجمالي تكعيب الإنتاج الداخل (م³)</span>
+          <div class="stat-value">${fmtNum(data.totalVolumeM3, 4)} م³</div>
+          <div class="stat-sub">الأصناف (التخانات × الجودات): <strong>${data.itemSummaryList.length} صنف</strong></div>
+        </div>
+
+        <div class="stat-card" style="border-right:4px solid #7c3aed;">
+          <span class="stat-title">المستخدمون المنفذون لتنزيل الإنتاج</span>
+          <div class="stat-value" style="font-size:0.95rem;color:#6d28d9;">
+            ${data.userSummaryList.length === 0 ? 'لا يوجد' : data.userSummaryList.map(u => `${u.userName} (${fmtNum(u.sheets, 0)} ق)`).join(' | ')}
+          </div>
+          <div class="stat-sub">
+            ${showPrices ? `إجمالي القيمة التقديرية للإنتاج: <strong style="color:var(--success);">${fmtMoney(data.totalValue)}</strong>` : 'متابعة كميات الإنتاج حسب المستخدم'}
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Summary by (Thickness x Grade) & by User -->
+      ${data.itemSummaryList.length > 0 ? `
+        <div style="margin-bottom:14px;background:var(--bg-elevated);padding:10px 14px;border-radius:10px;border:1px solid var(--border-color);">
+          <div style="font-weight:800;font-size:0.84rem;color:var(--primary);margin-bottom:8px;">
+            🪵 ملخص الأصناف التي دخلت المخزن في (${data.periodLabel}) مجمعة حسب (التخانة × الجودة):
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;">
+            ${data.itemSummaryList.map(it => `
+              <div style="background:var(--bg-surface);border:1.5px solid var(--border-color);border-radius:8px;padding:6px 10px;font-size:0.76rem;line-height:1.45;">
+                <div>
+                  <span class="badge badge-info">${it.thkMm} مم</span>
+                  <span class="badge" style="background:${it.direction === 'sada' ? '#0284c7' : '#d97706'};color:#fff;">${it.direction === 'sada' ? 'سدا' : 'قص'}</span>
+                  <strong style="color:var(--primary);margin-right:3px;">× ${it.gradeCode}</strong>
+                </div>
+                <div style="margin-top:3px;">
+                  الكمية: <strong style="color:var(--success);">${fmtNum(it.sheets, 0)} قطعة</strong> (${fmtNum(it.volumeM3, 3)} م³)
+                </div>
+                <div style="font-size:0.68rem;color:var(--text-muted);">
+                  👤 بواسطة: <strong>${Array.from(it.usersSet).join(' ، ')}</strong>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- 4. Detailed Production Entries Table (الأصناف التي دخلت المخزن + التخانة + الجودة + المستخدم المنفذ) -->
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>م</th>
+              <th>رقم الإذن</th>
+              <th>التاريخ والوقت</th>
+              <th>الصنف / البيان الذي دخل المخزن</th>
+              <th>📐 المقاس</th>
+              <th>📏 التخانة والاتجاه</th>
+              <th>⭐ درجة الجودة</th>
+              <th>📦 الكمية الداخلة (قطعة)</th>
+              <th>الحجم (م³) والمساحة</th>
+              ${showPrices ? '<th>💰 سعر القطعة والإجمالي</th>' : ''}
+              <th>👤 المستخدم الذي قام بتنزيل الإنتاج</th>
+              <th>إجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.filteredRows.length === 0 ? `
+              <tr>
+                <td colspan="${showPrices ? 12 : 11}" style="text-align:center;padding:24px;color:var(--text-muted);">
+                  لا توجد حركات إدخال إنتاج مطابقة لهذه الفترة (${data.periodLabel}). يمكنك الضغط على أحد الأيام المسجل بها إنتاج أعلاه أو اختيار <strong>"📆 الإنتاج الأسبوعي"</strong> أو <strong>"🗓️ الإنتاج الشهري"</strong>.
+                </td>
+              </tr>
+            ` : data.filteredRows.map((r, idx) => `
+              <tr>
+                <td><strong>${idx + 1}</strong></td>
+                <td><strong style="color:var(--primary);">${r.voucherNumber}</strong></td>
+                <td>
+                  <strong>${r.dateStr}</strong>
+                  ${r.timeStr ? `<br/><small style="color:var(--text-muted);">🕒 ${r.timeStr}</small>` : ''}
+                </td>
+                <td>
+                  <strong>${r.woodTypeName}</strong>
+                  <br/><small style="color:var(--text-muted);">${r.batchNotes}</small>
+                </td>
+                <td>${getVeneerDimensionBadgeHtml(r.lengthCm, r.widthCm)}</td>
+                <td>
+                  <span class="badge badge-info" style="font-size:0.78rem;">${r.thkMm} مم</span>
+                  <span class="badge" style="background:${r.direction === 'sada' ? '#0284c7' : '#d97706'};color:#fff;font-size:0.72rem;">
+                    ${r.direction === 'sada' ? '📏 اتجاه سدا' : '✂️ اتجاه قص'}
+                  </span>
+                </td>
+                <td>
+                  <span class="badge" style="background:rgba(15,118,110,0.14);color:var(--primary);border:1px solid var(--primary);font-size:0.78rem;font-weight:800;">
+                    ${r.gradeCode}
+                  </span>
+                  <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">${r.gradeName}</div>
+                </td>
+                <td>
+                  <strong style="color:var(--success);font-size:0.92rem;">+${fmtNum(r.sheetsCount, 0)} قطعة</strong>
+                </td>
+                <td>
+                  <strong>${fmtNum(r.volumeM3, 4)} م³</strong>
+                  <br/><small style="color:var(--text-muted);">${fmtNum(r.areaM2, 2)} م²</small>
+                </td>
+                ${showPrices ? `
+                  <td>
+                    <div style="font-size:0.74rem;">سعر القطعة: <strong>${fmtMoney(r.unitSheetPrice)}</strong></div>
+                    <div style="color:var(--primary);font-weight:800;">الإجمالي: ${fmtMoney(r.totalAmount)}</div>
+                  </td>
+                ` : ''}
+                <td>
+                  <span class="badge" style="background:rgba(124,58,237,0.12);color:#6d28d9;border:1px solid rgba(124,58,237,0.35);font-weight:800;font-size:0.76rem;">
+                    👤 ${r.performedBy}
+                  </span>
+                  ${r.performedByRole && r.performedByRole !== r.performedBy ? `<div style="font-size:0.66rem;color:var(--text-muted);margin-top:2px;">${r.performedByRole}</div>` : ''}
+                </td>
+                <td>
+                  <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                    <button class="btn btn-sm btn-outline" onclick="printWarehouseVoucher('${r.id}')" title="طباعة إذن الإدخال">🖨️</button>
+                    ${isFullAdmin(currentUser) ? `
+                      <button class="btn btn-sm btn-accent" onclick="openEditWarehouseMovementModal('${r.id}')" title="تعديل">✏️</button>
+                      <button class="btn btn-sm btn-danger" onclick="deleteWarehouseMovementWithRestore('${r.id}')" title="حذف وإرجاع الرصيد">🗑️</button>
+                    ` : ''}
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+          ${data.filteredRows.length > 0 ? `
+            <tfoot>
+              <tr style="background:var(--bg-elevated);font-weight:900;">
+                <td colspan="7">إجمالي الإنتاج الداخل للمخزن (${data.periodLabel}) — عدد (${data.totalEntriesCount}) حركة</td>
+                <td style="color:var(--success);font-size:0.95rem;">+${fmtNum(data.totalSheets, 0)} قطعة</td>
+                <td>${fmtNum(data.totalVolumeM3, 4)} م³ (${fmtNum(data.totalAreaM2, 1)} م²)</td>
+                ${showPrices ? `<td style="color:var(--primary);">${fmtMoney(data.totalValue)}</td>` : ''}
+                <td colspan="2">${data.userSummaryList.map(u => `${u.userName}: ${fmtNum(u.sheets, 0)} ق`).join(' | ')}</td>
+              </tr>
+            </tfoot>
+          ` : ''}
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function printProductionLogReportPdf() {
+  const data = getFilteredProductionLogData();
+  const showPrices = canSeeFinancialPrices();
+
+  const html = `
+    <div class="pdf-report-wrap">
+      ${buildStandardPdfHeaderHtml(
+        `تقرير جدول الإنتاج — ${data.periodLabel}`,
+        `إجمالي الحركات: ${data.totalEntriesCount} حركة | إجمالي القطع: ${fmtNum(data.totalSheets, 0)} قطعة | إجمالي الحجم: ${fmtNum(data.totalVolumeM3, 4)} م³ (${fmtNum(data.totalAreaM2, 2)} م²)`
+      )}
+
+      ${data.userSummaryList.length > 0 ? `
+        <div style="margin-bottom:10px;padding:6px 10px;border:1px solid #334155;border-radius:6px;background:#f8fafc;font-size:11.5px;">
+          <strong>👤 إجمالي الإنتاج المنزّل حسب المستخدم:</strong>
+          ${data.userSummaryList.map(u => `${u.userName}: ${fmtNum(u.sheets, 0)} قطعة (${fmtNum(u.volumeM3, 3)} م³ — ${u.entriesCount} حركة)`).join(' &nbsp;|&nbsp; ')}
+        </div>
+      ` : ''}
+
+      <table class="pdf-report-table">
+        <thead>
+          <tr>
+            <th>م</th>
+            <th>رقم الإذن</th>
+            <th>التاريخ</th>
+            <th>الصنف / البيان</th>
+            <th>المقاس</th>
+            <th>التخانة والاتجاه</th>
+            <th>درجة الجودة</th>
+            <th>الكمية (قطعة)</th>
+            <th>الحجم (م³)</th>
+            ${showPrices ? '<th>سعر القطعة</th><th>الإجمالي</th>' : ''}
+            <th>المستخدم المنفذ لتنزيل الإنتاج</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.filteredRows.map((r, idx) => `
+            <tr>
+              <td>${idx + 1}</td>
+              <td><strong>${r.voucherNumber}</strong></td>
+              <td>${r.dateStr}${r.timeStr ? ' ' + r.timeStr : ''}</td>
+              <td>${r.woodTypeName} (${r.batchNotes})</td>
+              <td>${formatVeneerDimensions(r.lengthCm, r.widthCm, false)}</td>
+              <td><strong>${r.thkMm} مم (${r.direction === 'sada' ? 'سدا' : 'قص'})</strong></td>
+              <td><strong>${r.gradeCode}</strong></td>
+              <td><strong>${fmtNum(r.sheetsCount, 0)} قطعة</strong></td>
+              <td><strong>${fmtNum(r.volumeM3, 4)} م³</strong></td>
+              ${showPrices ? `<td>${fmtMoney(r.unitSheetPrice)}</td><td><strong>${fmtMoney(r.totalAmount)}</strong></td>` : ''}
+              <td><strong>${r.performedBy}</strong></td>
+            </tr>
+          `).join('')}
+        </tbody>
+        <tfoot>
+          <tr style="background:#e2e8f0;font-weight:900;">
+            <td colspan="7">الإجمالي الكلي للإنتاج الداخل للمخزن (${data.periodLabel})</td>
+            <td>${fmtNum(data.totalSheets, 0)} قطعة</td>
+            <td>${fmtNum(data.totalVolumeM3, 4)} م³</td>
+            ${showPrices ? `<td>-</td><td>${fmtMoney(data.totalValue)}</td>` : ''}
+            <td>${data.totalEntriesCount} حركة</td>
+          </tr>
+        </tfoot>
+      </table>
+      ${buildStandardPdfFooterHtml()}
+    </div>
+  `;
+  openUniversalPrintDocument(html, `جدول الإنتاج - ${data.periodLabel}`, false);
 }
 
 function renderWarehouseMovements() {
@@ -5592,6 +6257,9 @@ function renderReports() {
   });
 
   return `
+    <!-- On-Demand Daily / Weekly / Monthly Production Log Table -->
+    ${renderProductionLogTableSection()}
+
     <!-- Central PDF Print Hub for All Factory Reports -->
     <div class="card" style="border:2px solid var(--primary);background:linear-gradient(135deg, rgba(15,118,110,0.06), rgba(217,119,6,0.06));">
       <div class="card-header">
@@ -5601,6 +6269,7 @@ function renderReports() {
         </div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        <button class="btn btn-success" style="font-weight:800;" onclick="printProductionLogReportPdf()">🖨️ جدول الإنتاج (يومي / أسبوعي / شهري) PDF</button>
         <button class="btn btn-primary" onclick="printVeneerQuantitiesMatrixPdf()">🖨️ جدول كميات القشرة PDF</button>
         ${canSeeFinancialPrices() ? `
           <button class="btn btn-accent" onclick="printVeneerPricesMatrixPdf()">🖨️ جدول الأسعار PDF</button>
@@ -12120,15 +12789,27 @@ function submitMatrixCellOperation(e) {
       directionLabel: 'إضافة كميات إنتاج',
       movementCategory: 'production_in',
       cellKey,
+      woodTypeId: woodObj.id,
+      woodTypeName: woodObj.name,
+      thicknessId: ctx.thkId,
+      thicknessMm: ctx.thkMm,
+      thkDirection: ctx.direction,
+      directionLabelThk: ctx.directionLabel,
+      gradeId: ctx.gradeId,
+      gradeCode: ctx.gradeCode,
+      gradeName: ctx.gradeName,
       lengthCm: len,
       widthCm: wid,
       sheetsCount: sheets,
+      areaM2: m.totalAreaM2,
+      volumeM3: m.totalVolumeM3,
       unitSheetPrice: unitPrice,
       totalSaleAmount: totalAmount,
       itemSummary: `إضافة كميات إنتاج قشرة ${woodObj.name} — مقاس (${dimLabel}) — تخانة ${ctx.thkMm} مم (${ctx.directionLabel}) × ${ctx.gradeName} (${notes || 'إنتاج جديد'})`,
       referenceCode: `${ctx.thkMm}mm-${ctx.direction}-${ctx.gradeCode}`,
       quantitySummary: `${sheets} قطعة (${formatVeneerDimensions(len, wid, false)}) | ${m.totalVolumeM3} م³`,
       performedBy: currentUser.name,
+      performedByRole: currentUser.roleTitle || '',
       approvedBy: currentUser.name,
       updatedAt: now
     });
