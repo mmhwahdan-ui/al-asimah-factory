@@ -16512,6 +16512,29 @@ function openSmartAiAssistantModal(initialCommand = '') {
           </div>
         </div>
 
+        <!-- Direct Log Operation & Multi-Pallet Production Banner Inside Smart AI Assistant -->
+        <div style="background:linear-gradient(135deg, rgba(217,119,6,0.12), rgba(124,58,237,0.10));border:2px solid #d97706;border-radius:12px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+          <div style="flex:1;min-width:240px;">
+            <div style="font-weight:900;color:#b45309;font-size:0.92rem;">
+              🪵⚙️ تشغيل الجذع وربطه بالنظام + إنتاج بالتات متعددة الجودة والتخانة ودخولها المخزن:
+            </div>
+            <small style="color:var(--text-main);font-weight:700;">
+              اختر سيريال الجذع واضغط للتشغيل وتوزيع الإنتاج على عدة تخانات وجودات تدخل المخزن وجدول الإنتاج فوراً:
+            </small>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+            <select id="ai-quick-log-select" class="form-control" style="max-width:220px;padding:6px 10px;font-size:0.8rem;font-weight:800;border:2px solid #d97706;">
+              <option value="">🌲 اختر الجذع المتاح (${(state.logItems || []).filter(l => l.status !== 'processed').length} جذع)...</option>
+              ${(state.logItems || []).filter(l => l.status !== 'processed').slice(0, 80).map(l => `
+                <option value="${l.id}">سيريال ${l.serialNumber} (${fmtNum(l.volumeM3, 3)} م³ — ${l.containerNumber})</option>
+              `).join('')}
+            </select>
+            <button type="button" class="btn btn-sm" style="padding:7px 14px;background:linear-gradient(135deg,#d97706,#b45309);color:#fff;font-weight:900;font-size:0.82rem;box-shadow:0 3px 10px rgba(217,119,6,0.35);" onclick="openAiLogToMultiPalletProductionModal(document.getElementById('ai-quick-log-select')?.value || '')">
+              🪵📥 تشغيل الجذع + إنتاج بالتات متعددة للمخزن
+            </button>
+          </div>
+        </div>
+
         <!-- Quick Suggestion Chips -->
         <div style="margin-bottom:10px;">
           <div style="font-size:0.76rem;font-weight:800;color:var(--text-muted);margin-bottom:5px;">⚡ أوامر واستعلامات سريعة بضغطة واحدة (أو اضغط الميكروفون وتحدث):</div>
