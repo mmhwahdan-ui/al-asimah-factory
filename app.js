@@ -4361,6 +4361,8 @@ function extractProductionEntryDetails(m) {
   };
 }
 
+let prodLogShowDetailedVouchers = false;
+
 function getFilteredProductionLogData() {
   const allInMovements = (state?.warehouseMovements || [])
     .filter(m => {
@@ -4469,37 +4471,125 @@ function getFilteredProductionLogData() {
   }
   const userSummaryList = Array.from(userSummaryMap.values()).sort((a, b) => b.sheets - a.sheets);
 
-  // Group by (Thickness + Direction + Grade)
-  const itemSummaryMap = new Map();
+  // Build Thickness Columns (الأعمدة = التخانة والاتجاه)
+  const thkColsMap = new Map();
+  for (const t of getSortedThicknesses()) {
+    const dir = t.direction === 'sada' ? 'sada' : 'qas';
+    if (prodLogFilterThk !== 'all' && String(t.mm) !== String(prodLogFilterThk)) continue;
+    if (prodLogFilterDir !== 'all' && dir !== prodLogFilterDir) continue;
+    const cKey = `${Number(t.mm)}__${dir}`;
+    if (!thkColsMap.has(cKey)) {
+      thkColsMap.set(cKey, {
+        colKey: cKey,
+        thkMm: Number(t.mm),
+        direction: dir,
+        directionLabel: dir === 'sada' ? 'سدا' : 'قص',
+        totalSheets: 0,
+        totalVolumeM3: 0,
+        totalValue: 0
+      });
+    }
+  }
   for (const r of filteredRows) {
-    const iKey = `${r.thkMm}__${r.direction}__${r.gradeCode}`;
-    if (!itemSummaryMap.has(iKey)) {
-      itemSummaryMap.set(iKey, {
-        thkMm: r.thkMm,
-        direction: r.direction,
-        directionLabel: r.directionLabel,
-        gradeCode: r.gradeCode,
-        gradeName: r.gradeName,
-        entriesCount: 0,
+    const dir = r.direction === 'sada' ? 'sada' : 'qas';
+    const cKey = `${Number(r.thkMm)}__${dir}`;
+    if (!thkColsMap.has(cKey)) {
+      thkColsMap.set(cKey, {
+        colKey: cKey,
+        thkMm: Number(r.thkMm),
+        direction: dir,
+        directionLabel: dir === 'sada' ? 'سدا' : 'قص',
+        totalSheets: 0,
+        totalVolumeM3: 0,
+        totalValue: 0
+      });
+    }
+    const colObj = thkColsMap.get(cKey);
+    colObj.totalSheets += r.sheetsCount;
+    colObj.totalVolumeM3 = +(colObj.totalVolumeM3 + r.volumeM3).toFixed(4);
+    colObj.totalValue = +(colObj.totalValue + r.totalAmount).toFixed(2);
+  }
+
+  const thicknessColumns = Array.from(thkColsMap.values()).sort((a, b) => {
+    if (a.thkMm !== b.thkMm) return a.thkMm - b.thkMm;
+    return a.direction.localeCompare(b.direction);
+  });
+
+  // Build Matrix Groups: Right = Date (التاريخ), Row = Grade (الجودة), Columns = Thickness & Quantity (التخانة والكمية)
+  const catalogGradeOrder = new Map((state?.catalog?.grades || []).map((g, idx) => [g.code, idx]));
+  const dateGroupsMap = new Map();
+
+  for (const r of filteredRows) {
+    const dKey = r.dateStr || '-';
+    if (!dateGroupsMap.has(dKey)) {
+      dateGroupsMap.set(dKey, {
+        dateStr: dKey,
+        dayTotalSheets: 0,
+        dayTotalVolumeM3: 0,
+        dayUsersSet: new Set(),
+        gradesMap: new Map()
+      });
+    }
+    const dGroup = dateGroupsMap.get(dKey);
+    dGroup.dayTotalSheets += r.sheetsCount;
+    dGroup.dayTotalVolumeM3 = +(dGroup.dayTotalVolumeM3 + r.volumeM3).toFixed(4);
+    if (r.performedBy) dGroup.dayUsersSet.add(r.performedBy);
+
+    const gKey = r.gradeCode || 'عام';
+    if (!dGroup.gradesMap.has(gKey)) {
+      dGroup.gradesMap.set(gKey, {
+        dateStr: dKey,
+        gradeCode: gKey,
+        gradeName: r.gradeName || gKey,
+        rowTotalSheets: 0,
+        rowTotalVolumeM3: 0,
+        rowTotalAreaM2: 0,
+        rowTotalValue: 0,
+        usersSet: new Set(),
+        cellsByThkKey: new Map()
+      });
+    }
+    const gRow = dGroup.gradesMap.get(gKey);
+    gRow.rowTotalSheets += r.sheetsCount;
+    gRow.rowTotalVolumeM3 = +(gRow.rowTotalVolumeM3 + r.volumeM3).toFixed(4);
+    gRow.rowTotalAreaM2 = +(gRow.rowTotalAreaM2 + r.areaM2).toFixed(2);
+    gRow.rowTotalValue = +(gRow.rowTotalValue + r.totalAmount).toFixed(2);
+    if (r.performedBy) gRow.usersSet.add(r.performedBy);
+
+    const cKey = `${Number(r.thkMm)}__${r.direction === 'sada' ? 'sada' : 'qas'}`;
+    if (!gRow.cellsByThkKey.has(cKey)) {
+      gRow.cellsByThkKey.set(cKey, {
         sheets: 0,
         volumeM3: 0,
         areaM2: 0,
         totalValue: 0,
-        usersSet: new Set()
+        usersSet: new Set(),
+        vouchers: []
       });
     }
-    const iEntry = itemSummaryMap.get(iKey);
-    iEntry.entriesCount += 1;
-    iEntry.sheets += r.sheetsCount;
-    iEntry.volumeM3 = +(iEntry.volumeM3 + r.volumeM3).toFixed(4);
-    iEntry.areaM2 = +(iEntry.areaM2 + r.areaM2).toFixed(2);
-    iEntry.totalValue = +(iEntry.totalValue + r.totalAmount).toFixed(2);
-    if (r.performedBy) iEntry.usersSet.add(r.performedBy);
+    const cell = gRow.cellsByThkKey.get(cKey);
+    cell.sheets += r.sheetsCount;
+    cell.volumeM3 = +(cell.volumeM3 + r.volumeM3).toFixed(4);
+    cell.areaM2 = +(cell.areaM2 + r.areaM2).toFixed(2);
+    cell.totalValue = +(cell.totalValue + r.totalAmount).toFixed(2);
+    if (r.performedBy) cell.usersSet.add(r.performedBy);
+    cell.vouchers.push(r);
   }
-  const itemSummaryList = Array.from(itemSummaryMap.values()).sort((a, b) => {
-    if (a.thkMm !== b.thkMm) return a.thkMm - b.thkMm;
-    return b.sheets - a.sheets;
-  });
+
+  const matrixDateGroups = Array.from(dateGroupsMap.values())
+    .sort((a, b) => b.dateStr.localeCompare(a.dateStr))
+    .map(dg => {
+      const gradeRows = Array.from(dg.gradesMap.values()).sort((a, b) => {
+        const idxA = catalogGradeOrder.has(a.gradeCode) ? catalogGradeOrder.get(a.gradeCode) : 999;
+        const idxB = catalogGradeOrder.has(b.gradeCode) ? catalogGradeOrder.get(b.gradeCode) : 999;
+        if (idxA !== idxB) return idxA - idxB;
+        return a.gradeCode.localeCompare(b.gradeCode);
+      });
+      return {
+        ...dg,
+        gradeRows
+      };
+    });
 
   return {
     allInMovements,
@@ -4520,23 +4610,25 @@ function getFilteredProductionLogData() {
     totalVolumeM3,
     totalValue,
     userSummaryList,
-    itemSummaryList
+    thicknessColumns,
+    matrixDateGroups
   };
 }
 
 function renderProductionLogTableSection() {
   const data = getFilteredProductionLogData();
   const showPrices = canSeeFinancialPrices();
+  const thkCols = data.thicknessColumns;
 
   return `
     <div class="card" style="border:2px solid var(--primary);">
       <div class="card-header">
         <div>
           <div class="card-title" style="color:var(--primary);font-size:1.05rem;">
-            📊 جدول الإنتاج اليومي والأسبوعي والشهري حسب الطلب (الأصناف الداخلة للمخزن شاملاً التخانة والجودة والمستخدم المنفذ)
+            📊 جدول الإنتاج اليومي والأسبوعي والشهري حسب الطلب (اليمين: التاريخ | الصف: الجودة | الأعمدة: التخانة والكمية + المستخدم المنفذ)
           </div>
           <small style="color:var(--text-muted);">
-            اختر الفترة المطلوبة (<strong>يومي / أسبوعي / شهري / فترة مخصصة</strong>) أو فلتر بالتخانة أو الجودة أو اسم المستخدم لعرض وطباعة الأصناف التي دخلت المخزن
+            جدول مصفوفة الإنتاج: على اليمين <strong>التاريخ</strong> وفي الصفوف <strong>درجة الجودة</strong> وفي الأعمدة <strong>التخانة والكمية</strong> مع بيان <strong>المستخدم الذي قام بتنزيل الإنتاج</strong>
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
@@ -4672,7 +4764,7 @@ function renderProductionLogTableSection() {
         <div class="stat-card accent">
           <span class="stat-title">إجمالي تكعيب الإنتاج الداخل (م³)</span>
           <div class="stat-value">${fmtNum(data.totalVolumeM3, 4)} م³</div>
-          <div class="stat-sub">الأصناف (التخانات × الجودات): <strong>${data.itemSummaryList.length} صنف</strong></div>
+          <div class="stat-sub">أيام الإنتاج في الفترة: <strong>${data.matrixDateGroups.length} يوم</strong></div>
         </div>
 
         <div class="stat-card" style="border-right:4px solid #7c3aed;">
@@ -4686,139 +4778,179 @@ function renderProductionLogTableSection() {
         </div>
       </div>
 
-      <!-- 3. Summary by (Thickness x Grade) & by User -->
-      ${data.itemSummaryList.length > 0 ? `
-        <div style="margin-bottom:14px;background:var(--bg-elevated);padding:10px 14px;border-radius:10px;border:1px solid var(--border-color);">
-          <div style="font-weight:800;font-size:0.84rem;color:var(--primary);margin-bottom:8px;">
-            🪵 ملخص الأصناف التي دخلت المخزن في (${data.periodLabel}) مجمعة حسب (التخانة × الجودة):
-          </div>
-          <div style="display:flex;flex-wrap:wrap;gap:8px;">
-            ${data.itemSummaryList.map(it => `
-              <div style="background:var(--bg-surface);border:1.5px solid var(--border-color);border-radius:8px;padding:6px 10px;font-size:0.76rem;line-height:1.45;">
-                <div>
-                  <span class="badge badge-info">${it.thkMm} مم</span>
-                  <span class="badge" style="background:${it.direction === 'sada' ? '#0284c7' : '#d97706'};color:#fff;">${it.direction === 'sada' ? 'سدا' : 'قص'}</span>
-                  <strong style="color:var(--primary);margin-right:3px;">× ${it.gradeCode}</strong>
-                </div>
-                <div style="margin-top:3px;">
-                  الكمية: <strong style="color:var(--success);">${fmtNum(it.sheets, 0)} قطعة</strong> (${fmtNum(it.volumeM3, 3)} م³)
-                </div>
-                <div style="font-size:0.68rem;color:var(--text-muted);">
-                  👤 بواسطة: <strong>${Array.from(it.usersSet).join(' ، ')}</strong>
-                </div>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      ` : ''}
-
-      <!-- 4. Detailed Production Entries Table (الأصناف التي دخلت المخزن + التخانة + الجودة + المستخدم المنفذ) -->
-      <div class="table-responsive">
-        <table>
+      <!-- 3. MATRIX TABLE: Right = Date (التاريخ), Row = Grade (الجودة), Columns = Thickness & Quantity (التخانة والكمية) + User (المستخدم المنفذ) -->
+      <div class="matrix-wrapper" style="margin-bottom:12px;">
+        <table class="matrix-table">
           <thead>
             <tr>
-              <th>م</th>
-              <th>رقم الإذن</th>
-              <th>التاريخ والوقت</th>
-              <th>الصنف / البيان الذي دخل المخزن</th>
-              <th>📐 المقاس</th>
-              <th>📏 التخانة والاتجاه</th>
-              <th>⭐ درجة الجودة</th>
-              <th>📦 الكمية الداخلة (قطعة)</th>
-              <th>الحجم (م³) والمساحة</th>
-              ${showPrices ? '<th>💰 سعر القطعة والإجمالي</th>' : ''}
-              <th>👤 المستخدم الذي قام بتنزيل الإنتاج</th>
-              <th>إجراءات</th>
+              <th class="matrix-corner-th" style="min-width:115px;text-align:center;">
+                📅 التاريخ
+              </th>
+              <th class="matrix-grade-th" style="min-width:115px;background:#0f172a;color:#fff;text-align:center;">
+                ⭐ الجودة \\ التخانة ⬅️
+              </th>
+              ${thkCols.map(col => `
+                <th class="matrix-grade-th" style="min-width:92px;text-align:center;border-top:3px solid ${col.direction === 'sada' ? '#0284c7' : '#d97706'};">
+                  <div style="font-weight:900;font-size:0.82rem;color:var(--primary);">${col.thkMm} مم</div>
+                  <span class="badge" style="background:${col.direction === 'sada' ? '#0284c7' : '#d97706'};color:#fff;font-size:0.65rem;padding:1px 6px;">
+                    ${col.direction === 'sada' ? '📏 سدا' : '✂️ قص'}
+                  </span>
+                  <div style="font-size:0.66rem;color:var(--text-muted);margin-top:2px;">الكمية (قطعة)</div>
+                </th>
+              `).join('')}
+              <th class="matrix-grade-th" style="min-width:105px;background:rgba(15,118,110,0.10);text-align:center;">
+                <div style="font-weight:900;color:var(--primary);">إجمالي الجودة</div>
+                <small style="font-size:0.66rem;color:var(--text-muted);">بالقطعة و م³</small>
+              </th>
+              <th class="matrix-grade-th" style="min-width:130px;background:rgba(124,58,237,0.10);text-align:center;">
+                <div style="font-weight:900;color:#6d28d9;">👤 قام بتنزيل الإنتاج</div>
+                <small style="font-size:0.66rem;color:var(--text-muted);">اسم المستخدم</small>
+              </th>
             </tr>
           </thead>
           <tbody>
-            ${data.filteredRows.length === 0 ? `
+            ${data.matrixDateGroups.length === 0 ? `
               <tr>
-                <td colspan="${showPrices ? 12 : 11}" style="text-align:center;padding:24px;color:var(--text-muted);">
+                <td colspan="${thkCols.length + 4}" style="text-align:center;padding:24px;color:var(--text-muted);">
                   لا توجد حركات إدخال إنتاج مطابقة لهذه الفترة (${data.periodLabel}). يمكنك الضغط على أحد الأيام المسجل بها إنتاج أعلاه أو اختيار <strong>"📆 الإنتاج الأسبوعي"</strong> أو <strong>"🗓️ الإنتاج الشهري"</strong>.
                 </td>
               </tr>
-            ` : data.filteredRows.map((r, idx) => `
-              <tr>
-                <td><strong>${idx + 1}</strong></td>
-                <td><strong style="color:var(--primary);">${r.voucherNumber}</strong></td>
-                <td>
-                  <strong>${r.dateStr}</strong>
-                  ${r.timeStr ? `<br/><small style="color:var(--text-muted);">🕒 ${r.timeStr}</small>` : ''}
-                </td>
-                <td>
-                  <strong>${r.woodTypeName}</strong>
-                  <br/><small style="color:var(--text-muted);">${r.batchNotes}</small>
-                </td>
-                <td>${getVeneerDimensionBadgeHtml(r.lengthCm, r.widthCm)}</td>
-                <td>
-                  <span class="badge badge-info" style="font-size:0.78rem;">${r.thkMm} مم</span>
-                  <span class="badge" style="background:${r.direction === 'sada' ? '#0284c7' : '#d97706'};color:#fff;font-size:0.72rem;">
-                    ${r.direction === 'sada' ? '📏 اتجاه سدا' : '✂️ اتجاه قص'}
-                  </span>
-                </td>
-                <td>
-                  <span class="badge" style="background:rgba(15,118,110,0.14);color:var(--primary);border:1px solid var(--primary);font-size:0.78rem;font-weight:800;">
-                    ${r.gradeCode}
-                  </span>
-                  <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">${r.gradeName}</div>
-                </td>
-                <td>
-                  <strong style="color:var(--success);font-size:0.92rem;">+${fmtNum(r.sheetsCount, 0)} قطعة</strong>
-                </td>
-                <td>
-                  <strong>${fmtNum(r.volumeM3, 4)} م³</strong>
-                  <br/><small style="color:var(--text-muted);">${fmtNum(r.areaM2, 2)} م²</small>
-                </td>
-                ${showPrices ? `
-                  <td>
-                    <div style="font-size:0.74rem;">سعر القطعة: <strong>${fmtMoney(r.unitSheetPrice)}</strong></div>
-                    <div style="color:var(--primary);font-weight:800;">الإجمالي: ${fmtMoney(r.totalAmount)}</div>
+            ` : data.matrixDateGroups.map(dg => {
+              const rowSpanCount = dg.gradeRows.length;
+              return dg.gradeRows.map((gRow, gIdx) => `
+                <tr>
+                  ${gIdx === 0 ? `
+                    <td rowspan="${rowSpanCount}" style="background:var(--bg-elevated);font-weight:900;text-align:center;vertical-align:middle;border-left:2px solid var(--primary);padding:8px 6px;">
+                      <div style="font-size:0.88rem;color:var(--primary);">📅 ${dg.dateStr}</div>
+                      <div style="font-size:0.72rem;color:var(--success);margin-top:4px;">إجمالي اليوم:<br/><strong>${fmtNum(dg.dayTotalSheets, 0)} قطعة</strong></div>
+                      <div style="font-size:0.66rem;color:var(--text-muted);">(${fmtNum(dg.dayTotalVolumeM3, 3)} م³)</div>
+                    </td>
+                  ` : ''}
+                  <td style="background:rgba(15,118,110,0.06);font-weight:800;text-align:center;vertical-align:middle;padding:6px;">
+                    <span class="badge" style="background:var(--primary);color:#fff;font-size:0.76rem;padding:2px 8px;">${gRow.gradeCode}</span>
+                    <div style="font-size:0.66rem;color:var(--text-muted);margin-top:2px;">${gRow.gradeName}</div>
                   </td>
-                ` : ''}
-                <td>
-                  <span class="badge" style="background:rgba(124,58,237,0.12);color:#6d28d9;border:1px solid rgba(124,58,237,0.35);font-weight:800;font-size:0.76rem;">
-                    👤 ${r.performedBy}
-                  </span>
-                  ${r.performedByRole && r.performedByRole !== r.performedBy ? `<div style="font-size:0.66rem;color:var(--text-muted);margin-top:2px;">${r.performedByRole}</div>` : ''}
-                </td>
-                <td>
-                  <div style="display:flex;gap:4px;flex-wrap:wrap;">
-                    <button class="btn btn-sm btn-outline" onclick="printWarehouseVoucher('${r.id}')" title="طباعة إذن الإدخال">🖨️</button>
-                    ${isFullAdmin(currentUser) ? `
-                      <button class="btn btn-sm btn-accent" onclick="openEditWarehouseMovementModal('${r.id}')" title="تعديل">✏️</button>
-                      <button class="btn btn-sm btn-danger" onclick="deleteWarehouseMovementWithRestore('${r.id}')" title="حذف وإرجاع الرصيد">🗑️</button>
-                    ` : ''}
-                  </div>
-                </td>
-              </tr>
-            `).join('')}
+                  ${thkCols.map(col => {
+                    const cell = gRow.cellsByThkKey.get(col.colKey);
+                    if (!cell || cell.sheets <= 0) {
+                      return `<td style="text-align:center;color:var(--text-muted);font-size:0.74rem;vertical-align:middle;">-</td>`;
+                    }
+                    const usersArr = Array.from(cell.usersSet);
+                    return `
+                      <td style="text-align:center;vertical-align:middle;background:rgba(16,185,129,0.07);padding:5px 4px;">
+                        <div style="font-weight:900;font-size:0.88rem;color:var(--success);">${fmtNum(cell.sheets, 0)} ق</div>
+                        <div style="font-size:0.66rem;color:var(--text-main);font-weight:700;">${fmtNum(cell.volumeM3, 3)} م³</div>
+                        <div style="font-size:0.63rem;color:#6d28d9;font-weight:800;margin-top:2px;">👤 ${usersArr.join(' ، ')}</div>
+                      </td>
+                    `;
+                  }).join('')}
+                  <td class="matrix-total-cell" style="text-align:center;vertical-align:middle;">
+                    <div style="font-weight:900;font-size:0.86rem;color:var(--primary);">${fmtNum(gRow.rowTotalSheets, 0)} قطعة</div>
+                    <div style="font-size:0.68rem;color:var(--text-muted);">${fmtNum(gRow.rowTotalVolumeM3, 3)} م³</div>
+                  </td>
+                  <td style="text-align:center;vertical-align:middle;padding:6px;">
+                    <div style="display:flex;flex-direction:column;gap:3px;align-items:center;">
+                      ${Array.from(gRow.usersSet).map(uName => `
+                        <span class="badge" style="background:rgba(124,58,237,0.12);color:#6d28d9;border:1px solid rgba(124,58,237,0.35);font-weight:800;font-size:0.72rem;">
+                          👤 ${uName}
+                        </span>
+                      `).join('')}
+                    </div>
+                  </td>
+                </tr>
+              `).join('');
+            }).join('')}
           </tbody>
-          ${data.filteredRows.length > 0 ? `
+          ${data.matrixDateGroups.length > 0 ? `
             <tfoot>
               <tr style="background:var(--bg-elevated);font-weight:900;">
-                <td colspan="7">إجمالي الإنتاج الداخل للمخزن (${data.periodLabel}) — عدد (${data.totalEntriesCount}) حركة</td>
-                <td style="color:var(--success);font-size:0.95rem;">+${fmtNum(data.totalSheets, 0)} قطعة</td>
-                <td>${fmtNum(data.totalVolumeM3, 4)} م³ (${fmtNum(data.totalAreaM2, 1)} م²)</td>
-                ${showPrices ? `<td style="color:var(--primary);">${fmtMoney(data.totalValue)}</td>` : ''}
-                <td colspan="2">${data.userSummaryList.map(u => `${u.userName}: ${fmtNum(u.sheets, 0)} ق`).join(' | ')}</td>
+                <td colspan="2" style="text-align:center;padding:8px;color:var(--primary);">
+                  إجمالي التخانة في الفترة ⬅️
+                </td>
+                ${thkCols.map(col => `
+                  <td class="matrix-total-cell" style="text-align:center;">
+                    ${col.totalSheets > 0 ? `
+                      <div style="color:var(--primary);font-weight:900;font-size:0.84rem;">${fmtNum(col.totalSheets, 0)} ق</div>
+                      <div style="font-size:0.66rem;color:var(--text-muted);">${fmtNum(col.totalVolumeM3, 3)} م³</div>
+                    ` : `<span style="color:var(--text-muted);">-</span>`}
+                  </td>
+                `).join('')}
+                <td class="matrix-total-cell" style="background:var(--primary-light) !important;text-align:center;">
+                  <div style="color:var(--primary);font-size:0.92rem;font-weight:900;">${fmtNum(data.totalSheets, 0)} قطعة</div>
+                  <div style="font-size:0.72rem;">${fmtNum(data.totalVolumeM3, 4)} م³</div>
+                </td>
+                <td style="text-align:center;font-size:0.72rem;color:#6d28d9;">
+                  ${data.userSummaryList.map(u => `<div>👤 ${u.userName}: <strong>${fmtNum(u.sheets, 0)} ق</strong></div>`).join('')}
+                </td>
               </tr>
             </tfoot>
           ` : ''}
         </table>
       </div>
+
+      <!-- Optional Toggle for Detailed Vouchers List (للتعديل أو الحذف أو طباعة إذن منفرد) -->
+      <div style="display:flex;justify-content:flex-end;margin-top:8px;">
+        <button type="button" class="btn btn-sm btn-outline" onclick="prodLogShowDetailedVouchers=!prodLogShowDetailedVouchers; render();">
+          ${prodLogShowDetailedVouchers ? '🔼 إخفاء سجل أذون الإدخال التفصيلي' : `🔽 عرض سجل أذون الإدخال التفصيلي (${data.filteredRows.length} إذن — للتعديل أو الحذف)`}
+        </button>
+      </div>
+
+      ${prodLogShowDetailedVouchers && data.filteredRows.length > 0 ? `
+        <div class="table-responsive" style="margin-top:10px;border-top:1px dashed var(--border-color);padding-top:10px;">
+          <table>
+            <thead>
+              <tr>
+                <th>م</th>
+                <th>رقم الإذن</th>
+                <th>التاريخ والوقت</th>
+                <th>📐 المقاس</th>
+                <th>📏 التخانة والاتجاه</th>
+                <th>⭐ الجودة</th>
+                <th>📦 الكمية (قطعة)</th>
+                <th>الحجم (م³)</th>
+                <th>👤 المستخدم المنفذ</th>
+                <th>إجراءات</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.filteredRows.map((r, idx) => `
+                <tr>
+                  <td><strong>${idx + 1}</strong></td>
+                  <td><strong style="color:var(--primary);">${r.voucherNumber}</strong></td>
+                  <td><strong>${r.dateStr}</strong> ${r.timeStr ? `<small style="color:var(--text-muted);">(${r.timeStr})</small>` : ''}</td>
+                  <td>${getVeneerDimensionBadgeHtml(r.lengthCm, r.widthCm)}</td>
+                  <td><strong>${r.thkMm} مم (${r.direction === 'sada' ? 'سدا' : 'قص'})</strong></td>
+                  <td><strong>${r.gradeCode}</strong></td>
+                  <td><strong style="color:var(--success);">+${fmtNum(r.sheetsCount, 0)} قطعة</strong></td>
+                  <td>${fmtNum(r.volumeM3, 4)} م³</td>
+                  <td><strong>👤 ${r.performedBy}</strong></td>
+                  <td>
+                    <div style="display:flex;gap:4px;">
+                      <button class="btn btn-sm btn-outline" onclick="printWarehouseVoucher('${r.id}')" title="طباعة إذن">🖨️</button>
+                      ${isFullAdmin(currentUser) ? `
+                        <button class="btn btn-sm btn-accent" onclick="openEditWarehouseMovementModal('${r.id}')" title="تعديل">✏️</button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteWarehouseMovementWithRestore('${r.id}')" title="حذف وإرجاع الرصيد">🗑️</button>
+                      ` : ''}
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : ''}
     </div>
   `;
 }
 
 function printProductionLogReportPdf() {
   const data = getFilteredProductionLogData();
-  const showPrices = canSeeFinancialPrices();
+  const thkCols = data.thicknessColumns;
 
   const html = `
     <div class="pdf-report-wrap">
       ${buildStandardPdfHeaderHtml(
-        `تقرير جدول الإنتاج — ${data.periodLabel}`,
+        `جدول الإنتاج — ${data.periodLabel}`,
         `إجمالي الحركات: ${data.totalEntriesCount} حركة | إجمالي القطع: ${fmtNum(data.totalSheets, 0)} قطعة | إجمالي الحجم: ${fmtNum(data.totalVolumeM3, 4)} م³ (${fmtNum(data.totalAreaM2, 2)} م²)`
       )}
 
@@ -4832,42 +4964,59 @@ function printProductionLogReportPdf() {
       <table class="pdf-report-table">
         <thead>
           <tr>
-            <th>م</th>
-            <th>رقم الإذن</th>
             <th>التاريخ</th>
-            <th>الصنف / البيان</th>
-            <th>المقاس</th>
-            <th>التخانة والاتجاه</th>
-            <th>درجة الجودة</th>
-            <th>الكمية (قطعة)</th>
-            <th>الحجم (م³)</th>
-            ${showPrices ? '<th>سعر القطعة</th><th>الإجمالي</th>' : ''}
-            <th>المستخدم المنفذ لتنزيل الإنتاج</th>
+            <th>الجودة \\ التخانة</th>
+            ${thkCols.map(col => `
+              <th>
+                <div>${col.thkMm} مم</div>
+                <div style="font-size:9.5px;">(${col.direction === 'sada' ? 'سدا' : 'قص'})</div>
+              </th>
+            `).join('')}
+            <th>إجمالي الجودة</th>
+            <th>قام بتنزيل الإنتاج</th>
           </tr>
         </thead>
         <tbody>
-          ${data.filteredRows.map((r, idx) => `
-            <tr>
-              <td>${idx + 1}</td>
-              <td><strong>${r.voucherNumber}</strong></td>
-              <td>${r.dateStr}${r.timeStr ? ' ' + r.timeStr : ''}</td>
-              <td>${r.woodTypeName} (${r.batchNotes})</td>
-              <td>${formatVeneerDimensions(r.lengthCm, r.widthCm, false)}</td>
-              <td><strong>${r.thkMm} مم (${r.direction === 'sada' ? 'سدا' : 'قص'})</strong></td>
-              <td><strong>${r.gradeCode}</strong></td>
-              <td><strong>${fmtNum(r.sheetsCount, 0)} قطعة</strong></td>
-              <td><strong>${fmtNum(r.volumeM3, 4)} م³</strong></td>
-              ${showPrices ? `<td>${fmtMoney(r.unitSheetPrice)}</td><td><strong>${fmtMoney(r.totalAmount)}</strong></td>` : ''}
-              <td><strong>${r.performedBy}</strong></td>
-            </tr>
-          `).join('')}
+          ${data.matrixDateGroups.map(dg => {
+            const rowSpanCount = dg.gradeRows.length;
+            return dg.gradeRows.map((gRow, gIdx) => `
+              <tr>
+                ${gIdx === 0 ? `
+                  <td rowspan="${rowSpanCount}" style="font-weight:900;background:#f1f5f9;">
+                    <div>${dg.dateStr}</div>
+                    <div style="font-size:9.5px;margin-top:2px;">(${fmtNum(dg.dayTotalSheets, 0)} ق)</div>
+                  </td>
+                ` : ''}
+                <td style="font-weight:800;background:#f8fafc;">${gRow.gradeCode}</td>
+                ${thkCols.map(col => {
+                  const cell = gRow.cellsByThkKey.get(col.colKey);
+                  if (!cell || cell.sheets <= 0) return `<td>-</td>`;
+                  return `
+                    <td>
+                      <strong>${fmtNum(cell.sheets, 0)} ق</strong>
+                      <div style="font-size:9px;">${fmtNum(cell.volumeM3, 3)} م³</div>
+                      <div style="font-size:8.5px;color:#334155;">${Array.from(cell.usersSet).join('، ')}</div>
+                    </td>
+                  `;
+                }).join('')}
+                <td style="font-weight:900;background:#f1f5f9;">
+                  <div>${fmtNum(gRow.rowTotalSheets, 0)} ق</div>
+                  <div style="font-size:9px;">${fmtNum(gRow.rowTotalVolumeM3, 3)} م³</div>
+                </td>
+                <td style="font-weight:800;">${Array.from(gRow.usersSet).join(' ، ')}</td>
+              </tr>
+            `).join('');
+          }).join('')}
         </tbody>
         <tfoot>
           <tr style="background:#e2e8f0;font-weight:900;">
-            <td colspan="7">الإجمالي الكلي للإنتاج الداخل للمخزن (${data.periodLabel})</td>
-            <td>${fmtNum(data.totalSheets, 0)} قطعة</td>
-            <td>${fmtNum(data.totalVolumeM3, 4)} م³</td>
-            ${showPrices ? `<td>-</td><td>${fmtMoney(data.totalValue)}</td>` : ''}
+            <td colspan="2">إجمالي التخانة</td>
+            ${thkCols.map(col => `
+              <td>
+                ${col.totalSheets > 0 ? `${fmtNum(col.totalSheets, 0)} ق<br/><span style="font-size:9px;">${fmtNum(col.totalVolumeM3, 3)} م³</span>` : '-'}
+              </td>
+            `).join('')}
+            <td>${fmtNum(data.totalSheets, 0)} ق<br/><span style="font-size:9px;">${fmtNum(data.totalVolumeM3, 4)} م³</span></td>
             <td>${data.totalEntriesCount} حركة</td>
           </tr>
         </tfoot>
@@ -4875,7 +5024,7 @@ function printProductionLogReportPdf() {
       ${buildStandardPdfFooterHtml()}
     </div>
   `;
-  openUniversalPrintDocument(html, `جدول الإنتاج - ${data.periodLabel}`, false);
+  openUniversalPrintDocument(html, `جدول الإنتاج - ${data.periodLabel}`, true);
 }
 
 function renderWarehouseMovements() {
