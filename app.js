@@ -973,6 +973,63 @@ function normalizeState(s) {
     }
   }
 
+  // Deduplicate logContainers by containerNumber (prevent duplicate GAOU 655045-3 or other containers from localStorage merge)
+  if (Array.isArray(s.logContainers) && s.logContainers.length > 0) {
+    const delSet = new Set(Array.isArray(s.deletedIds) ? s.deletedIds : []);
+    // Sort so canonical IDs (lcnt-5559-* and lcnt-2110-*) come first before random generated IDs
+    const sortedConts = [...s.logContainers].sort((a, b) => {
+      const aCanon = /^lcnt-(5559|2110)-\d+$/.test(a?.id || '') ? 0 : 1;
+      const bCanon = /^lcnt-(5559|2110)-\d+$/.test(b?.id || '') ? 0 : 1;
+      return aCanon - bCanon;
+    });
+    const seenNumMap = new Map();
+    const removedContIds = new Set();
+    for (const c of sortedConts) {
+      if (!c || !c.id || delSet.has(c.id)) continue;
+      const normNum = String(c.containerNumber || c.code || '').trim().toUpperCase();
+      if (!normNum) continue;
+      if (seenNumMap.has(normNum)) {
+        removedContIds.add(c.id);
+        delSet.add(c.id);
+      } else {
+        seenNumMap.set(normNum, c.id);
+      }
+    }
+    if (removedContIds.size > 0) {
+      s.logContainers = s.logContainers.filter(c => c && !removedContIds.has(c.id) && !delSet.has(c.id));
+    }
+    const validContIds = new Set((s.logContainers || []).map(c => c.id));
+    if (Array.isArray(s.logItems)) {
+      const seenLogKey = new Set();
+      const cleanLogs = [];
+      for (const l of s.logItems) {
+        if (!l || !l.id || delSet.has(l.id)) continue;
+        if (!validContIds.has(l.containerId)) {
+          delSet.add(l.id);
+          continue;
+        }
+        const key = `${l.containerId}__${String(l.serialNumber || '').trim()}`;
+        if (seenLogKey.has(key)) {
+          delSet.add(l.id);
+          continue;
+        }
+        seenLogKey.add(key);
+        cleanLogs.push(l);
+      }
+      s.logItems = cleanLogs;
+    }
+    if (Array.isArray(s.rawMaterials)) {
+      s.rawMaterials = s.rawMaterials.filter(rm => {
+        if (!rm || rm.id === 'rm-mwkktok4-25wd' || rm.code === 'RAW-LOG-2') {
+          if (rm?.id) delSet.add(rm.id);
+          return false;
+        }
+        return true;
+      });
+    }
+    s.deletedIds = Array.from(delSet);
+  }
+
   return s;
 }
 
