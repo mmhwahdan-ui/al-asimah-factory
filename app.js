@@ -14010,7 +14010,7 @@ function normalizeDomForHtml2CanvasArabic(rootEl) {
       textNodes.push(current);
     }
 
-    const ltrRunRegex = /[+-]?[A-Za-z0-9\u0660-\u0669]+(?:\s*[-×/:.,٬٫+]\s*[A-Za-z0-9\u0660-\u0669]+)*[%+]?/g;
+    const ltrRunRegex = /[+-]?[A-Za-z0-9\u0660-\u0669]+(?:[-×/:.,٬٫][A-Za-z0-9\u0660-\u0669]+)*[%+]?/g;
 
     for (const tNode of textNodes) {
       let txt = tNode.nodeValue || '';
@@ -14023,8 +14023,8 @@ function normalizeDomForHtml2CanvasArabic(rootEl) {
         .replace(/([0-9\u0660-\u0669])([\u0621-\u064A])/g, '$1 $2')
         .replace(/([\u0621-\u064A])([0-9\u0660-\u0669])/g, '$1 $2')
         .replace(/[()\[\]{}]/g, ' ')
-        .replace(/([\u0600-\u06FF])\s*:/g, '$1 ')
-        .replace(/:\s*([\u0600-\u06FF])/g, ' $1')
+        .replace(/:\s*(?![0-9\u0660-\u0669]{2}\b)/g, ' — ')
+        .replace(/([\u0600-\u06FF])\s*:/g, '$1 — ')
         .replace(/\s{2,}/g, ' ');
 
       if (!hasArabic && !hasParentArabic) {
@@ -14045,23 +14045,22 @@ function normalizeDomForHtml2CanvasArabic(rootEl) {
       while ((match = ltrRunRegex.exec(txt)) !== null) {
         if (match.index > lastIdx) {
           const arPart = txt.slice(lastIdx, match.index);
-          frag.appendChild(document.createTextNode(arPart));
+          frag.appendChild(document.createTextNode('\u200F' + arPart + '\u200F'));
+        } else {
+          frag.appendChild(document.createTextNode('\u200F'));
         }
         const rawToken = match[0].trim();
-        const trailSpace = match[0].endsWith(' ') ? ' ' : '';
-        const leadSpace = match[0].startsWith(' ') ? ' ' : '';
-        if (leadSpace) frag.appendChild(document.createTextNode(' '));
         const span = document.createElement('span');
         span.setAttribute('data-bidi-fixed', '1');
         span.setAttribute('dir', 'ltr');
         span.style.cssText = 'display:inline-block;direction:ltr;unicode-bidi:isolate;white-space:nowrap;margin:0 1.5px;';
         span.textContent = rawToken;
         frag.appendChild(span);
-        if (trailSpace) frag.appendChild(document.createTextNode(' '));
+        frag.appendChild(document.createTextNode('\u200F'));
         lastIdx = ltrRunRegex.lastIndex;
       }
       if (lastIdx < txt.length) {
-        frag.appendChild(document.createTextNode(txt.slice(lastIdx)));
+        frag.appendChild(document.createTextNode('\u200F' + txt.slice(lastIdx)));
       }
       if (tNode.parentNode) {
         tNode.parentNode.replaceChild(frag, tNode);
@@ -14147,7 +14146,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '58');
+  urlObj.searchParams.set('v', '59');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
