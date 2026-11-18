@@ -16182,46 +16182,65 @@ function openEditFinancialTxModal(txId) {
   }
   const tx = (state.financialTransactions || []).find(t => t.id === txId);
   if (!tx) return;
+  const isPaymentTx = tx.type === 'client_payment' || tx.type === 'receipt' || isPalletDepositTransaction(tx);
   const modalRoot = document.getElementById('modal-root');
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
       <div class="modal-box" style="max-width:640px;">
         <div class="card-header">
-          <div class="card-title">✏️ تعديل السند المالي / الفاتورة وتصحيح سعر القطعة (${tx.voucherNo})</div>
+          <div class="card-title">✏️ ${isPaymentTx ? `تعديل دفعة مسددة / سند تحصيل (${tx.voucherNo})` : `تعديل السند المالي / الفاتورة وتصحيح سعر القطعة (${tx.voucherNo})`}</div>
           <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
         </div>
         <form onsubmit="submitEditFinancialTxModal(event, '${tx.id}')">
           <div class="form-grid">
-            <div class="form-group"><label>تاريخ السند</label><input id="eftx-date" type="date" class="form-control" value="${tx.date || todayStr()}" required /></div>
+            <div class="form-group"><label>تاريخ السند / الدفعة</label><input id="eftx-date" type="date" class="form-control" value="${tx.date || todayStr()}" required /></div>
             <div class="form-group"><label>رقم المستند</label><input id="eftx-vno" class="form-control" value="${tx.voucherNo || ''}" required /></div>
-            <div class="form-group"><label>إجمالي المبلغ (ج.م)</label><input id="eftx-total" type="number" step="0.5" min="0" class="form-control" value="${tx.totalAmount || 0}" required style="font-weight:800;" /></div>
-            <div class="form-group"><label>المبلغ المدفوع / المسدد (ج.م)</label><input id="eftx-paid" type="number" step="0.5" min="0" class="form-control" value="${tx.paidAmount || 0}" required style="font-weight:800;border-color:var(--success);" /></div>
+            ${isPaymentTx ? `
+              <div class="form-group">
+                <label style="color:var(--success);font-weight:800;">💵 المبلغ المسدد / المدفوع (ج.م)</label>
+                <input id="eftx-paid" type="number" step="0.5" min="0" class="form-control" value="${tx.paidAmount || tx.totalAmount || 0}" oninput="const totEl=document.getElementById('eftx-total'); if(totEl) totEl.value=this.value;" required style="font-weight:900;border:2px solid var(--success);" />
+                <input id="eftx-total" type="hidden" value="${tx.paidAmount || tx.totalAmount || 0}" />
+              </div>
+              <div class="form-group">
+                <label>طريقة الدفع</label>
+                <select id="eftx-method" class="form-control" style="font-weight:700;">
+                  <option value="نقدي بالخزينة" ${(tx.paymentMethod || '').includes('نقد') || !(tx.paymentMethod || '').includes('بنك') ? 'selected' : ''}>💵 نقدي بالخزينة</option>
+                  <option value="تحويل بنكي" ${(tx.paymentMethod || '').includes('بنك') ? 'selected' : ''}>🏦 تحويل بنكي</option>
+                  <option value="شيك بنكي" ${(tx.paymentMethod || '').includes('شيك') ? 'selected' : ''}>📝 شيك بنكي</option>
+                </select>
+              </div>
+            ` : `
+              <div class="form-group"><label>إجمالي المبلغ (ج.م)</label><input id="eftx-total" type="number" step="0.5" min="0" class="form-control" value="${tx.totalAmount || 0}" required style="font-weight:800;" /></div>
+              <div class="form-group"><label style="color:var(--success);font-weight:800;">💵 المبلغ المدفوع / المسدد على الفاتورة (ج.م)</label><input id="eftx-paid" type="number" step="0.5" min="0" class="form-control" value="${tx.paidAmount || 0}" required style="font-weight:800;border-color:var(--success);" /></div>
+            `}
             <div class="form-group" style="grid-column: 1 / -1;"><label>البيان والتفاصيل</label><input id="eftx-desc" class="form-control" value="${tx.description || ''}" required /></div>
           </div>
 
-          <div style="margin-top:12px;background:rgba(220,38,38,0.06);border:1.5px solid rgba(220,38,38,0.35);border-radius:10px;padding:12px;">
-            <div style="font-weight:800;font-size:0.84rem;color:#b91c1c;margin-bottom:8px;">
-              💲 حاسبة تصحيح خطأ سعر القطعة في هذه الفاتورة (تحديث الإجمالي تلقائياً):
-            </div>
-            <div class="form-grid" style="grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:8px;">
-              <div class="form-group" style="margin:0;">
-                <label style="font-size:0.75rem;">عدد القطع (الكمية)</label>
-                <input id="eftx-calc-sheets" type="number" min="0" step="1" class="form-control" placeholder="مثال: 1000" oninput="recalcEditTxPiecePriceHelper()" />
+          ${!isPaymentTx ? `
+            <div style="margin-top:12px;background:rgba(220,38,38,0.06);border:1.5px solid rgba(220,38,38,0.35);border-radius:10px;padding:12px;">
+              <div style="font-weight:800;font-size:0.84rem;color:#b91c1c;margin-bottom:8px;">
+                💲 حاسبة تصحيح خطأ سعر القطعة في هذه الفاتورة (تحديث الإجمالي تلقائياً):
               </div>
-              <div class="form-group" style="margin:0;">
-                <label style="font-size:0.75rem;">سعر القطعة الصحيح (ج.م)</label>
-                <input id="eftx-calc-price" type="number" min="0" step="0.5" class="form-control" placeholder="مثال: 120" oninput="recalcEditTxPiecePriceHelper()" style="font-weight:800;border-color:#dc2626;" />
+              <div class="form-grid" style="grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:8px;">
+                <div class="form-group" style="margin:0;">
+                  <label style="font-size:0.75rem;">عدد القطع (الكمية)</label>
+                  <input id="eftx-calc-sheets" type="number" min="0" step="1" class="form-control" placeholder="مثال: 1000" oninput="recalcEditTxPiecePriceHelper()" />
+                </div>
+                <div class="form-group" style="margin:0;">
+                  <label style="font-size:0.75rem;">سعر القطعة الصحيح (ج.م)</label>
+                  <input id="eftx-calc-price" type="number" min="0" step="0.5" class="form-control" placeholder="مثال: 120" oninput="recalcEditTxPiecePriceHelper()" style="font-weight:800;border-color:#dc2626;" />
+                </div>
+                <div class="form-group" style="margin:0;">
+                  <label style="font-size:0.75rem;">الخصم (اختياري ج.م)</label>
+                  <input id="eftx-calc-disc" type="number" min="0" step="0.5" class="form-control" value="0" oninput="recalcEditTxPiecePriceHelper()" />
+                </div>
               </div>
-              <div class="form-group" style="margin:0;">
-                <label style="font-size:0.75rem;">الخصم (اختياري ج.م)</label>
-                <input id="eftx-calc-disc" type="number" min="0" step="0.5" class="form-control" value="0" oninput="recalcEditTxPiecePriceHelper()" />
+              <div id="eftx-calc-preview" style="font-size:0.78rem;color:var(--text-muted);margin-top:6px;">
+                أدخل عدد القطع وسعر القطعة الصحيح ليتم حساب وتحديث إجمالي الفاتورة تلقائياً.
               </div>
             </div>
-            <div id="eftx-calc-preview" style="font-size:0.78rem;color:var(--text-muted);margin-top:6px;">
-              أدخل عدد القطع وسعر القطعة الصحيح ليتم حساب وتحديث إجمالي الفاتورة تلقائياً.
-            </div>
-          </div>
+          ` : ''}
 
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
             <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
@@ -16254,18 +16273,21 @@ function submitEditFinancialTxModal(e, txId) {
   if (!isFullAdmin(currentUser)) return;
   const tx = (state.financialTransactions || []).find(t => t.id === txId);
   if (!tx) return;
+  const isPaymentTx = tx.type === 'client_payment' || tx.type === 'receipt' || isPalletDepositTransaction(tx);
   const oldTotal = Number(tx.totalAmount || 0);
-  const oldPaid = Number(tx.paidAmount || 0);
-  const newTotal = Math.max(0, Number(document.getElementById('eftx-total')?.value || 0));
+  const oldPaid = Number(tx.paidAmount || tx.totalAmount || 0);
   const newPaid = Math.max(0, Number(document.getElementById('eftx-paid')?.value || 0));
-  const diffPaid = newPaid - oldPaid;
+  const newTotal = isPaymentTx ? newPaid : Math.max(0, Number(document.getElementById('eftx-total')?.value || 0));
+  const diffPaid = newPaid - (isPaymentTx ? oldPaid : Number(tx.paidAmount || 0));
+  const newMethod = document.getElementById('eftx-method')?.value || tx.paymentMethod || 'نقدي بالخزينة';
   const now = getMonotonicIso(tx.updatedAt);
 
   tx.date = document.getElementById('eftx-date')?.value || tx.date;
   tx.voucherNo = (document.getElementById('eftx-vno')?.value || tx.voucherNo).trim();
   tx.totalAmount = newTotal;
   tx.paidAmount = newPaid;
-  tx.remainingAmount = Math.max(0, +(newTotal - newPaid).toFixed(2));
+  tx.remainingAmount = isPaymentTx ? 0 : Math.max(0, +(newTotal - newPaid).toFixed(2));
+  tx.paymentMethod = newMethod;
   tx.description = (document.getElementById('eftx-desc')?.value || tx.description).trim();
   tx.updatedAt = now;
 
@@ -16292,11 +16314,18 @@ function submitEditFinancialTxModal(e, txId) {
   }
 
   if (diffPaid !== 0 && state.treasuryBalances) {
-    state.treasuryBalances.cashVault = Math.max(0, Number(state.treasuryBalances.cashVault || 0) + diffPaid);
+    const pm = newMethod || '';
+    if (pm.includes('بنك')) {
+      state.treasuryBalances.bankAccount = Math.max(0, Number(state.treasuryBalances.bankAccount || 0) + diffPaid);
+    } else if (pm.includes('شيك')) {
+      state.treasuryBalances.checksUnderCollection = Math.max(0, Number(state.treasuryBalances.checksUnderCollection || 0) + diffPaid);
+    } else {
+      state.treasuryBalances.cashVault = Math.max(0, Number(state.treasuryBalances.cashVault || 0) + diffPaid);
+    }
   }
 
   closeModal();
-  saveState(`✏️ تعديل السند المالي / الفاتورة (${tx.voucherNo}) للعميل (${tx.partnerName || ''}) من ${fmtMoney(oldTotal)} إلى ${fmtMoney(newTotal)} بواسطة ${currentUser.name}`);
+  saveState(`✏️ تعديل ${isPaymentTx ? 'الدفعة المسددة' : 'السند المالي / الفاتورة'} (${tx.voucherNo}) للعميل (${tx.partnerName || ''}) من ${fmtMoney(isPaymentTx ? oldPaid : oldTotal)} إلى ${fmtMoney(isPaymentTx ? newPaid : newTotal)} بواسطة ${currentUser.name}`);
 }
 
 function syncOrderLinkedFinancialInvoice(ord, oldOrderNumber = '', nowIso = '') {
@@ -16401,6 +16430,9 @@ function openClientPiecePriceAdjustmentModal(preselectedClientId = '', focusOrde
   const clientReturns = (state.salesReturns || []).filter(r =>
     r.clientName && selectedClient.name && r.clientName.trim() === selectedClient.name.trim()
   );
+  const clientPayments = (m.txs || []).filter(tx =>
+    tx.type === 'client_payment' || tx.type === 'receipt' || isPalletDepositTransaction(tx)
+  );
 
   const modalRoot = document.getElementById('modal-root');
   modalRoot.innerHTML = `
@@ -16409,10 +16441,10 @@ function openClientPiecePriceAdjustmentModal(preselectedClientId = '', focusOrde
         <div class="card-header" style="border-bottom:2px solid #dc2626;padding-bottom:12px;">
           <div>
             <div class="card-title" style="color:#dc2626;font-size:1.1rem;">
-              💲 تعديل حسابات العميل وتصحيح أخطاء أسعار القطعة (صلاحية المدير التنفيذي ومدير المشروعات)
+              💲 تعديل حسابات العميل وتصحيح أسعار القطعة والدفعات المسددة (صلاحية المدير التنفيذي ومدير المشروعات)
             </div>
             <small style="color:var(--text-muted);">
-              قم باختيار العميل وتعديل <strong>سعر القطعة الواحدة</strong> في أي طلبية أو مرتجع أو تسجيل تسوية فرق سعر قطعة ليتم إعادة حساب الفواتير وصافي مديونية العميل تلقائياً وبأثر فوري.
+              قم باختيار العميل وتعديل <strong>سعر القطعة الواحدة</strong> أو <strong>الدفعات المسددة</strong> في أي طلبية أو سند تحصيل أو مرتجع ليتم إعادة حساب الفواتير وصافي مديونية العميل تلقائياً وبأثر فوري.
             </small>
           </div>
           <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
@@ -16442,24 +16474,28 @@ function openClientPiecePriceAdjustmentModal(preselectedClientId = '', focusOrde
         </div>
 
         <div style="max-height:66vh;overflow-y:auto;padding-left:4px;">
-          <!-- SECTION 1: Edit Piece Prices Directly in Client's Registered Orders & Returns -->
+          <!-- SECTION 1: Edit Piece Prices & Paid Amounts Directly in Client's Registered Orders, Returns & Payments -->
           <div style="border:2px solid var(--primary);border-radius:12px;padding:14px;margin-bottom:18px;background:var(--bg-surface);">
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
               <div>
-                <h4 style="margin:0;color:var(--primary);">1️⃣ تعديل أسعار القطعة مباشرة في طلبيات ومرتجعات العميل المسجلة (${clientOrders.length} طلبية${clientReturns.length > 0 ? ` + ${clientReturns.length} مرتجع` : ''}):</h4>
-                <small style="color:var(--text-muted);">أي تعديل في <strong>سعر القطعة</strong> أو الكمية هنا سيقوم بتحديث الفاتورة المرتبطة وصافي حساب ومديونية العميل وحركة المخزن تلقائياً.</small>
+                <h4 style="margin:0;color:var(--primary);">1️⃣ تعديل أسعار القطعة والدفعات المسددة في طلبيات وسندات العميل (${clientOrders.length} طلبية + ${clientPayments.length} دفعة مسددة${clientReturns.length > 0 ? ` + ${clientReturns.length} مرتجع` : ''}):</h4>
+                <small style="color:var(--text-muted);">أي تعديل في <strong>سعر القطعة</strong> أو <strong>المبلغ المسدد / الدفعات المسددة</strong> هنا سيقوم بتحديث الفاتورة المرتبطة وصافي حساب ومديونية العميل والخزينة تلقائياً.</small>
               </div>
             </div>
 
-            ${clientOrders.length === 0 && clientReturns.length === 0 ? `
+            ${clientOrders.length === 0 && clientReturns.length === 0 && clientPayments.length === 0 ? `
               <div style="padding:16px;text-align:center;color:var(--text-muted);background:var(--bg-elevated);border-radius:10px;">
-                لا توجد طلبيات مسجلة لهذا العميل في جدول الطلبيات حالياً. يمكنك استخدام <strong>القسم (2️⃣) بالأسفل</strong> لتسوية خطأ سعر قطعة في الرصيد الافتتاحي أو الفواتير السابقة.
+                لا توجد طلبيات أو دفعات مسجلة لهذا العميل حالياً. يمكنك استخدام <strong>القسم (2️⃣) بالأسفل</strong> لتسوية خطأ سعر قطعة في الرصيد الافتتاحي أو الفواتير السابقة.
               </div>
             ` : `
               <form onsubmit="submitClientOrderPiecePricesBatch(event, '${selectedClient.id}')">
                 ${clientOrders.map((ord, oIdx) => {
                   const items = Array.isArray(ord.items) ? ord.items : [];
                   const isFocused = focusOrderId && ord.id === focusOrderId;
+                  const linkedInv = (state.financialTransactions || []).find(tx =>
+                    tx.type === 'sales_invoice' && (tx.orderId === ord.id || ((tx.partnerId === ord.clientId || tx.partnerName === ord.clientName) && tx.voucherNo === `INV-${ord.orderNumber}`))
+                  );
+                  const oldPaidOnOrder = Number(linkedInv?.paidAmount ?? ord.financialSettlement?.paidAmount ?? 0);
                   return `
                     <div style="border:${isFocused ? '2.5px solid #dc2626' : '1px solid var(--border-color)'};border-radius:10px;padding:10px 12px;margin-bottom:12px;background:${isFocused ? 'rgba(220,38,38,0.04)' : 'var(--bg-elevated)'};">
                       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
@@ -16468,10 +16504,12 @@ function openClientPiecePriceAdjustmentModal(preselectedClientId = '', focusOrde
                           <span style="font-size:0.78rem;color:var(--text-muted);margin-right:8px;">📅 التاريخ: ${ord.date || '-'}</span>
                           <span style="margin-right:6px;">${getOrderStageBadge(ord)}</span>
                         </div>
-                        <div style="display:flex;align-items:center;gap:10px;font-size:0.82rem;">
-                          <span>الخصم على الطلبية (ج.م):</span>
-                          <input id="pp-ord-disc-${ord.id}" type="number" step="0.5" min="0" class="form-control" style="width:95px;padding:3px 6px;font-weight:800;" value="${Number(ord.discountAmount || 0)}" oninput="recalcClientPiecePriceModalLive('${selectedClient.id}')" />
-                          <span>الصافي قبل التعديل: <strong>${fmtMoney(ord.netTotalAmount || 0)}</strong></span>
+                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:0.82rem;">
+                          <span>الخصم (ج.م):</span>
+                          <input id="pp-ord-disc-${ord.id}" type="number" step="0.5" min="0" class="form-control" style="width:90px;padding:3px 6px;font-weight:800;" value="${Number(ord.discountAmount || 0)}" oninput="recalcClientPiecePriceModalLive('${selectedClient.id}')" />
+                          <span style="color:var(--success);font-weight:800;">💵 المسدد على الفاتورة (ج.م):</span>
+                          <input id="pp-ord-paid-${ord.id}" type="number" step="0.5" min="0" class="form-control" style="width:105px;padding:3px 6px;font-weight:900;border:2px solid var(--success);color:var(--success);" value="${oldPaidOnOrder}" data-old-paid="${oldPaidOnOrder}" oninput="recalcClientPiecePriceModalLive('${selectedClient.id}')" />
+                          <span>الصافي القديم: <strong>${fmtMoney(ord.netTotalAmount || 0)}</strong></span>
                           <span>⬅ الصافي الجديد: <strong id="pp-ord-newnet-${ord.id}" style="color:var(--primary);font-size:0.92rem;">${fmtMoney(ord.netTotalAmount || 0)}</strong></span>
                         </div>
                       </div>
@@ -16578,11 +16616,67 @@ function openClientPiecePriceAdjustmentModal(preselectedClientId = '', focusOrde
                   </div>
                 ` : ''}
 
+                ${clientPayments.length > 0 ? `
+                  <div style="border:1.5px solid var(--success);border-radius:10px;padding:10px 12px;margin-bottom:12px;background:rgba(22,163,74,0.04);">
+                    <div style="font-weight:900;color:var(--success);margin-bottom:8px;">💳 الدفعات المسددة وسندات التحصيل المسجلة للعميل (تعديل قيمة الدفعة / التاريخ / طريقة الدفع / البيان):</div>
+                    <div class="table-responsive">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>رقم السند</th>
+                            <th>تاريخ الدفعة</th>
+                            <th>نوع الدفعة</th>
+                            <th>طريقة الدفع</th>
+                            <th>البيان والتفاصيل</th>
+                            <th>المبلغ المسجل سابقاً</th>
+                            <th>💵 المبلغ المسدد الصحيح (ج.م)</th>
+                            <th>حذف</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          ${clientPayments.map(tx => {
+                            const oldAmt = Number(tx.paidAmount || tx.totalAmount || 0);
+                            const isRef = tx.type === 'pallet_deposit_refund';
+                            return `
+                              <tr>
+                                <td><strong>${tx.voucherNo || '-'}</strong></td>
+                                <td>
+                                  <input id="pp-pay-date-${tx.id}" type="date" class="form-control" style="padding:3px 6px;font-size:0.76rem;" value="${tx.date || todayStr()}" />
+                                </td>
+                                <td>
+                                  <span class="badge ${isRef ? 'badge-warning' : 'badge-success'}">${tx.typeLabel || 'دفعة مسددة'}</span>
+                                </td>
+                                <td>
+                                  <select id="pp-pay-method-${tx.id}" class="form-control" style="padding:3px 6px;font-size:0.75rem;font-weight:700;">
+                                    <option value="نقدي بالخزينة" ${(tx.paymentMethod || '').includes('نقد') || !(tx.paymentMethod || '').includes('بنك') ? 'selected' : ''}>💵 نقدي بالخزينة</option>
+                                    <option value="تحويل بنكي" ${(tx.paymentMethod || '').includes('بنك') ? 'selected' : ''}>🏦 تحويل بنكي</option>
+                                    <option value="شيك بنكي" ${(tx.paymentMethod || '').includes('شيك') ? 'selected' : ''}>📝 شيك بنكي</option>
+                                  </select>
+                                </td>
+                                <td>
+                                  <input id="pp-pay-desc-${tx.id}" type="text" class="form-control" style="min-width:160px;padding:3px 6px;font-size:0.76rem;font-weight:700;" value="${tx.description || ''}" />
+                                </td>
+                                <td><strong>${fmtMoney(oldAmt)}</strong></td>
+                                <td>
+                                  <input id="pp-pay-amt-${tx.id}" type="number" step="0.5" min="0" class="form-control" style="width:110px;padding:4px 6px;font-weight:900;border:2px solid var(--success);color:var(--success);" value="${oldAmt}" data-old-amt="${oldAmt}" oninput="recalcClientPiecePriceModalLive('${selectedClient.id}')" required />
+                                </td>
+                                <td>
+                                  <button type="button" class="btn btn-sm btn-danger" style="padding:3px 7px;" onclick="deleteFinancialTxRecord('${tx.id}')" title="حذف هذه الدفعة">🗑️</button>
+                                </td>
+                              </tr>
+                            `;
+                          }).join('')}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ` : ''}
+
                 <div id="pp-batch-live-summary" class="calc-preview-box" style="margin-bottom:12px;"></div>
 
                 <div style="display:flex;justify-content:flex-end;gap:10px;">
                   <button type="submit" class="btn btn-primary" style="background:#dc2626;border-color:#dc2626;font-weight:900;">
-                    💾 حفظ تصحيح أسعار القطع وتحديث الفواتير وحساب العميل فوراً
+                    💾 حفظ تصحيح أسعار القطع والدفعات المسددة وتحديث حساب العميل فوراً
                   </button>
                 </div>
               </form>
@@ -16654,6 +16748,9 @@ function recalcClientPiecePriceModalLive(clientId) {
   const clientReturns = (state.salesReturns || []).filter(r =>
     r.clientName && pt.name && r.clientName.trim() === pt.name.trim()
   );
+  const clientPayments = (m.txs || []).filter(tx =>
+    tx.type === 'client_payment' || tx.type === 'receipt' || isPalletDepositTransaction(tx)
+  );
 
   let totalNetDebtDelta = 0;
   let changedItemsCount = 0;
@@ -16701,10 +16798,17 @@ function recalcClientPiecePriceModalLive(clientId) {
     const delivCost = ord.deliveryMode === 'paid_delivery' ? Math.max(0, Number(ord.deliveryCost || 0)) : 0;
     const newOrdNet = Math.max(0, +(newSubtotal - newDisc + delivCost).toFixed(2));
 
+    const paidInput = document.getElementById(`pp-ord-paid-${ord.id}`);
+    const oldOrdPaid = paidInput ? Number(paidInput.dataset.oldPaid || 0) : 0;
+    const newOrdPaid = paidInput ? Math.max(0, Number(paidInput.value || 0)) : oldOrdPaid;
+    if (Math.abs(newOrdPaid - oldOrdPaid) > 0.001) {
+      changedItemsCount++;
+    }
+
     const newNetEl = document.getElementById(`pp-ord-newnet-${ord.id}`);
     if (newNetEl) newNetEl.textContent = fmtMoney(newOrdNet);
 
-    totalNetDebtDelta += (newOrdNet - oldOrdNet);
+    totalNetDebtDelta += (newOrdNet - oldOrdNet) - (newOrdPaid - oldOrdPaid);
   });
 
   clientReturns.forEach(ret => {
@@ -16725,18 +16829,32 @@ function recalcClientPiecePriceModalLive(clientId) {
     totalNetDebtDelta -= (newT - oldT);
   });
 
+  clientPayments.forEach(tx => {
+    const amtEl = document.getElementById(`pp-pay-amt-${tx.id}`);
+    const oldAmt = Number(tx.paidAmount || tx.totalAmount || 0);
+    const newAmt = amtEl ? Math.max(0, Number(amtEl.value || 0)) : oldAmt;
+    if (Math.abs(newAmt - oldAmt) > 0.001) {
+      changedItemsCount++;
+    }
+    if (tx.type === 'pallet_deposit_refund') {
+      totalNetDebtDelta += (newAmt - oldAmt);
+    } else {
+      totalNetDebtDelta -= (newAmt - oldAmt);
+    }
+  });
+
   totalNetDebtDelta = +totalNetDebtDelta.toFixed(2);
   const newClientNetDebt = +(m.netDebt + totalNetDebtDelta).toFixed(2);
 
   const sumBox = document.getElementById('pp-batch-live-summary');
   if (sumBox) {
     sumBox.innerHTML = `
-      <div class="calc-preview-item"><span>عدد البنود المعدلة</span><strong>${changedItemsCount} بند</strong></div>
+      <div class="calc-preview-item"><span>عدد البنود / الدفعات المعدلة</span><strong>${changedItemsCount} تعديل</strong></div>
       <div class="calc-preview-item"><span>صافي حساب العميل قبل التعديل</span><strong>${m.netDebt >= 0 ? 'عليه: ' + fmtMoney(m.netDebt) : 'له: ' + fmtMoney(Math.abs(m.netDebt))}</strong></div>
       <div class="calc-preview-item">
-        <span>إجمالي فرق تعديل أسعار القطع</span>
+        <span>إجمالي فرق تعديل الأسعار والدفعات</span>
         <strong style="color:${totalNetDebtDelta > 0 ? 'var(--danger)' : totalNetDebtDelta < 0 ? 'var(--success)' : 'var(--text-muted)'};">
-          ${totalNetDebtDelta > 0 ? '+' + fmtMoney(totalNetDebtDelta) + ' (زيادة على العميل)' : totalNetDebtDelta < 0 ? fmtMoney(totalNetDebtDelta) + ' (تخفيض لصالح العميل)' : '0 ج.م (بدون تغيير)'}
+          ${totalNetDebtDelta > 0 ? '+' + fmtMoney(totalNetDebtDelta) + ' (زيادة مديونية على العميل)' : totalNetDebtDelta < 0 ? fmtMoney(totalNetDebtDelta) + ' (تخفيض مديونية لصالح العميل)' : '0 ج.م (بدون تغيير)'}
         </strong>
       </div>
       <div class="calc-preview-item" style="background:rgba(15,118,110,0.12);border:1.5px solid var(--primary);border-radius:8px;padding:6px 10px;">
@@ -16761,6 +16879,9 @@ function submitClientOrderPiecePricesBatch(e, clientId) {
   const clientOrders = m.orders || [];
   const clientReturns = (state.salesReturns || []).filter(r =>
     r.clientName && pt.name && r.clientName.trim() === pt.name.trim()
+  );
+  const clientPayments = (m.txs || []).filter(tx =>
+    tx.type === 'client_payment' || tx.type === 'receipt' || isPalletDepositTransaction(tx)
   );
 
   const now = getMonotonicIso();
@@ -16807,6 +16928,15 @@ function submitClientOrderPiecePricesBatch(e, clientId) {
       orderChanged = true;
     }
 
+    const paidInput = document.getElementById(`pp-ord-paid-${ord.id}`);
+    const oldOrdPaid = paidInput ? Number(paidInput.dataset.oldPaid || 0) : Number(ord.financialSettlement?.paidAmount || 0);
+    const newOrdPaid = paidInput ? Math.max(0, Number(paidInput.value ?? oldOrdPaid)) : oldOrdPaid;
+    const paidChanged = Math.abs(newOrdPaid - oldOrdPaid) > 0.001;
+    if (paidChanged) {
+      orderChanged = true;
+      changesLog.push(`تعديل المسدد على فاتورة الطلبية (${ord.orderNumber}) من ${fmtMoney(oldOrdPaid)} إلى ${fmtMoney(newOrdPaid)}`);
+    }
+
     if (orderChanged) {
       const delivCost = ord.deliveryMode === 'paid_delivery' ? Math.max(0, Number(ord.deliveryCost || 0)) : 0;
       const net = Math.max(0, +(subtotal - newDisc + delivCost).toFixed(2));
@@ -16823,10 +16953,29 @@ function submitClientOrderPiecePricesBatch(e, clientId) {
       const retPalletsDed = Number(ord.returnedPalletsDeduction || 0);
       ord.totalRequiredAmount = +(net + oldDebt - retPalletsDed).toFixed(2);
       ord.totalRequiredInWords = numberToArabicTafqeet(Math.max(0, ord.totalRequiredAmount));
+      if (ord.financialSettlement || paidChanged) {
+        ord.financialSettlement = ord.financialSettlement || { date: ord.date || todayStr(), paymentMethod: 'نقدي بالخزينة', approvedBy: currentUser.name };
+        ord.financialSettlement.netTotal = net;
+        ord.financialSettlement.paidAmount = newOrdPaid;
+        ord.financialSettlement.remainingDebt = Math.max(0, +(net - newOrdPaid).toFixed(2));
+      }
       ord.updatedAt = now;
 
       // Sync linked financial invoice in state.financialTransactions
       syncOrderLinkedFinancialInvoice(ord, ord.orderNumber, now);
+      if (paidChanged) {
+        const linkedInv = (state.financialTransactions || []).find(tx =>
+          tx.type === 'sales_invoice' && (tx.orderId === ord.id || ((tx.partnerId === ord.clientId || tx.partnerName === ord.clientName) && tx.voucherNo === `INV-${ord.orderNumber}`))
+        );
+        if (linkedInv) {
+          linkedInv.paidAmount = newOrdPaid;
+          linkedInv.remainingAmount = Math.max(0, +(net - newOrdPaid).toFixed(2));
+          linkedInv.updatedAt = now;
+        }
+        if (state.treasuryBalances) {
+          state.treasuryBalances.cashVault = Math.max(0, Number(state.treasuryBalances.cashVault || 0) + (newOrdPaid - oldOrdPaid));
+        }
+      }
 
       // Also update unitSheetPrice & totalSaleAmount on any linked warehouse movements
       const carVoucherNo = ord.carDispatchVoucher?.voucherNo || `CAR-${ord.orderNumber}`;
@@ -16840,7 +16989,9 @@ function submitClientOrderPiecePricesBatch(e, clientId) {
         }
       });
 
-      changesLog.push(`صافي الطلبية (${ord.orderNumber}) تغير من ${fmtMoney(oldOrdNet)} إلى ${fmtMoney(net)}`);
+      if (Math.abs(net - oldOrdNet) > 0.001) {
+        changesLog.push(`صافي الطلبية (${ord.orderNumber}) تغير من ${fmtMoney(oldOrdNet)} إلى ${fmtMoney(net)}`);
+      }
     } else {
       // Even if unchanged in inputs, ensure its financial invoice is properly synced if it was completed
       syncOrderLinkedFinancialInvoice(ord, ord.orderNumber, now);
@@ -16884,10 +17035,47 @@ function submitClientOrderPiecePricesBatch(e, clientId) {
     }
   });
 
+  clientPayments.forEach(tx => {
+    const oldAmt = Number(tx.paidAmount || tx.totalAmount || 0);
+    const amtEl = document.getElementById(`pp-pay-amt-${tx.id}`);
+    const dateEl = document.getElementById(`pp-pay-date-${tx.id}`);
+    const methodEl = document.getElementById(`pp-pay-method-${tx.id}`);
+    const descEl = document.getElementById(`pp-pay-desc-${tx.id}`);
+
+    const newAmt = amtEl ? Math.max(0, Number(amtEl.value ?? oldAmt)) : oldAmt;
+    const newDate = dateEl ? (dateEl.value || tx.date) : tx.date;
+    const newMethod = methodEl ? (methodEl.value || tx.paymentMethod) : tx.paymentMethod;
+    const newDesc = descEl ? (descEl.value.trim() || tx.description) : tx.description;
+
+    if (Math.abs(newAmt - oldAmt) > 0.001 || newDate !== tx.date || newMethod !== tx.paymentMethod || newDesc !== tx.description) {
+      const diffAmt = newAmt - oldAmt;
+      tx.paidAmount = newAmt;
+      tx.totalAmount = newAmt;
+      tx.remainingAmount = 0;
+      tx.date = newDate;
+      tx.paymentMethod = newMethod;
+      tx.description = newDesc;
+      tx.updatedAt = now;
+
+      if (diffAmt !== 0 && state.treasuryBalances) {
+        const signedDiff = tx.type === 'pallet_deposit_refund' ? -diffAmt : diffAmt;
+        if ((newMethod || '').includes('بنك')) {
+          state.treasuryBalances.bankAccount = Math.max(0, Number(state.treasuryBalances.bankAccount || 0) + signedDiff);
+        } else if ((newMethod || '').includes('شيك')) {
+          state.treasuryBalances.checksUnderCollection = Math.max(0, Number(state.treasuryBalances.checksUnderCollection || 0) + signedDiff);
+        } else {
+          state.treasuryBalances.cashVault = Math.max(0, Number(state.treasuryBalances.cashVault || 0) + signedDiff);
+        }
+      }
+
+      changesLog.push(`دفعة مسددة (${tx.voucherNo}): تعديل المبلغ من ${fmtMoney(oldAmt)} إلى ${fmtMoney(newAmt)} (${newMethod})`);
+    }
+  });
+
   closeModal();
   const logSummary = changesLog.length > 0
-    ? `💲 تصحيح أسعار القطع وتعديل حساب العميل (${pt.code} - ${pt.name}) بواسطة (${currentUser.name} - ${currentUser.roleTitle}): ${changesLog.join(' | ')}`
-    : `💲 مراجعة وتحديث فواتير وحساب العميل (${pt.code} - ${pt.name}) بواسطة (${currentUser.name})`;
+    ? `💲 تصحيح أسعار القطع والدفعات المسددة وتعديل حساب العميل (${pt.code} - ${pt.name}) بواسطة (${currentUser.name} - ${currentUser.roleTitle}): ${changesLog.join(' | ')}`
+    : `💲 مراجعة وتحديث فواتير ودفعات وحساب العميل (${pt.code} - ${pt.name}) بواسطة (${currentUser.name})`;
   saveState(logSummary);
 }
 
