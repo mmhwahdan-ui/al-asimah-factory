@@ -5538,6 +5538,12 @@ function getOrderStageBadge(order) {
     return `<span class="badge badge-danger">4️⃣ معتمد للصرف (${order.accountantReleaseBy || 'المحاسب'}) ⬅ 🚚 تحميل السيارة</span>`;
   }
   if (st === 'completed') {
+    if (order.skipWarehouseDeduction) {
+      return `<span class="badge" style="background:#0f766e;color:#fff;">📜 منفذة بالحسابات (بدون خروج من المخزن)</span>`;
+    }
+    if (order.isOldExecutedOrder && !order.carDispatchVoucher) {
+      return `<span class="badge badge-success">✅ طلبية قديمة منفذة (خرجت من المخزن + بالحسابات)</span>`;
+    }
     return `<span class="badge badge-success">✅ تم الصرف (${order.carDispatchVoucher?.carPlateNumber || 'مكتمل'})</span>`;
   }
   return `<span class="badge badge-info">${st}</span>`;
@@ -5593,6 +5599,9 @@ function renderProduction() {
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           ${isAccountantOrExec ? `
             <button class="btn btn-primary" onclick="openNewClientOrderPrepModal()">➕ إنشاء أمر تجهيز طلبية للعميل (بيان جديد)</button>
+            ${isExec ? `
+              <button class="btn" style="background:#0f766e;color:#fff;font-weight:800;" onclick="openNewClientOrderPrepModal('', true)">📜 تنفيذ طلبية قديمة لعميل (بعد الرصيد الافتتاحي)</button>
+            ` : ''}
             <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="openFactoryStampModal()">💮 ختم الشركة والحسابات البنكية</button>
           ` : ''}
           <button class="btn btn-outline" onclick="printAllProductionOrdersReportPdf()">🖨️ طباعة سجل أوامر التجهيز PDF</button>
@@ -6069,7 +6078,8 @@ function renderAccounting() {
           <button class="btn btn-primary" onclick="openNewPartnerModal()">➕ إضافة عميل جديد بالكود</button>
           <button class="btn btn-accent" onclick="openNewClientOrderPrepModal()">📋 إنشاء أمر تجهيز طلبية لعميل</button>
           ${isFullAdmin(currentUser) ? `
-            <button class="btn" style="background:#dc2626;color:#fff;font-weight:800;" onclick="openClientPiecePriceAdjustmentModal()">💲 تعديل أسعار القطع وتسوية حساب عميل (التنفيذي / المشروعات)</button>
+            <button class="btn" style="background:#0f766e;color:#fff;font-weight:800;" onclick="openNewClientOrderPrepModal('', true)">📜 تنفيذ طلبية قديمة لعميل (بعد الرصيد الافتتاحي)</button>
+            <button class="btn" style="background:#dc2626;color:#fff;font-weight:800;" onclick="openClientPiecePriceAdjustmentModal()">💲 تعديل الحسابات والرصيد الافتتاحي وأسعار القطع والدفعات</button>
           ` : ''}
           <button class="btn" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal()">🛡️ حساب تأمين البالتات (تحصيل / رد تأمين)</button>
           <button class="btn" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal()">📝 تسجيل شيك تحت التحصيل</button>
@@ -6212,7 +6222,8 @@ function renderAccounting() {
                         🖨️ طباعة
                       </button>
                       ${isFullAdmin(currentUser) ? `
-                        <button class="btn btn-sm" style="background:#dc2626;color:#fff;font-weight:800;" onclick="openClientPiecePriceAdjustmentModal('${pt.id}')" title="تعديل حساب العميل عند اكتشاف خطأ في أسعار القطعة (للمدير التنفيذي ومدير المشروعات)">💲 تعديل سعر القطعة</button>
+                        <button class="btn btn-sm" style="background:#0f766e;color:#fff;font-weight:800;" onclick="openNewClientOrderPrepModal('${pt.id}', true)" title="تنفيذ طلبية قديمة للعميل بعد الرصيد الافتتاحي (مع سؤال الخروج من المخزن أم لا)">📜 طلبية قديمة</button>
+                        <button class="btn btn-sm" style="background:#dc2626;color:#fff;font-weight:800;" onclick="openClientPiecePriceAdjustmentModal('${pt.id}')" title="تعديل حساب العميل والرصيد الافتتاحي وأسعار القطع والدفعات (للمدير التنفيذي ومدير المشروعات)">💲 تعديل الحساب والأسعار</button>
                         <button class="btn btn-sm btn-outline" onclick="openEditPartnerModal('${pt.id}')" title="تعديل">✏️</button>
                         <button class="btn btn-sm btn-danger" onclick="deletePartnerRecord('${pt.id}')" title="حذف">🗑️</button>
                       ` : ''}
@@ -7558,11 +7569,12 @@ function openNewDispatchRequestModal() {
   openNewClientOrderPrepModal();
 }
 
-function openNewClientOrderPrepModal(preselectedClientId = '') {
+function openNewClientOrderPrepModal(preselectedClientId = '', isOldOrderMode = false) {
   const modalRoot = document.getElementById('modal-root');
   const nextNo = `ORD-2026-${101 + (state.productionOrders?.length || 0)}`;
   const clients = (state.partners || []).filter(pt => pt.type !== 'supplier');
   const defaultClient = clients.find(c => c.id === preselectedClientId) || clients[0] || null;
+  const isExec = isFullAdmin(currentUser);
   const cm = defaultClient ? computeClientMetrics(defaultClient) : null;
   const defaultVeneerDebt = defaultClient ? computeClientLivePreviousBalance(defaultClient) : 0;
   const defaultOldPalletsCnt = 0;
@@ -7571,6 +7583,10 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
   const defaultOldDebt = +(defaultVeneerDebt + (defaultOldPalletsCnt * defaultPalletPrice)).toFixed(2);
   const defaultOldDebtLabel = buildPreviousDebtStatementText(defaultVeneerDebt, defaultOldPalletsCnt, defaultPalletPrice, defaultClient);
   const defaultRetPalletsLabel = buildReturnedPalletsStatementText(defaultRetPalletsCnt, defaultOldPalletsCnt, defaultPalletPrice);
+  const defOpenDebit = defaultClient ? Number(defaultClient.openingDebit ?? (Number(defaultClient.balance || 0) > 0 ? Number(defaultClient.balance) : 0)) : 0;
+  const defOpenCredit = defaultClient ? Number(defaultClient.openingCredit ?? (Number(defaultClient.balance || 0) < 0 ? Math.abs(Number(defaultClient.balance)) : 0)) : 0;
+  const defOpenPDel = defaultClient ? Number(defaultClient.openingPalletsDelivered || 0) : 0;
+  const defOpenPRec = defaultClient ? Number(defaultClient.openingPalletsReceived || 0) : 0;
 
   draftOrderItems = [createDefaultDraftOrderItem()];
   draftOrderDiscountType = 'amount';
@@ -7578,12 +7594,18 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box" style="max-width:1040px;">
-        <div class="card-header">
+      <div class="modal-box" style="max-width:1060px;">
+        <div class="card-header" style="${isOldOrderMode ? 'border-bottom:2.5px solid #0f766e;padding-bottom:12px;' : ''}">
           <div>
-            <div class="card-title">📋 أمر تجهيز طلبية للعميل + إصدار بيان طلبية PDF رسمي</div>
+            <div class="card-title" style="${isOldOrderMode ? 'color:#0f766e;font-size:1.12rem;' : ''}">
+              ${isOldOrderMode
+                ? '📜 تنفيذ وإدراج طلبية قديمة للعميل (مع سؤال الخروج من المخازن أم لا + ربط الحسابات بالرصيد الافتتاحي)'
+                : '📋 أمر تجهيز طلبية للعميل + إصدار بيان طلبية PDF رسمي'}
+            </div>
             <small style="color:var(--text-muted);">
-              تجهيز طلبية العميل من جدول الكميات والأسعار مع إمكانية طباعة وتصدير <strong>بيان طلبية PDF</strong> كامل باللوجو والختم والتفقيط بالحروف
+              ${isOldOrderMode
+                ? 'خاص بالمدير التنفيذي ومدير المشروعات: تنفيذ طلبيات سابقة/قديمة للعميل وتحديد هل تخرج من المخازن أم لا، مع تعديل الرصيد الافتتاحي وعمل حسابات العميل تراكمياً بعد الرصيد الافتتاحي'
+                : 'تجهيز طلبية العميل من جدول الكميات والأسعار مع إمكانية طباعة وتصدير <strong>بيان طلبية PDF</strong> كامل باللوجو والختم والتفقيط بالحروف'}
             </small>
           </div>
           <div style="display:flex;gap:6px;align-items:center;">
@@ -7597,16 +7619,16 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
         <form onsubmit="submitNewClientOrderPrep(event)">
           <div class="form-grid" style="margin-bottom:14px;">
             <div class="form-group">
-              <label>تاريخ الطلبية والبيان (حالي أو سابق)</label>
-              <input id="ord-date" type="date" class="form-control" value="${todayStr()}" required />
+              <label>تاريخ الطلبية والبيان (حالي أو تاريخ قديم)</label>
+              <input id="ord-date" type="date" class="form-control" value="${todayStr()}" required style="font-weight:800;" />
             </div>
             <div class="form-group">
-              <label>رقم أمر تجهيز الطلبية والبيان</label>
-              <input id="ord-num" class="form-control" value="${nextNo}" required />
+              <label>رقم الطلبية والبيان</label>
+              <input id="ord-num" class="form-control" value="${nextNo}" required style="font-weight:800;" />
             </div>
             <div class="form-group" style="grid-column: span 2;">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:6px;">
-                <label style="margin:0;">العميل المطلوب تجهيز الطلبية لصالحه (بالكود والاسم)</label>
+                <label style="margin:0;">العميل المطلوب تنفيذ / تجهيز الطلبية لصالحه (بالكود والاسم)</label>
                 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.73rem;" onclick="openNewPartnerModal(true)">
                   ➕ إضافة عميل جديد بالكود
                 </button>
@@ -7624,6 +7646,66 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
               ` : ''}
             </div>
           </div>
+
+          ${isExec ? `
+            <!-- CEO & Projects Manager: Opening Balance & Old Order Warehouse Exit Question -->
+            <div style="background:rgba(15,118,110,0.07);border:2px solid #0f766e;border-radius:12px;padding:14px;margin-bottom:14px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+                <div style="font-weight:900;color:#0f766e;font-size:0.95rem;">
+                  👑 صلاحية المدير التنفيذي ومدير المشروعات: تعديل الرصيد الافتتاحي للعميل + تنفيذ طلبيات قديمة + تحديد الخروج من المخازن
+                </div>
+                <span class="badge" style="background:#0f766e;color:#fff;">مربوط بحسابات العميل قابلة للتعديل مستقبلاً</span>
+              </div>
+
+              <div class="form-grid" style="grid-template-columns:repeat(auto-fit, minmax(195px, 1fr));gap:10px;margin-bottom:10px;background:var(--bg-surface);padding:10px 12px;border-radius:10px;border:1px solid var(--border-color);">
+                <div class="form-group" style="margin:0;">
+                  <label style="color:var(--danger);font-weight:800;font-size:0.78rem;">📒 الرصيد الافتتاحي (مدين عليه - ج.م)</label>
+                  <input id="ord-client-open-debit" type="number" step="0.5" min="0" class="form-control" value="${defOpenDebit}" oninput="onDraftOpeningBalanceEdit()" style="font-weight:900;border-color:var(--danger);" title="يمكنك تعديل الرصيد الافتتاحي للعميل هنا وسيتم ربط حسابات الطلبيات به تلقائياً" />
+                </div>
+                <div class="form-group" style="margin:0;">
+                  <label style="color:var(--success);font-weight:800;font-size:0.78rem;">📒 الرصيد الافتتاحي (دائن له - ج.م)</label>
+                  <input id="ord-client-open-credit" type="number" step="0.5" min="0" class="form-control" value="${defOpenCredit}" oninput="onDraftOpeningBalanceEdit()" style="font-weight:900;border-color:var(--success);" />
+                </div>
+                <div class="form-group" style="margin:0;">
+                  <label style="font-size:0.78rem;font-weight:700;">🪵 بالتات افتتاحية مسلمة / مستلمة</label>
+                  <div style="display:flex;gap:4px;align-items:center;">
+                    <input id="ord-client-open-pdel" type="number" min="0" class="form-control" value="${defOpenPDel}" placeholder="مسلم" title="بالتات افتتاحية مسلمة للعميل" style="font-weight:800;" />
+                    <span>/</span>
+                    <input id="ord-client-open-prec" type="number" min="0" class="form-control" value="${defOpenPRec}" placeholder="مستلم" title="بالتات افتتاحية مستلمة من العميل" style="font-weight:800;" />
+                  </div>
+                </div>
+                <div class="form-group" style="margin:0;">
+                  <label style="color:var(--primary);font-weight:800;font-size:0.78rem;">🔗 الرصيد التراكمي قبل هذه الطلبية</label>
+                  <input id="ord-chain-prev-balance-preview" type="text" class="form-control" value="${fmtMoney(defaultVeneerDebt)}" readonly style="font-weight:900;background:var(--bg-elevated);color:var(--primary);" title="الرصيد الافتتاحي + صافي الطلبيات السابقة - الدفعات المسددة" />
+                </div>
+              </div>
+
+              <div class="form-grid" style="grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:10px;">
+                <div class="form-group" style="margin:0;grid-column: span 2;">
+                  <label style="color:#b91c1c;font-weight:900;font-size:0.86rem;">❓ هل تخرج كميات هذه الطلبية من أرصدة المخازن الحالية أم لا؟</label>
+                  <select id="ord-warehouse-exit-mode" class="form-control" style="font-weight:900;border:2px solid #dc2626;background:var(--bg-surface);">
+                    <option value="ask_on_submit" ${isOldOrderMode ? 'selected' : ''}>❓ اسألني للتأكيد عند الحفظ (هل تخرج من المخازن أم لا؟)</option>
+                    <option value="no_warehouse_exit">🚫 لا تخرج من المخازن (طلبية قديمة منفذة — حسابات وبيان مالي للعميل بعد الرصيد الافتتاحي فقط)</option>
+                    <option value="immediate_warehouse_exit">📦 نعم، تخرج وتُخصم من المخازن فوراً + إثباتها في حسابات العميل بعد الرصيد الافتتاحي</option>
+                    <option value="workflow_warehouse_exit" ${!isOldOrderMode ? 'selected' : ''}>🔄 مسار التجهيز بالمخزن (ترسل للمخزن للتجهيز وتُخصم عند موافقة أمين المخزن)</option>
+                  </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                  <label style="color:var(--success);font-weight:800;font-size:0.8rem;">💵 المبلغ المسدد على هذه الطلبية (ج.م)</label>
+                  <input id="ord-exec-paid-now" type="number" step="0.5" min="0" class="form-control" value="0" oninput="recalcDraftOrderTotals()" style="font-weight:900;border-color:var(--success);" placeholder="0 = آجل بالكامل على حساب العميل" />
+                </div>
+                <div class="form-group" style="margin:0;">
+                  <label style="font-weight:800;font-size:0.8rem;">💳 طريقة سداد / قيد الطلبية</label>
+                  <select id="ord-exec-pay-method" class="form-control" style="font-weight:700;">
+                    <option value="آجل على حساب مديونية العميل">📒 آجل على حساب مديونية العميل</option>
+                    <option value="نقدي بالخزينة">💵 نقدي بالخزينة</option>
+                    <option value="تحويل بنكي">🏦 تحويل بنكي</option>
+                    <option value="شيك بنكي">📝 شيك بنكي</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          ` : ''}
 
           <!-- Multi-Item Builder Section -->
           <div style="background:var(--bg-elevated);padding:14px;border-radius:12px;border:1px solid var(--border-color);margin-bottom:14px;">
@@ -7740,12 +7822,20 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
             <button type="button" class="btn btn-accent" style="font-weight:800;" onclick="previewDraftOrderStatementPdf()">
               🖨️ معاينة وتصدير بيان الطلبية PDF الآن
             </button>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+              ${isExec ? `
+                <button type="button" class="btn" style="background:#0f766e;color:#fff;font-weight:900;" onclick="submitNewClientOrderPrep(null, false, 'no_warehouse_exit')" title="تنفيذ الطلبية وإضافتها في حسابات العميل بعد الرصيد الافتتاحي بدون خصم كمياتها من المخزن الحالي">
+                  🚫 تنفيذ بالحسابات (بدون خروج من المخازن)
+                </button>
+                <button type="button" class="btn" style="background:#dc2626;color:#fff;font-weight:900;" onclick="submitNewClientOrderPrep(null, false, 'immediate_warehouse_exit')" title="تنفيذ الطلبية وخصم كمياتها من المخزن الحالي وإضافتها في حسابات العميل بعد الرصيد الافتتاحي">
+                  📦 تنفيذ بالحسابات + خروج من المخازن
+                </button>
+              ` : ''}
               <button type="button" class="btn btn-success" style="font-weight:800;" onclick="submitNewClientOrderPrep(null, true)">
-                🖨️ حفظ الطلبية + فتح وطباعة البيان PDF فوراً
+                🖨️ حفظ الطلبية + طباعة البيان PDF
               </button>
-              <button type="submit" class="btn btn-primary">📋 حفظ أمر تجهيز الطلبية وإصدار البيان للاعتماد</button>
+              <button type="submit" class="btn btn-primary">${isOldOrderMode ? '📜 تنفيذ الطلبية (مع سؤال الخروج من المخزن)' : '📋 حفظ الطلبية وإصدار البيان'}</button>
             </div>
           </div>
         </form>
@@ -7756,11 +7846,45 @@ function openNewClientOrderPrepModal(preselectedClientId = '') {
   renderDraftOrderItemsTable();
 }
 
+function onDraftOpeningBalanceEdit() {
+  const clientId = document.getElementById('ord-client')?.value || '';
+  const clientObj = (state.partners || []).find(c => c.id === clientId);
+  if (!clientObj) return;
+  const openDebit = Math.max(0, Number(document.getElementById('ord-client-open-debit')?.value || 0));
+  const openCredit = Math.max(0, Number(document.getElementById('ord-client-open-credit')?.value || 0));
+  const tempClient = { ...clientObj, openingDebit: openDebit, openingCredit: openCredit, balance: +(openDebit - openCredit).toFixed(2) };
+  const livePrevBal = computeClientLivePreviousBalance(tempClient);
+  const chainPreviewEl = document.getElementById('ord-chain-prev-balance-preview');
+  if (chainPreviewEl) {
+    chainPreviewEl.value = livePrevBal >= 0 ? `عليه: ${fmtMoney(livePrevBal)}` : `له: ${fmtMoney(Math.abs(livePrevBal))}`;
+  }
+  const vDebtEl = document.getElementById('ord-old-veneer-debt');
+  const lblDebtEl = document.getElementById('ord-old-debt-label');
+  if (vDebtEl) vDebtEl.value = livePrevBal;
+  if (lblDebtEl) delete lblDebtEl.dataset.manual;
+  recalcDraftOrderTotals('veneer');
+}
+
 function onDraftOrderClientSelectionChange(clientId) {
   const clientObj = (state.partners || []).find(c => c.id === clientId);
   if (clientObj) {
     const m = computeClientMetrics(clientObj);
     const livePrevBal = computeClientLivePreviousBalance(clientObj);
+    const openDebit = Number(clientObj.openingDebit ?? (Number(clientObj.balance || 0) > 0 ? Number(clientObj.balance) : 0));
+    const openCredit = Number(clientObj.openingCredit ?? (Number(clientObj.balance || 0) < 0 ? Math.abs(Number(clientObj.balance)) : 0));
+    const openDebitEl = document.getElementById('ord-client-open-debit');
+    const openCreditEl = document.getElementById('ord-client-open-credit');
+    const openPDelEl = document.getElementById('ord-client-open-pdel');
+    const openPRecEl = document.getElementById('ord-client-open-prec');
+    const chainPreviewEl = document.getElementById('ord-chain-prev-balance-preview');
+    if (openDebitEl) openDebitEl.value = openDebit;
+    if (openCreditEl) openCreditEl.value = openCredit;
+    if (openPDelEl) openPDelEl.value = Number(clientObj.openingPalletsDelivered || 0);
+    if (openPRecEl) openPRecEl.value = Number(clientObj.openingPalletsReceived || 0);
+    if (chainPreviewEl) {
+      chainPreviewEl.value = livePrevBal >= 0 ? `عليه: ${fmtMoney(livePrevBal)}` : `له: ${fmtMoney(Math.abs(livePrevBal))}`;
+    }
+
     const vDebtEl = document.getElementById('ord-old-veneer-debt');
     const pCntEl = document.getElementById('ord-old-pallets-cnt');
     const pPriceEl = document.getElementById('ord-pallet-unit-price');
@@ -8118,6 +8242,8 @@ function recalcDraftOrderTotals(triggerSource = '') {
   }
 
   const totalRequired = +(netTotal + oldDebt - returnedPalletsDeduction).toFixed(2);
+  const paidNow = Math.max(0, Number(document.getElementById('ord-exec-paid-now')?.value || 0));
+  const finalBalanceAfterPaid = +(totalRequired - paidNow).toFixed(2);
   const autoWords = numberToArabicTafqeet(Math.max(0, totalRequired));
 
   const wordsEl = document.getElementById('ord-amount-words');
@@ -8143,7 +8269,7 @@ function recalcDraftOrderTotals(triggerSource = '') {
         <strong style="color:var(--success);font-size:1.08rem;">${fmtMoney(netTotal)}</strong>
       </div>
       <div class="calc-preview-item">
-        <span>${oldDebt < 0 ? 'رصيد سابق لصالح العميل (له)' : 'المديونية السابقة على العميل'}</span>
+        <span>${oldDebt < 0 ? 'رصيد سابق لصالح العميل (له)' : 'الرصيد السابق (مربوط بالرصيد الافتتاحي)'}</span>
         <strong style="color:${oldDebt < 0 ? 'var(--success)' : oldDebt > 0 ? 'var(--danger)' : 'var(--text-muted)'};">${oldDebt < 0 ? '-' + fmtMoney(Math.abs(oldDebt)) : fmtMoney(oldDebt)}</strong>
       </div>
       ${returnedPalletsDeduction > 0 ? `
@@ -8156,6 +8282,16 @@ function recalcDraftOrderTotals(triggerSource = '') {
         <span style="font-weight:800;color:var(--primary);">💎 إجمالي المبلغ المستحق</span>
         <strong style="color:var(--primary);font-size:1.18rem;">${fmtMoney(totalRequired)}</strong>
       </div>
+      ${paidNow > 0 ? `
+      <div class="calc-preview-item">
+        <span>المسدد على هذه الطلبية</span>
+        <strong style="color:var(--success);">-${fmtMoney(paidNow)}</strong>
+      </div>
+      <div class="calc-preview-item" style="background:rgba(220,38,38,0.08);border:1.5px solid var(--danger);border-radius:8px;padding:6px 10px;">
+        <span style="font-weight:800;color:var(--danger);">📒 صافي حساب العميل بعد السداد</span>
+        <strong style="color:${finalBalanceAfterPaid > 0 ? 'var(--danger)' : 'var(--success)'};font-size:1.12rem;">${finalBalanceAfterPaid >= 0 ? 'عليه: ' + fmtMoney(finalBalanceAfterPaid) : 'له: ' + fmtMoney(Math.abs(finalBalanceAfterPaid))}</strong>
+      </div>
+      ` : ''}
     `;
   }
 }
@@ -8261,14 +8397,36 @@ function previewDraftOrderStatementPdf() {
   openUniversalPrintDocument(html, `بيان طلبية ${draftOrd.orderNumber} - ${draftOrd.clientName}`, false);
 }
 
-function submitNewClientOrderPrep(e, andPrintPdf = false) {
+function submitNewClientOrderPrep(e, andPrintPdf = false, explicitExitMode = '') {
   if (e) e.preventDefault();
+  const createdByExec = isFullAdmin(currentUser);
+  const now = getMonotonicIso();
+
+  // If CEO / Projects Manager edited the client's Opening Balance inside the modal, save it first so calculations link to it
+  const selectedClientId = document.getElementById('ord-client')?.value || '';
+  const existingClientObj = (state.partners || []).find(c => c.id === selectedClientId);
+  if (createdByExec && existingClientObj && document.getElementById('ord-client-open-debit')) {
+    const newOpenDebit = Math.max(0, Number(document.getElementById('ord-client-open-debit')?.value || 0));
+    const newOpenCredit = Math.max(0, Number(document.getElementById('ord-client-open-credit')?.value || 0));
+    const newOpenPDel = Math.max(0, Number(document.getElementById('ord-client-open-pdel')?.value || 0));
+    const newOpenPRec = Math.max(0, Number(document.getElementById('ord-client-open-prec')?.value || 0));
+    existingClientObj.openingDebit = newOpenDebit;
+    existingClientObj.openingCredit = newOpenCredit;
+    existingClientObj.openingPalletsDelivered = newOpenPDel;
+    existingClientObj.openingPalletsReceived = newOpenPRec;
+    existingClientObj.balance = +(newOpenDebit - newOpenCredit).toFixed(2);
+    existingClientObj.updatedAt = now;
+  }
+
   const collected = collectDraftOrderObjectForStatement();
-  const now = new Date().toISOString();
 
   let clientObj = collected.clientObj;
   if (!clientObj) {
     const nextCode = `CL-${101 + (state.partners?.length || 0)}`;
+    const newOpenDebit = createdByExec ? Math.max(0, Number(document.getElementById('ord-client-open-debit')?.value || 0)) : 0;
+    const newOpenCredit = createdByExec ? Math.max(0, Number(document.getElementById('ord-client-open-credit')?.value || 0)) : 0;
+    const newOpenPDel = createdByExec ? Math.max(0, Number(document.getElementById('ord-client-open-pdel')?.value || 0)) : 0;
+    const newOpenPRec = createdByExec ? Math.max(0, Number(document.getElementById('ord-client-open-prec')?.value || 0)) : 0;
     clientObj = {
       id: uid('pt'),
       code: nextCode,
@@ -8277,11 +8435,11 @@ function submitNewClientOrderPrep(e, andPrintPdf = false) {
       contactPerson: 'إدارة المشتريات',
       phone: '',
       city: '',
-      openingDebit: 0,
-      openingCredit: 0,
-      openingPalletsDelivered: 0,
-      openingPalletsReceived: 0,
-      balance: 0,
+      openingDebit: newOpenDebit,
+      openingCredit: newOpenCredit,
+      openingPalletsDelivered: newOpenPDel,
+      openingPalletsReceived: newOpenPRec,
+      balance: +(newOpenDebit - newOpenCredit).toFixed(2),
       creditLimit: 500000,
       notes: 'تمت الإضافة تلقائياً مع الطلبية',
       updatedAt: now
@@ -8310,8 +8468,21 @@ function submitNewClientOrderPrep(e, andPrintPdf = false) {
     }
   });
 
-  const createdByExec = isFullAdmin(currentUser);
-  const initialStage = createdByExec ? 'pending_warehouse_prep' : 'pending_executive';
+  let exitMode = explicitExitMode || (createdByExec ? (document.getElementById('ord-warehouse-exit-mode')?.value || 'workflow_warehouse_exit') : 'workflow_warehouse_exit');
+  if (createdByExec && exitMode === 'ask_on_submit') {
+    const shouldExitWarehouse = confirm(
+      `❓ سؤال تأكيد الخروج من المخازن للطلبية (${collected.orderNumber}) للعميل (${clientObj.name}):\n\n` +
+      `• اضغط [موافق / OK] إذا كنت تريد أن (تخرج وتُخصم الكميات من أرصدة المخازن الحالية 📦).\n` +
+      `• اضغط [إلغاء / Cancel] إذا كانت (لا تخرج من المخازن — حسابات وبيان مالي فقط للعميل بعد الرصيد الافتتاحي 🚫).`
+    );
+    exitMode = shouldExitWarehouse ? 'immediate_warehouse_exit' : 'no_warehouse_exit';
+  }
+
+  const isImmediateExecuted = createdByExec && (exitMode === 'no_warehouse_exit' || exitMode === 'immediate_warehouse_exit');
+  const skipWarehouseDeduction = exitMode === 'no_warehouse_exit';
+  const initialStage = isImmediateExecuted ? 'completed' : (createdByExec ? 'pending_warehouse_prep' : 'pending_executive');
+  const paidNow = createdByExec ? Math.max(0, Number(document.getElementById('ord-exec-paid-now')?.value || 0)) : 0;
+  const payMethod = createdByExec ? (document.getElementById('ord-exec-pay-method')?.value || 'آجل على حساب مديونية العميل') : 'آجل على حساب مديونية العميل';
 
   const newOrder = {
     id: uid('ord'),
@@ -8358,14 +8529,25 @@ function submitNewClientOrderPrep(e, andPrintPdf = false) {
     paymentDeferredTerms: collected.paymentDeferredTerms,
     bankAccountsText: collected.bankAccountsText,
     stage: initialStage,
-    status: 'in_progress',
+    status: isImmediateExecuted ? 'completed' : 'in_progress',
+    isOldExecutedOrder: isImmediateExecuted,
+    skipWarehouseDeduction,
+    stockDeducted: false,
     executiveApprovedBy: createdByExec ? currentUser.name : '',
     executiveApprovedAt: createdByExec ? now : '',
-    warehousePrepApprovedBy: '',
-    warehousePrepApprovedAt: '',
-    accountantReleaseBy: '',
-    accountantReleaseAt: '',
-    financialSettlement: null,
+    warehousePrepApprovedBy: isImmediateExecuted ? currentUser.name : '',
+    warehousePrepApprovedAt: isImmediateExecuted ? now : '',
+    accountantReleaseBy: isImmediateExecuted ? currentUser.name : '',
+    accountantReleaseAt: isImmediateExecuted ? now : '',
+    financialSettlement: (isImmediateExecuted || paidNow > 0) ? {
+      date: collected.date,
+      netTotal: collected.netTotalAmount,
+      paidAmount: paidNow,
+      remainingDebt: Math.max(0, +(collected.netTotalAmount - paidNow).toFixed(2)),
+      paymentMethod: payMethod,
+      notes: collected.notes || '',
+      approvedBy: currentUser.name
+    } : null,
     carDispatchVoucher: null,
     notes: collected.notes,
     createdAt: collected.date,
@@ -8373,18 +8555,43 @@ function submitNewClientOrderPrep(e, andPrintPdf = false) {
   };
 
   state.productionOrders.unshift(newOrder);
+
+  if (isImmediateExecuted) {
+    if (!skipWarehouseDeduction) {
+      ensureOrderStockDeducted(newOrder, currentUser.name, collected.date, true);
+    }
+    syncOrderLinkedFinancialInvoice(newOrder, newOrder.orderNumber, now);
+    if (paidNow > 0 && state.treasuryBalances) {
+      if (payMethod.includes('بنك')) {
+        state.treasuryBalances.bankAccount = Number(state.treasuryBalances.bankAccount || 0) + paidNow;
+      } else if (payMethod.includes('شيك')) {
+        state.treasuryBalances.checksUnderCollection = Number(state.treasuryBalances.checksUnderCollection || 0) + paidNow;
+      } else {
+        state.treasuryBalances.cashVault = Number(state.treasuryBalances.cashVault || 0) + paidNow;
+      }
+    }
+  } else if (paidNow > 0) {
+    syncOrderLinkedFinancialInvoice(newOrder, newOrder.orderNumber, now);
+  }
+
+  // Link & recalculate the client's orders chain sequentially after the Opening Balance
+  recalculateClientAccountChainFromOpeningBalance(clientObj.id, false);
+
   if (currentUser) {
     markNotifIdsSeen([`ord_stage_${newOrder.id}_${initialStage}`]);
   }
   closeModal();
-  activeTab = 'production';
 
   if (andPrintPdf) {
     window._isPrintingActive = true;
     printClientOrderStatement(newOrder.id);
   }
 
-  if (createdByExec) {
+  if (isImmediateExecuted) {
+    saveState(
+      `📜 تنفيذ الطلبية (${newOrder.orderNumber}) للعميل (${clientObj.name} - ${clientObj.code || ''}) بتاريخ ${newOrder.date} بواسطة ${currentUser.name} — ${skipWarehouseDeduction ? '🚫 بدون خروج من المخازن (حسابات فقط)' : '📦 تم خصم الكميات من المخازن'} — وربط حسابات العميل بالرصيد الافتتاحي (صافي الطلبية: ${fmtMoney(newOrder.netTotalAmount)})`
+    );
+  } else if (createdByExec) {
     saveState(
       `📦 أمر تجهيز طلبية جديد (${newOrder.orderNumber}) للعميل (${clientObj.name} - ${clientObj.code || ''}) معتمد من ${currentUser.name} — جاهز الآن للمدير الإداري وأمين المخزن لتجهيز الطلبية (${newOrder.totalSheetsCount} قطعة)`
     );
@@ -8508,18 +8715,35 @@ function openClientOrderStatementModal(orderId) {
         ` : ''}
 
         <form onsubmit="saveClientOrderStatementChanges(event, '${ord.id}')">
-          ${isExec ? `
-            <div class="form-grid" style="margin-bottom:12px;background:var(--bg-elevated);padding:10px 14px;border-radius:10px;">
+          ${isExec ? (() => {
+            const linkedInvStmt = (state.financialTransactions || []).find(tx =>
+              tx.type === 'sales_invoice' && (tx.orderId === ord.id || ((tx.partnerId === ord.clientId || tx.partnerName === ord.clientName) && tx.voucherNo === `INV-${ord.orderNumber}`))
+            );
+            const curPaidOnStmt = Number(linkedInvStmt?.paidAmount ?? ord.financialSettlement?.paidAmount ?? 0);
+            return `
+            <div class="form-grid" style="margin-bottom:12px;background:var(--bg-elevated);padding:10px 14px;border-radius:10px;border:1.5px solid #0f766e;">
               <div class="form-group">
                 <label>تاريخ البيان / الطلبية</label>
-                <input id="stmt-ord-date" type="date" class="form-control" value="${ord.date || todayStr()}" required />
+                <input id="stmt-ord-date" type="date" class="form-control" value="${ord.date || todayStr()}" required style="font-weight:800;" />
               </div>
               <div class="form-group">
                 <label>رقم الطلبية</label>
-                <input id="stmt-ord-num" class="form-control" value="${ord.orderNumber || ''}" required />
+                <input id="stmt-ord-num" class="form-control" value="${ord.orderNumber || ''}" required style="font-weight:800;" />
+              </div>
+              <div class="form-group">
+                <label style="color:#b91c1c;font-weight:900;">❓ حالة الخروج من المخازن</label>
+                <select id="stmt-warehouse-exit" class="form-control" style="font-weight:800;border-color:#dc2626;">
+                  <option value="deduct" ${!ord.skipWarehouseDeduction ? 'selected' : ''}>📦 تخرج وتُخصم من المخازن</option>
+                  <option value="no_deduct" ${ord.skipWarehouseDeduction ? 'selected' : ''}>🚫 لا تخرج من المخازن (حسابات فقط — طلبية قديمة)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="color:var(--success);font-weight:900;">💵 المسدد على هذه الطلبية (ج.م)</label>
+                <input id="stmt-paid-amount" type="number" step="0.5" min="0" class="form-control" value="${curPaidOnStmt}" data-old-paid="${curPaidOnStmt}" style="font-weight:900;border-color:var(--success);color:var(--success);" />
               </div>
             </div>
-          ` : ''}
+            `;
+          })() : ''}
 
           <div class="table-responsive" style="margin-bottom:10px;">
             <table>
@@ -8949,9 +9173,9 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
     if (newOrdNum) ord.orderNumber = newOrdNum;
   }
 
-  // 1) If order stock was ALREADY DEDUCTED from warehouse, RESTORE old items to warehouse first!
-  let stockRestoredAndUpdated = false;
-  if (ord.stockDeducted || ord.stage === 'completed' || ord.status === 'completed') {
+  // 1) If order stock was ACTUALLY DEDUCTED from warehouse previously, RESTORE old items to warehouse first!
+  const wasActuallyDeducted = !ord.skipWarehouseDeduction && Boolean(ord.stockDeducted || ord.stage === 'completed' || ord.status === 'completed');
+  if (wasActuallyDeducted) {
     for (const oldIt of (ord.items || [])) {
       const oldSh = Number(oldIt.sheetsCount || 0);
       if (oldSh > 0) {
@@ -8969,7 +9193,18 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
         );
       }
     }
-    stockRestoredAndUpdated = true;
+    const carVoucherNo = ord.carDispatchVoucher?.voucherNo || `CAR-${oldOrderNumber}`;
+    state.deletedIds = state.deletedIds || [];
+    const oldMovs = (state.warehouseMovements || []).filter(m => m.voucherNumber === carVoucherNo || m.voucherNumber === `CAR-${ord.orderNumber}`);
+    oldMovs.forEach(m => {
+      if (!state.deletedIds.includes(m.id)) state.deletedIds.push(m.id);
+    });
+    state.warehouseMovements = (state.warehouseMovements || []).filter(m => m.voucherNumber !== carVoucherNo && m.voucherNumber !== `CAR-${ord.orderNumber}`);
+    ord.stockDeducted = false;
+  }
+
+  if (isExec && document.getElementById('stmt-warehouse-exit')) {
+    ord.skipWarehouseDeduction = (document.getElementById('stmt-warehouse-exit').value === 'no_deduct');
   }
 
   let subtotal = 0;
@@ -9116,27 +9351,42 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
   ord.paymentDeferredTerms = defTerms;
   ord.bankAccountsText = bankTxt;
   ord.notes = (document.getElementById('stmt-notes')?.value || ord.notes || '').trim();
-  const now = new Date().toISOString();
+  const now = getMonotonicIso(ord.updatedAt);
   ord.updatedAt = now;
 
-  // 2) If order was ALREADY COMPLETED, deduct the NEW edited quantities from warehouse cells & sync warehouseMovements!
-  if (stockRestoredAndUpdated) {
-    const carVoucherNo = ord.carDispatchVoucher?.voucherNo || `CAR-${oldOrderNumber}`;
-    // Remove old warehouse movements for this car dispatch and push their IDs to deletedIds
-    state.deletedIds = state.deletedIds || [];
-    const oldMovs = (state.warehouseMovements || []).filter(m => m.voucherNumber === carVoucherNo || m.voucherNumber === `CAR-${ord.orderNumber}`);
-    oldMovs.forEach(m => {
-      if (!state.deletedIds.includes(m.id)) state.deletedIds.push(m.id);
-    });
-    state.warehouseMovements = (state.warehouseMovements || []).filter(m => m.voucherNumber !== carVoucherNo && m.voucherNumber !== `CAR-${ord.orderNumber}`);
+  // Handle paid amount edit in statement modal if CEO/Projects Manager modified it
+  const stmtPaidInput = document.getElementById('stmt-paid-amount');
+  if (isExec && stmtPaidInput) {
+    const oldStmtPaid = Number(stmtPaidInput.dataset.oldPaid || 0);
+    const newStmtPaid = Math.max(0, Number(stmtPaidInput.value || 0));
+    if (Math.abs(newStmtPaid - oldStmtPaid) > 0.001 || ord.financialSettlement) {
+      ord.financialSettlement = ord.financialSettlement || { date: ord.date || todayStr(), paymentMethod: 'نقدي بالخزينة', approvedBy: currentUser.name };
+      ord.financialSettlement.netTotal = net;
+      ord.financialSettlement.paidAmount = newStmtPaid;
+      ord.financialSettlement.remainingDebt = Math.max(0, +(net - newStmtPaid).toFixed(2));
+      const linkedInvStmt = (state.financialTransactions || []).find(tx =>
+        tx.type === 'sales_invoice' && (tx.orderId === ord.id || ((tx.partnerId === ord.clientId || tx.partnerName === ord.clientName) && (tx.voucherNo === `INV-${oldOrderNumber}` || tx.voucherNo === `INV-${ord.orderNumber}`)))
+      );
+      if (linkedInvStmt) {
+        linkedInvStmt.paidAmount = newStmtPaid;
+      }
+      if (Math.abs(newStmtPaid - oldStmtPaid) > 0.001 && state.treasuryBalances) {
+        state.treasuryBalances.cashVault = Math.max(0, Number(state.treasuryBalances.cashVault || 0) + (newStmtPaid - oldStmtPaid));
+      }
+    }
+  }
 
+  // 2) If order should be deducted from warehouse (and not marked skipWarehouseDeduction), deduct the NEW edited quantities!
+  const shouldBeDeductedNow = !ord.skipWarehouseDeduction && (wasActuallyDeducted || ord.stage === 'completed' || ord.status === 'completed');
+  const stockRestoredAndUpdated = wasActuallyDeducted || shouldBeDeductedNow;
+  if (shouldBeDeductedNow) {
     const carPlate = ord.carDispatchVoucher?.carPlateNumber || '-';
     const driverName = ord.carDispatchVoucher?.driverName || '-';
     const dispatchDate = ord.carDispatchVoucher?.dispatchDate || ord.date || todayStr();
 
     for (const it of ord.items) {
       const thkId = it.thicknessId || `th-${it.thicknessMm}-${it.direction || 'qas'}`;
-      deductSheetsFromCellPallets(thkId, it.gradeId, it.woodTypeId || 'wt-general', Number(it.sheetsCount || 0), Number(it.unitPrice || 0), Number(it.lengthCm || 250), Number(it.widthCm || 125));
+      deductSheetsFromCellPallets(thkId, it.gradeId, it.woodTypeId || 'wt-general', Number(it.sheetsCount || 0), Number(it.unitPrice || 0), Number(it.lengthCm || 250), Number(it.widthCm || 125), true);
 
       state.warehouseMovements.unshift({
         id: uid('mov'),
@@ -9161,10 +9411,15 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
         updatedAt: now
       });
     }
+    ord.stockDeducted = true;
+    ord.stockDeductedAt = now;
   }
 
-  // 3) Sync linked financial invoice if order already passed accountant release
+  // 3) Sync linked financial invoice & recalculate client's account chain from Opening Balance
   syncOrderLinkedFinancialInvoice(ord, oldOrderNumber, now);
+  if (ord.clientId) {
+    recalculateClientAccountChainFromOpeningBalance(ord.clientId, false);
+  }
 
   if (alsoApproveExecutive && isFullAdmin(currentUser)) {
     ord.stage = 'pending_warehouse_prep';
@@ -9214,7 +9469,7 @@ function approveOrderExecutive(orderId) {
 
 // Helper: Immediately deduct order items from the Veneer Quantities Matrix upon warehouse exit/approval (idempotent via ord.stockDeducted)
 function ensureOrderStockDeducted(ord, performedBy = '', opDate = '', allowNegative = false) {
-  if (!ord || ord.stockDeducted) return false;
+  if (!ord || ord.stockDeducted || ord.skipWarehouseDeduction) return false;
   const now = getMonotonicIso(ord.updatedAt);
   const dispatchDate = opDate || ord.date || todayStr();
   const actor = performedBy || currentUser?.name || 'المخزن';
@@ -10536,7 +10791,8 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
           <button class="btn btn-sm btn-primary" onclick="closeModal(); openNewClientOrderPrepModal('${pt.id}');">📋 إنشاء طلبية جديدة لهذا العميل</button>
           ${isFullAdmin(currentUser) ? `
-            <button class="btn btn-sm" style="background:#dc2626;color:#fff;font-weight:800;" onclick="openClientPiecePriceAdjustmentModal('${pt.id}')">💲 تعديل أسعار القطع وتسوية حساب العميل (التنفيذي / المشروعات)</button>
+            <button class="btn btn-sm" style="background:#0f766e;color:#fff;font-weight:800;" onclick="closeModal(); openNewClientOrderPrepModal('${pt.id}', true);">📜 تنفيذ طلبية قديمة لهذا العميل (بعد الرصيد الافتتاحي)</button>
+            <button class="btn btn-sm" style="background:#dc2626;color:#fff;font-weight:800;" onclick="openClientPiecePriceAdjustmentModal('${pt.id}')">💲 تعديل الرصيد الافتتاحي وأسعار القطع والدفعات والحسابات</button>
           ` : ''}
           <button class="btn btn-sm btn-success" onclick="openClientPaymentModal('${pt.id}')">💵 تسجيل تحصيل دفعة مالية / تسوية مديونية</button>
           <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}')">🛡️ تسجيل تحصيل / رد في حساب تأمين البالتات</button>
@@ -15600,7 +15856,7 @@ function deleteOrderWithStockRestore(orderId) {
   const ord = (state.productionOrders || []).find(o => o.id === orderId);
   if (!ord) return;
 
-  const isCompletedOrDeducted = Boolean(ord.stockDeducted || ord.stage === 'completed' || ord.status === 'completed');
+  const isCompletedOrDeducted = !ord.skipWarehouseDeduction && Boolean(ord.stockDeducted || ord.stage === 'completed' || ord.status === 'completed');
   const msg = isCompletedOrDeducted
     ? `⚠️ تأكيد حذف الطلبية والبيان رقم (${ord.orderNumber}) للعميل (${ord.clientName})؟\n\n🔄 نظراً لأن الطلبية تم خصمها/صرفها من المخزن، سيقوم النظام تلقائياً بإرجاع كامل كمياتها (${ord.totalSheetsCount || 0} قطعة) إلى خلايا المخزن، وحذف إذن الصرف والفاتورة المرتبطة بها فوراً!`
     : `⚠️ هل أنت متأكد من حذف بيان وأمر تجهيز الطلبية رقم (${ord.orderNumber}) للعميل (${ord.clientName}) نهائياً؟`;
@@ -15665,8 +15921,12 @@ function deleteOrderWithStockRestore(orderId) {
   state.financialTransactions = (state.financialTransactions || []).filter(tx => tx.orderId !== ord.id && tx.voucherNo !== `INV-${ord.orderNumber}`);
 
   // Finally remove order itself
+  const deletedClientId = ord.clientId;
   markRecordIdDeleted(ord.id);
   state.productionOrders = (state.productionOrders || []).filter(o => o.id !== ord.id);
+  if (deletedClientId) {
+    recalculateClientAccountChainFromOpeningBalance(deletedClientId, false);
+  }
 
   closeModal();
   saveState(`🗑️ قام ${currentUser.name} بحذف بيان الطلبية (${ord.orderNumber}) للعميل (${ord.clientName})${isCompletedOrDeducted ? ' وإرجاع كامل أرصدتها إلى المخزن تلقائياً' : ''}`);
@@ -16159,9 +16419,10 @@ function submitEditPartnerModal(e, clientId) {
     state.catalog.woodenPalletUnitPriceUpdatedAt = new Date().toISOString();
   }
   pt.balance = +(pt.openingDebit - pt.openingCredit).toFixed(2);
-  pt.updatedAt = new Date().toISOString();
+  pt.updatedAt = getMonotonicIso(pt.updatedAt);
+  recalculateClientAccountChainFromOpeningBalance(pt.id, true);
   closeModal();
-  saveState(`✏️ تعديل بيانات وأرصدة العميل (${pt.code} - ${pt.name}) بواسطة ${currentUser.name}`);
+  saveState(`✏️ تعديل بيانات والرصيد الافتتاحي للعميل (${pt.code} - ${pt.name}) وربط حسابات الطلبيات به بواسطة ${currentUser.name}`);
 }
 
 function deletePartnerRecord(clientId) {
@@ -16389,13 +16650,97 @@ function syncOrderLinkedFinancialInvoice(ord, oldOrderNumber = '', nowIso = '') 
   }
 }
 
+// Automatically link & recalculate all of a client's orders sequentially after the Opening Balance (الرصيد الافتتاحي)
+function recalculateClientAccountChainFromOpeningBalance(clientId, forceRelinkAll = false) {
+  const pt = (state.partners || []).find(p => p.id === clientId);
+  if (!pt) return;
+  const now = getMonotonicIso();
+
+  const openDebit = Number(pt.openingDebit ?? (Number(pt.balance || 0) > 0 ? Number(pt.balance) : 0));
+  const openCredit = Number(pt.openingCredit ?? (Number(pt.balance || 0) < 0 ? Math.abs(Number(pt.balance)) : 0));
+  let runningVeneerBalance = +(openDebit - openCredit).toFixed(2);
+
+  // Get all orders for this client sorted chronologically (oldest to newest)
+  const clientOrders = (state.productionOrders || []).filter(
+    o => (o.clientId && o.clientId === pt.id) || (o.clientName && pt.name && o.clientName.trim() === pt.name.trim())
+  ).slice().sort((a, b) => {
+    const dA = String(a.date || a.createdAt || '');
+    const dB = String(b.date || b.createdAt || '');
+    if (dA !== dB) return dA.localeCompare(dB);
+    return String(a.orderNumber || '').localeCompare(String(b.orderNumber || ''));
+  });
+
+  // Get standalone payments/credits (not sales_invoice) sorted chronologically
+  const standaloneTxs = (state.financialTransactions || []).filter(tx => {
+    const matchClient = (tx.partnerId && tx.partnerId === pt.id) || (tx.partnerName && pt.name && tx.partnerName.trim() === pt.name.trim());
+    if (!matchClient) return false;
+    if (tx.type === 'sales_invoice') return false;
+    return true;
+  }).slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+
+  const appliedTxIds = new Set();
+
+  clientOrders.forEach(ord => {
+    const ordDate = String(ord.date || ord.createdAt || '9999-99-99');
+    // Apply any standalone payments/credits up to or on this order's date before computing this order's previous balance
+    standaloneTxs.forEach(tx => {
+      if (appliedTxIds.has(tx.id)) return;
+      const txDate = String(tx.date || '');
+      if (txDate <= ordDate) {
+        const amt = Number(tx.paidAmount || tx.totalAmount || 0);
+        if (tx.type === 'pallet_deposit_refund') {
+          runningVeneerBalance = +(runningVeneerBalance + amt).toFixed(2);
+        } else if (tx.type === 'client_payment' || tx.type === 'receipt' || tx.type === 'client_credit' || isPalletDepositTransaction(tx)) {
+          runningVeneerBalance = +(runningVeneerBalance - amt).toFixed(2);
+        }
+        appliedTxIds.add(tx.id);
+      }
+    });
+
+    if (!ord.manualDebtOverride || forceRelinkAll) {
+      ord.manualDebtOverride = false;
+      ord.oldVeneerDebt = +runningVeneerBalance.toFixed(2);
+      const oldPalletsCount = Math.max(0, Math.round(Number(ord.oldPalletsCount || 0)));
+      const palletUnitPrice = Math.max(0, Number(ord.palletDepositUnitPrice || getWoodenPalletUnitPrice(pt) || 500));
+      const oldPalletsDepositAmount = +(oldPalletsCount * palletUnitPrice).toFixed(2);
+      ord.oldPalletsDepositAmount = oldPalletsDepositAmount;
+      ord.previousDebtAmount = +(ord.oldVeneerDebt + oldPalletsDepositAmount).toFixed(2);
+      ord.previousDebtLabel = buildPreviousDebtStatementText(ord.oldVeneerDebt, oldPalletsCount, palletUnitPrice, pt);
+    }
+
+    const net = Number(ord.netTotalAmount || 0);
+    const prevDebt = Number(ord.previousDebtAmount || 0);
+    const retPalletsDed = Number(ord.returnedPalletsDeduction || 0);
+    ord.totalRequiredAmount = +(net + prevDebt - retPalletsDed).toFixed(2);
+    ord.totalRequiredInWords = numberToArabicTafqeet(Math.max(0, ord.totalRequiredAmount));
+
+    // Sync linked sales_invoice for this order
+    syncOrderLinkedFinancialInvoice(ord, ord.orderNumber, now);
+
+    const linkedInv = (state.financialTransactions || []).find(tx =>
+      tx.type === 'sales_invoice' && (tx.orderId === ord.id || ((tx.partnerId === ord.clientId || tx.partnerName === ord.clientName) && tx.voucherNo === `INV-${ord.orderNumber}`))
+    );
+    const isOrderInAccount = Boolean(linkedInv || ord.financialSettlement || ord.stage === 'ready_for_car_dispatch' || ord.stage === 'completed' || ord.isOldExecutedOrder);
+    if (isOrderInAccount) {
+      const ordPaid = Number(linkedInv?.paidAmount ?? ord.financialSettlement?.paidAmount ?? 0);
+      runningVeneerBalance = +(runningVeneerBalance + net - ordPaid).toFixed(2);
+      if (ord.financialSettlement) {
+        ord.financialSettlement.netTotal = net;
+        ord.financialSettlement.paidAmount = ordPaid;
+        ord.financialSettlement.remainingDebt = Math.max(0, +(net - ordPaid).toFixed(2));
+        ord.financialSettlement.cumulativeClientDebt = runningVeneerBalance;
+      }
+    }
+  });
+}
+
 // ============================================================================
 // EXECUTIVE & PROJECTS MANAGER: CLIENT ACCOUNT PIECE PRICE CORRECTION & ADJUSTMENT
-// (تعديل حسابات العملاء عند اكتشاف خطأ في أسعار القطعة — خاص بالمدير التنفيذي ومدير المشروعات)
+// (تعديل حسابات العملاء والرصيد الافتتاحي وأسعار القطع والدفعات — خاص بالمدير التنفيذي ومدير المشروعات)
 // ============================================================================
 function openClientPiecePriceAdjustmentModal(preselectedClientId = '', focusOrderId = '', focusReturnId = '') {
   if (!isFullAdmin(currentUser)) {
-    alert('⛔ هذه الصلاحية مخصصة للمدير التنفيذي ومدير المشروعات فقط لتعديل حسابات العملاء عند اكتشاف خطأ في أسعار القطعة.');
+    alert('⛔ هذه الصلاحية مخصصة للمدير التنفيذي ومدير المشروعات فقط لتعديل حسابات العملاء.');
     return;
   }
 
@@ -16433,21 +16778,28 @@ function openClientPiecePriceAdjustmentModal(preselectedClientId = '', focusOrde
   const clientPayments = (m.txs || []).filter(tx =>
     tx.type === 'client_payment' || tx.type === 'receipt' || isPalletDepositTransaction(tx)
   );
+  const openDebitVal = Number(selectedClient.openingDebit ?? (Number(selectedClient.balance || 0) > 0 ? Number(selectedClient.balance) : 0));
+  const openCreditVal = Number(selectedClient.openingCredit ?? (Number(selectedClient.balance || 0) < 0 ? Math.abs(Number(selectedClient.balance)) : 0));
 
   const modalRoot = document.getElementById('modal-root');
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box" style="max-width:1050px;">
+      <div class="modal-box" style="max-width:1080px;">
         <div class="card-header" style="border-bottom:2px solid #dc2626;padding-bottom:12px;">
           <div>
             <div class="card-title" style="color:#dc2626;font-size:1.1rem;">
-              💲 تعديل حسابات العميل وتصحيح أسعار القطعة والدفعات المسددة (صلاحية المدير التنفيذي ومدير المشروعات)
+              💲 تعديل حسابات العميل: الرصيد الافتتاحي + ربط الطلبيات + أسعار القطعة + الدفعات المسددة
             </div>
             <small style="color:var(--text-muted);">
-              قم باختيار العميل وتعديل <strong>سعر القطعة الواحدة</strong> أو <strong>الدفعات المسددة</strong> في أي طلبية أو سند تحصيل أو مرتجع ليتم إعادة حساب الفواتير وصافي مديونية العميل تلقائياً وبأثر فوري.
+              صلاحية المدير التنفيذي ومدير المشروعات: تعديل <strong>الرصيد الافتتاحي</strong> وربط الطلبيات به، وتحديد <strong>هل تخرج الطلبية من المخازن أم لا</strong>، وتعديل <strong>سعر القطعة</strong> و<strong>الدفعات المسددة</strong> في أي وقت.
             </small>
           </div>
-          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button type="button" class="btn btn-sm" style="background:#0f766e;color:#fff;font-weight:800;" onclick="closeModal(); openNewClientOrderPrepModal('${selectedClient.id}', true);">
+              📜 + تنفيذ طلبية قديمة لهذا العميل
+            </button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+          </div>
         </div>
 
         <!-- Client Selection & Current Account Status Banner -->
@@ -16461,6 +16813,7 @@ function openClientPiecePriceAdjustmentModal(preselectedClientId = '', focusOrde
               <button type="button" class="btn btn-sm btn-outline" onclick="openClientFullHistoryModal('${selectedClient.id}')">📂 فتح كشف حساب العميل</button>
             </div>
             <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:0.84rem;">
+              <div>الرصيد الافتتاحي: <strong>${openDebitVal > 0 ? 'عليه ' + fmtMoney(openDebitVal) : openCreditVal > 0 ? 'له ' + fmtMoney(openCreditVal) : '0 ج.م'}</strong></div>
               <div>إجمالي المسحوبات: <strong>${fmtMoney(m.totalDebit)}</strong></div>
               <div>إجمالي المدفوعات: <strong style="color:var(--success);">${fmtMoney(m.totalCredit)}</strong></div>
               <div>
@@ -16474,45 +16827,77 @@ function openClientPiecePriceAdjustmentModal(preselectedClientId = '', focusOrde
         </div>
 
         <div style="max-height:66vh;overflow-y:auto;padding-left:4px;">
-          <!-- SECTION 1: Edit Piece Prices & Paid Amounts Directly in Client's Registered Orders, Returns & Payments -->
+          <!-- SECTION 1: Opening Balance + Edit Piece Prices, Warehouse Exit & Paid Amounts in Client's Orders, Returns & Payments -->
           <div style="border:2px solid var(--primary);border-radius:12px;padding:14px;margin-bottom:18px;background:var(--bg-surface);">
-            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
-              <div>
-                <h4 style="margin:0;color:var(--primary);">1️⃣ تعديل أسعار القطعة والدفعات المسددة في طلبيات وسندات العميل (${clientOrders.length} طلبية + ${clientPayments.length} دفعة مسددة${clientReturns.length > 0 ? ` + ${clientReturns.length} مرتجع` : ''}):</h4>
-                <small style="color:var(--text-muted);">أي تعديل في <strong>سعر القطعة</strong> أو <strong>المبلغ المسدد / الدفعات المسددة</strong> هنا سيقوم بتحديث الفاتورة المرتبطة وصافي حساب ومديونية العميل والخزينة تلقائياً.</small>
+            <form onsubmit="submitClientOrderPiecePricesBatch(event, '${selectedClient.id}')">
+              <!-- SUBSECTION 0: Client Opening Balance & Chain Link -->
+              <div style="background:rgba(15,118,110,0.07);border:1.5px solid #0f766e;border-radius:10px;padding:12px;margin-bottom:14px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+                  <div>
+                    <h4 style="margin:0;color:#0f766e;">0️⃣ الرصيد الافتتاحي للعميل وربط حسابات الطلبيات به تلقائياً:</h4>
+                    <small style="color:var(--text-muted);">يمكنك تعديل الرصيد الافتتاحي في أي وقت وسيقوم النظام بإعادة حساب وربط جميع الطلبيات التالية له تراكمياً.</small>
+                  </div>
+                  <label style="display:flex;align-items:center;gap:6px;font-weight:800;font-size:0.82rem;color:#0f766e;cursor:pointer;">
+                    <input id="pp-relink-chain" type="checkbox" checked style="width:16px;height:16px;" />
+                    🔗 ربط وإعادة حساب تسلسل جميع طلبيات العميل بعد الرصيد الافتتاحي تلقائياً
+                  </label>
+                </div>
+                <div class="form-grid" style="grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:10px;">
+                  <div class="form-group" style="margin:0;">
+                    <label style="color:var(--danger);font-weight:800;font-size:0.78rem;">مديونية افتتاحية على العميل (ج.م)</label>
+                    <input id="pp-open-debit" type="number" step="0.5" min="0" class="form-control" value="${openDebitVal}" data-old-debit="${openDebitVal}" oninput="recalcClientPiecePriceModalLive('${selectedClient.id}')" style="font-weight:900;border-color:var(--danger);" />
+                  </div>
+                  <div class="form-group" style="margin:0;">
+                    <label style="color:var(--success);font-weight:800;font-size:0.78rem;">رصيد دائن افتتاحي للعميل (ج.م)</label>
+                    <input id="pp-open-credit" type="number" step="0.5" min="0" class="form-control" value="${openCreditVal}" data-old-credit="${openCreditVal}" oninput="recalcClientPiecePriceModalLive('${selectedClient.id}')" style="font-weight:900;border-color:var(--success);" />
+                  </div>
+                  <div class="form-group" style="margin:0;">
+                    <label style="font-size:0.78rem;font-weight:700;">بالتات افتتاحية مسلمة للعميل</label>
+                    <input id="pp-open-pdel" type="number" min="0" class="form-control" value="${Number(selectedClient.openingPalletsDelivered || 0)}" style="font-weight:800;" />
+                  </div>
+                  <div class="form-group" style="margin:0;">
+                    <label style="font-size:0.78rem;font-weight:700;">بالتات افتتاحية مستلمة من العميل</label>
+                    <input id="pp-open-prec" type="number" min="0" class="form-control" value="${Number(selectedClient.openingPalletsReceived || 0)}" style="font-weight:800;" />
+                  </div>
+                </div>
               </div>
-            </div>
 
-            ${clientOrders.length === 0 && clientReturns.length === 0 && clientPayments.length === 0 ? `
-              <div style="padding:16px;text-align:center;color:var(--text-muted);background:var(--bg-elevated);border-radius:10px;">
-                لا توجد طلبيات أو دفعات مسجلة لهذا العميل حالياً. يمكنك استخدام <strong>القسم (2️⃣) بالأسفل</strong> لتسوية خطأ سعر قطعة في الرصيد الافتتاحي أو الفواتير السابقة.
+              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+                <div>
+                  <h4 style="margin:0;color:var(--primary);">1️⃣ تعديل الطلبيات القديمة والحالية (أسعار القطعة + الخروج من المخزن أم لا + المسدد) (${clientOrders.length} طلبية + ${clientPayments.length} دفعة مسددة):</h4>
+                  <small style="color:var(--text-muted);">يمكنك تعديل <strong>سعر القطعة</strong> أو <strong>تغيير حالة خروج الطلبية من المخزن</strong> أو <strong>تعديل المبلغ المسدد</strong> في أي وقت مستقبلاً.</small>
+                </div>
+                <button type="button" class="btn btn-sm" style="background:#0f766e;color:#fff;font-weight:800;" onclick="closeModal(); openNewClientOrderPrepModal('${selectedClient.id}', true);">
+                  📜 + تنفيذ طلبية قديمة جديدة لهذا العميل
+                </button>
               </div>
-            ` : `
-              <form onsubmit="submitClientOrderPiecePricesBatch(event, '${selectedClient.id}')">
-                ${clientOrders.map((ord, oIdx) => {
-                  const items = Array.isArray(ord.items) ? ord.items : [];
-                  const isFocused = focusOrderId && ord.id === focusOrderId;
-                  const linkedInv = (state.financialTransactions || []).find(tx =>
-                    tx.type === 'sales_invoice' && (tx.orderId === ord.id || ((tx.partnerId === ord.clientId || tx.partnerName === ord.clientName) && tx.voucherNo === `INV-${ord.orderNumber}`))
-                  );
-                  const oldPaidOnOrder = Number(linkedInv?.paidAmount ?? ord.financialSettlement?.paidAmount ?? 0);
-                  return `
-                    <div style="border:${isFocused ? '2.5px solid #dc2626' : '1px solid var(--border-color)'};border-radius:10px;padding:10px 12px;margin-bottom:12px;background:${isFocused ? 'rgba(220,38,38,0.04)' : 'var(--bg-elevated)'};">
-                      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
-                        <div>
-                          <strong style="font-size:0.92rem;color:var(--primary);">📦 طلبية رقم: ${ord.orderNumber}</strong>
-                          <span style="font-size:0.78rem;color:var(--text-muted);margin-right:8px;">📅 التاريخ: ${ord.date || '-'}</span>
-                          <span style="margin-right:6px;">${getOrderStageBadge(ord)}</span>
-                        </div>
-                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:0.82rem;">
-                          <span>الخصم (ج.م):</span>
-                          <input id="pp-ord-disc-${ord.id}" type="number" step="0.5" min="0" class="form-control" style="width:90px;padding:3px 6px;font-weight:800;" value="${Number(ord.discountAmount || 0)}" oninput="recalcClientPiecePriceModalLive('${selectedClient.id}')" />
-                          <span style="color:var(--success);font-weight:800;">💵 المسدد على الفاتورة (ج.م):</span>
-                          <input id="pp-ord-paid-${ord.id}" type="number" step="0.5" min="0" class="form-control" style="width:105px;padding:3px 6px;font-weight:900;border:2px solid var(--success);color:var(--success);" value="${oldPaidOnOrder}" data-old-paid="${oldPaidOnOrder}" oninput="recalcClientPiecePriceModalLive('${selectedClient.id}')" />
-                          <span>الصافي القديم: <strong>${fmtMoney(ord.netTotalAmount || 0)}</strong></span>
-                          <span>⬅ الصافي الجديد: <strong id="pp-ord-newnet-${ord.id}" style="color:var(--primary);font-size:0.92rem;">${fmtMoney(ord.netTotalAmount || 0)}</strong></span>
-                        </div>
+
+              ${clientOrders.map((ord, oIdx) => {
+                const items = Array.isArray(ord.items) ? ord.items : [];
+                const isFocused = focusOrderId && ord.id === focusOrderId;
+                const linkedInv = (state.financialTransactions || []).find(tx =>
+                  tx.type === 'sales_invoice' && (tx.orderId === ord.id || ((tx.partnerId === ord.clientId || tx.partnerName === ord.clientName) && tx.voucherNo === `INV-${ord.orderNumber}`))
+                );
+                const oldPaidOnOrder = Number(linkedInv?.paidAmount ?? ord.financialSettlement?.paidAmount ?? 0);
+                return `
+                  <div style="border:${isFocused ? '2.5px solid #dc2626' : '1px solid var(--border-color)'};border-radius:10px;padding:10px 12px;margin-bottom:12px;background:${isFocused ? 'rgba(220,38,38,0.04)' : 'var(--bg-elevated)'};">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+                      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <strong style="font-size:0.92rem;color:var(--primary);">📦 طلبية: ${ord.orderNumber}</strong>
+                        <input id="pp-ord-date-${ord.id}" type="date" class="form-control" style="width:138px;padding:2px 6px;font-size:0.76rem;font-weight:800;" value="${ord.date || todayStr()}" title="تاريخ الطلبية" />
+                        <select id="pp-ord-wh-${ord.id}" class="form-control" style="width:235px;padding:2px 6px;font-size:0.75rem;font-weight:800;border-color:${ord.skipWarehouseDeduction ? '#0f766e' : '#dc2626'};">
+                          <option value="deduct" ${!ord.skipWarehouseDeduction ? 'selected' : ''}>📦 تخرج وتُخصم من المخازن</option>
+                          <option value="no_deduct" ${ord.skipWarehouseDeduction ? 'selected' : ''}>🚫 لا تخرج من المخازن (حسابات فقط)</option>
+                        </select>
                       </div>
+                      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:0.8rem;">
+                        <span>الخصم (ج.م):</span>
+                        <input id="pp-ord-disc-${ord.id}" type="number" step="0.5" min="0" class="form-control" style="width:86px;padding:3px 6px;font-weight:800;" value="${Number(ord.discountAmount || 0)}" oninput="recalcClientPiecePriceModalLive('${selectedClient.id}')" />
+                        <span style="color:var(--success);font-weight:800;">💵 المسدد (ج.م):</span>
+                        <input id="pp-ord-paid-${ord.id}" type="number" step="0.5" min="0" class="form-control" style="width:100px;padding:3px 6px;font-weight:900;border:2px solid var(--success);color:var(--success);" value="${oldPaidOnOrder}" data-old-paid="${oldPaidOnOrder}" oninput="recalcClientPiecePriceModalLive('${selectedClient.id}')" />
+                        <span>صافي الطلبية: <strong id="pp-ord-newnet-${ord.id}" style="color:var(--primary);font-size:0.9rem;">${fmtMoney(ord.netTotalAmount || 0)}</strong></span>
+                      </div>
+                    </div>
 
                       <div class="table-responsive">
                         <table>
@@ -16676,11 +17061,10 @@ function openClientPiecePriceAdjustmentModal(preselectedClientId = '', focusOrde
 
                 <div style="display:flex;justify-content:flex-end;gap:10px;">
                   <button type="submit" class="btn btn-primary" style="background:#dc2626;border-color:#dc2626;font-weight:900;">
-                    💾 حفظ تصحيح أسعار القطع والدفعات المسددة وتحديث حساب العميل فوراً
+                    💾 حفظ تعديلات الرصيد الافتتاحي وأسعار القطع والدفعات وربط حسابات العميل فوراً
                   </button>
                 </div>
               </form>
-            `}
           </div>
 
           <!-- SECTION 2: Standalone Piece Price Error Adjustment Calculator (For Past Invoices / Opening Balance) -->
@@ -16754,6 +17138,21 @@ function recalcClientPiecePriceModalLive(clientId) {
 
   let totalNetDebtDelta = 0;
   let changedItemsCount = 0;
+
+  // Check Opening Balance changes
+  const openDebitEl = document.getElementById('pp-open-debit');
+  const openCreditEl = document.getElementById('pp-open-credit');
+  if (openDebitEl || openCreditEl) {
+    const oldOpenDeb = Number(openDebitEl?.dataset?.oldDebit ?? m.openingDebit ?? 0);
+    const oldOpenCred = Number(openCreditEl?.dataset?.oldCredit ?? m.openingCredit ?? 0);
+    const newOpenDeb = Math.max(0, Number(openDebitEl?.value ?? oldOpenDeb));
+    const newOpenCred = Math.max(0, Number(openCreditEl?.value ?? oldOpenCred));
+    const openDelta = (newOpenDeb - newOpenCred) - (oldOpenDeb - oldOpenCred);
+    if (Math.abs(openDelta) > 0.001) {
+      changedItemsCount++;
+      totalNetDebtDelta += openDelta;
+    }
+  }
 
   clientOrders.forEach(ord => {
     const items = Array.isArray(ord.items) ? ord.items : [];
@@ -16887,6 +17286,29 @@ function submitClientOrderPiecePricesBatch(e, clientId) {
   const now = getMonotonicIso();
   const changesLog = [];
 
+  // 0) Save Opening Balance edits if modified
+  const openDebitEl = document.getElementById('pp-open-debit');
+  const openCreditEl = document.getElementById('pp-open-credit');
+  const openPDelEl = document.getElementById('pp-open-pdel');
+  const openPRecEl = document.getElementById('pp-open-prec');
+  if (openDebitEl || openCreditEl) {
+    const oldDeb = Number(pt.openingDebit ?? (Number(pt.balance || 0) > 0 ? Number(pt.balance) : 0));
+    const oldCred = Number(pt.openingCredit ?? (Number(pt.balance || 0) < 0 ? Math.abs(Number(pt.balance)) : 0));
+    const newDeb = Math.max(0, Number(openDebitEl?.value ?? oldDeb));
+    const newCred = Math.max(0, Number(openCreditEl?.value ?? oldCred));
+    const newPDel = Math.max(0, Number(openPDelEl?.value ?? pt.openingPalletsDelivered ?? 0));
+    const newPRec = Math.max(0, Number(openPRecEl?.value ?? pt.openingPalletsReceived ?? 0));
+    if (Math.abs(newDeb - oldDeb) > 0.001 || Math.abs(newCred - oldCred) > 0.001 || newPDel !== Number(pt.openingPalletsDelivered || 0) || newPRec !== Number(pt.openingPalletsReceived || 0)) {
+      pt.openingDebit = newDeb;
+      pt.openingCredit = newCred;
+      pt.openingPalletsDelivered = newPDel;
+      pt.openingPalletsReceived = newPRec;
+      pt.balance = +(newDeb - newCred).toFixed(2);
+      pt.updatedAt = now;
+      changesLog.push(`تعديل الرصيد الافتتاحي للعميل إلى (مدين: ${fmtMoney(newDeb)} / دائن: ${fmtMoney(newCred)})`);
+    }
+  }
+
   clientOrders.forEach(ord => {
     const items = Array.isArray(ord.items) ? ord.items : [];
     const oldOrdNet = Number(ord.netTotalAmount || 0);
@@ -16895,6 +17317,43 @@ function submitClientOrderPiecePricesBatch(e, clientId) {
     let totalSheets = 0;
     let totalArea = 0;
     let totalVol = 0;
+
+    const dateInput = document.getElementById(`pp-ord-date-${ord.id}`);
+    if (dateInput && dateInput.value && dateInput.value !== ord.date) {
+      ord.date = dateInput.value;
+      orderChanged = true;
+    }
+
+    const whSelect = document.getElementById(`pp-ord-wh-${ord.id}`);
+    const wasSkipWh = Boolean(ord.skipWarehouseDeduction);
+    const newSkipWh = whSelect ? (whSelect.value === 'no_deduct') : wasSkipWh;
+    if (newSkipWh !== wasSkipWh) {
+      orderChanged = true;
+      if (newSkipWh && ord.stockDeducted) {
+        // Restore stock back to warehouse because user changed order to 'no_deduct' (لا تخرج من المخازن)
+        for (const oldIt of items) {
+          const oldSh = Number(oldIt.sheetsCount || 0);
+          if (oldSh > 0) {
+            const oldThkId = oldIt.thicknessId || `th-${oldIt.thicknessMm}-${oldIt.direction || 'qas'}`;
+            addSheetsToCellPallets(oldThkId, oldIt.gradeId, oldIt.woodTypeId || 'wt-general', oldSh, `إرجاع رصيد لتحويل الطلبية ${ord.orderNumber} إلى بدون خروج من المخزن`, ord.date || todayStr(), Number(oldIt.unitPrice || 0), Number(oldIt.lengthCm || 250), Number(oldIt.widthCm || 125));
+          }
+        }
+        const carVoucherNo = ord.carDispatchVoucher?.voucherNo || `CAR-${ord.orderNumber}`;
+        (state.warehouseMovements || []).forEach(mv => {
+          if (mv.voucherNumber === carVoucherNo || mv.voucherNumber === `CAR-${ord.orderNumber}`) markRecordIdDeleted(mv.id);
+        });
+        state.warehouseMovements = (state.warehouseMovements || []).filter(mv => mv.voucherNumber !== carVoucherNo && mv.voucherNumber !== `CAR-${ord.orderNumber}`);
+        ord.stockDeducted = false;
+        ord.skipWarehouseDeduction = true;
+        changesLog.push(`تحويل الطلبية (${ord.orderNumber}) إلى (بدون خروج من المخازن) وإرجاع كمياتها لرصيد المخزن`);
+      } else if (!newSkipWh && !ord.stockDeducted) {
+        ord.skipWarehouseDeduction = false;
+        ensureOrderStockDeducted(ord, currentUser.name, ord.date || todayStr(), true);
+        changesLog.push(`تفعيل خروج الطلبية (${ord.orderNumber}) من المخازن وخصم كمياتها من المخزن`);
+      } else {
+        ord.skipWarehouseDeduction = newSkipWh;
+      }
+    }
 
     items.forEach((it, iIdx) => {
       const oldSh = Number(it.sheetsCount || 0);
@@ -17072,10 +17531,13 @@ function submitClientOrderPiecePricesBatch(e, clientId) {
     }
   });
 
+  const shouldRelinkChain = Boolean(document.getElementById('pp-relink-chain')?.checked);
+  recalculateClientAccountChainFromOpeningBalance(pt.id, shouldRelinkChain);
+
   closeModal();
   const logSummary = changesLog.length > 0
-    ? `💲 تصحيح أسعار القطع والدفعات المسددة وتعديل حساب العميل (${pt.code} - ${pt.name}) بواسطة (${currentUser.name} - ${currentUser.roleTitle}): ${changesLog.join(' | ')}`
-    : `💲 مراجعة وتحديث فواتير ودفعات وحساب العميل (${pt.code} - ${pt.name}) بواسطة (${currentUser.name})`;
+    ? `💲 تعديل حسابات العميل (${pt.code} - ${pt.name}) وربط الطلبيات بالرصيد الافتتاحي بواسطة (${currentUser.name} - ${currentUser.roleTitle}): ${changesLog.join(' | ')}`
+    : `💲 مراجعة وتحديث وربط حسابات الطلبيات بالرصيد الافتتاحي للعميل (${pt.code} - ${pt.name}) بواسطة (${currentUser.name})`;
   saveState(logSummary);
 }
 
@@ -17180,6 +17642,8 @@ function submitClientPiecePriceDiffAdjustment(e, clientId) {
       updatedAt: now
     });
   }
+
+  recalculateClientAccountChainFromOpeningBalance(pt.id, true);
 
   closeModal();
   saveState(
