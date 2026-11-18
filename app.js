@@ -12027,17 +12027,37 @@ function submitEditCheckModal(e, checkId) {
 function deleteCheckRecord(checkId) {
   const chk = (state.checksUnderCollection || []).find(c => c.id === checkId);
   if (!chk) return;
-  if (!confirm(`⚠️ هل أنت متأكد من حذف الشيك رقم (${chk.checkNumber}) للعميل (${chk.clientName}) بقيمة ${fmtMoney(chk.amount)}؟${chk.status === 'collected' ? '\nسيتم أيضاً إلغاء حركة التحصيل المرتبطة به من مدفوعات العميل تلقائياً.' : ''}`)) return;
+  if (!confirm(`⚠️ هل أنت متأكد من حذف الشيك رقم (${chk.checkNumber}) للعميل (${chk.clientName}) بقيمة ${fmtMoney(chk.amount)}؟\n🔄 سيتم تلقائياً عكس أثره المالي وإرجاع الرصيد إلى حسابات العميل والخزينة/البنك!`)) return;
+
+  const chkAmt = Number(chk.amount || 0);
+  if (chkAmt > 0 && state.treasuryBalances) {
+    if (chk.status === 'collected') {
+      const target = chk.depositTarget || '';
+      if (target.includes('خزين') || target.includes('نقد')) {
+        state.treasuryBalances.cashVault = Math.max(0, Number(state.treasuryBalances.cashVault || 0) - chkAmt);
+      } else {
+        state.treasuryBalances.bankAccount = Math.max(0, Number(state.treasuryBalances.bankAccount || 0) - chkAmt);
+      }
+    } else if ((chk.status || 'under_collection') === 'under_collection') {
+      state.treasuryBalances.checksUnderCollection = Math.max(0, Number(state.treasuryBalances.checksUnderCollection || 0) - chkAmt);
+    }
+  }
 
   markRecordIdDeleted(chk.id);
-  if (chk.linkedPaymentTxId) {
-    markRecordIdDeleted(chk.linkedPaymentTxId);
-  }
+  (state.financialTransactions || []).forEach(tx => {
+    if (tx.id === chk.linkedPaymentTxId || tx.checkId === chk.id) {
+      markRecordIdDeleted(tx.id);
+    }
+  });
   state.financialTransactions = (state.financialTransactions || []).filter(tx => tx.id !== chk.linkedPaymentTxId && tx.checkId !== chk.id);
   state.checksUnderCollection = (state.checksUnderCollection || []).filter(c => c.id !== chk.id);
 
+  if (chk.clientId) {
+    recalculateClientAccountChainFromOpeningBalance(chk.clientId, true);
+  }
+
   closeModal();
-  saveState(`🗑️ حذف الشيك رقم (${chk.checkNumber}) للعميل (${chk.clientName}) بواسطة ${currentUser?.name || 'الإدارة'}`);
+  saveState(`🗑️ حذف الشيك رقم (${chk.checkNumber}) للعميل (${chk.clientName}) وإرجاع رصيده (${fmtMoney(chkAmt)}) في الحسابات تلقائياً`);
 }
 
 function printChecksUnderCollectionReportPdf() {
@@ -13772,12 +13792,21 @@ function deleteSalesReturnRecord(retId) {
   if (!ret) return;
   const wasApproved = ret.status === 'approved';
   const msg = wasApproved
-    ? `⚠️ هذا المرتجع (${ret.returnNumber}) قد دخل المخزن بالفعل (${ret.sheetsCount} قطعة). عند الحذف سيتم خصم الكمية من الخلية وإلغاء حركة الدخول تلقائياً. هل تريد المتابعة؟`
+    ? `⚠️ هذا المرتجع (${ret.returnNumber}) قد دخل المخزن بالفعل (${ret.sheetsCount} قطعة). عند الحذف سيتم خصم الكمية من خلية المخزن وإلغاء الإشعار الدائن (${fmtMoney(ret.totalReturnAmount || 0)}) وإرجاع رصيد حساب العميل تلقائياً. هل تريد المتابعة؟`
     : `هل أنت متأكد من حذف طلب مرتجع المبيعات رقم (${ret.returnNumber})؟`;
   if (!confirm(msg)) return;
 
   if (wasApproved) {
-    deductSheetsFromCellPallets(ret.thkId, ret.gradeId, ret.woodTypeId || 'wt-general', Number(ret.sheetsCount || 0), Number(ret.unitPrice || 0));
+    deductSheetsFromCellPallets(
+      ret.thkId,
+      ret.gradeId,
+      ret.woodTypeId || 'wt-general',
+      Number(ret.sheetsCount || 0),
+      Number(ret.unitPrice || 0),
+      Number(ret.lengthCm || 250),
+      Number(ret.widthCm || 125),
+      true
+    );
     const movToDel = (state.warehouseMovements || []).filter(m => m.referenceCode === ret.returnNumber || m.voucherNumber === ret.returnNumber);
     for (const m of movToDel) markRecordIdDeleted(m.id);
     state.warehouseMovements = (state.warehouseMovements || []).filter(m => m.referenceCode !== ret.returnNumber && m.voucherNumber !== ret.returnNumber);
@@ -13788,9 +13817,13 @@ function deleteSalesReturnRecord(retId) {
     state.financialTransactions = (state.financialTransactions || []).filter(t => t.voucherNo !== crdVoucher);
   }
 
+  const clientObj = (state.partners || []).find(p => p.name && ret.clientName && p.name.trim() === ret.clientName.trim());
   markRecordIdDeleted(ret.id);
   state.salesReturns = (state.salesReturns || []).filter(r => r.id !== retId);
-  saveState(`🗑️ حذف سجل مرتجع المبيعات رقم (${ret.returnNumber}) بواسطة ${currentUser.name}`);
+  if (clientObj) {
+    recalculateClientAccountChainFromOpeningBalance(clientObj.id, true);
+  }
+  saveState(`🗑️ حذف بيان مرتجع المبيعات رقم (${ret.returnNumber}) للعميل (${ret.clientName || ''}) وإرجاع أرصدة المخزن والحسابات تلقائياً بواسطة ${currentUser.name}`);
 }
 
 function toggleUserPerm(userId, permKey, checked) {
@@ -15892,7 +15925,7 @@ function markRecordIdDeleted(id) {
 }
 
 // 1) Delete Order / Client Statement with Full Automatic Warehouse Stock & Financial Restoration
-function deleteOrderWithStockRestore(orderId) {
+function deleteOrderWithStockRestore(orderId, skipConfirm = false) {
   if (!isFullAdmin(currentUser)) {
     alert('⛔ هذه الصلاحية مخصصة للمدير التنفيذي أو مدير المشروعات فقط.');
     return;
@@ -15900,14 +15933,25 @@ function deleteOrderWithStockRestore(orderId) {
   const ord = (state.productionOrders || []).find(o => o.id === orderId);
   if (!ord) return;
 
-  const isCompletedOrDeducted = !ord.skipWarehouseDeduction && Boolean(ord.stockDeducted || ord.stage === 'completed' || ord.status === 'completed');
+  const carVoucherNo = ord.carDispatchVoucher?.voucherNo || `CAR-${ord.orderNumber}`;
+  const matchingExitMovs = (state.warehouseMovements || []).filter(m =>
+    m.voucherNumber === carVoucherNo || m.voucherNumber === `CAR-${ord.orderNumber}` || m.voucherNumber === ord.orderNumber
+  );
+  const isCompletedOrDeducted = !ord.skipWarehouseDeduction && Boolean(
+    ord.stockDeducted ||
+    matchingExitMovs.length > 0 ||
+    ord.stage === 'pending_accountant_release' ||
+    ord.stage === 'ready_for_car_dispatch' ||
+    ord.stage === 'completed' ||
+    ord.status === 'completed'
+  );
   const msg = isCompletedOrDeducted
-    ? `⚠️ تأكيد حذف الطلبية والبيان رقم (${ord.orderNumber}) للعميل (${ord.clientName})؟\n\n🔄 نظراً لأن الطلبية تم خصمها/صرفها من المخزن، سيقوم النظام تلقائياً بإرجاع كامل كمياتها (${ord.totalSheetsCount || 0} قطعة) إلى خلايا المخزن، وحذف إذن الصرف والفاتورة المرتبطة بها فوراً!`
-    : `⚠️ هل أنت متأكد من حذف بيان وأمر تجهيز الطلبية رقم (${ord.orderNumber}) للعميل (${ord.clientName}) نهائياً؟`;
+    ? `⚠️ تأكيد حذف البيان والطلبية رقم (${ord.orderNumber}) للعميل (${ord.clientName})؟\n\n🔄 سيقوم النظام تلقائياً بـ:\n1. إرجاع كامل كميات الطلبية (${ord.totalSheetsCount || 0} قطعة) إلى خلايا المخزن.\n2. حذف الفاتورة وإذن الصرف وحركة البالتات المرتبطة بها.\n3. إرجاع وتحديث رصيد حساب العميل والخزينة فوراً!`
+    : `⚠️ هل أنت متأكد من حذف بيان الطلبية رقم (${ord.orderNumber}) للعميل (${ord.clientName}) وإرجاع أرصدتها في حسابات العميل فوراً؟`;
 
-  if (!confirm(msg)) return;
+  if (!skipConfirm && !confirm(msg)) return;
 
-  // Restore warehouse stock if order was already deducted/dispatched/completed
+  // Restore warehouse stock if order was deducted/dispatched/completed
   if (isCompletedOrDeducted) {
     for (const it of (ord.items || [])) {
       const sh = Number(it.sheetsCount || 0);
@@ -15918,7 +15962,7 @@ function deleteOrderWithStockRestore(orderId) {
           it.gradeId,
           it.woodTypeId || 'wt-general',
           sh,
-          `إرجاع رصيد لحذف الطلبية ${ord.orderNumber}`,
+          `إرجاع رصيد لحذف بيان الطلبية ${ord.orderNumber}`,
           todayStr(),
           Number(it.unitPrice || 0),
           Number(it.lengthCm || 250),
@@ -15929,13 +15973,14 @@ function deleteOrderWithStockRestore(orderId) {
   }
 
   // Remove linked warehouse movements
-  const carVoucherNo = ord.carDispatchVoucher?.voucherNo || `CAR-${ord.orderNumber}`;
   (state.warehouseMovements || []).forEach(m => {
-    if (m.voucherNumber === carVoucherNo || m.voucherNumber === `CAR-${ord.orderNumber}`) {
+    if (m.voucherNumber === carVoucherNo || m.voucherNumber === `CAR-${ord.orderNumber}` || m.voucherNumber === ord.orderNumber) {
       markRecordIdDeleted(m.id);
     }
   });
-  state.warehouseMovements = (state.warehouseMovements || []).filter(m => m.voucherNumber !== carVoucherNo && m.voucherNumber !== `CAR-${ord.orderNumber}`);
+  state.warehouseMovements = (state.warehouseMovements || []).filter(m =>
+    m.voucherNumber !== carVoucherNo && m.voucherNumber !== `CAR-${ord.orderNumber}` && m.voucherNumber !== ord.orderNumber
+  );
 
   // Remove linked pallet movements
   (state.palletMovements || []).forEach(pm => {
@@ -15946,8 +15991,9 @@ function deleteOrderWithStockRestore(orderId) {
   state.palletMovements = (state.palletMovements || []).filter(pm => pm.orderId !== ord.id && pm.voucherNo !== carVoucherNo);
 
   // Remove linked financial invoice & reverse any paid amount from treasury
+  const sameClientMatch = (tx) => (ord.clientId && tx.partnerId === ord.clientId) || (ord.clientName && tx.partnerName && tx.partnerName.trim() === ord.clientName.trim());
   (state.financialTransactions || []).forEach(tx => {
-    if (tx.orderId === ord.id || tx.voucherNo === `INV-${ord.orderNumber}`) {
+    if (tx.orderId === ord.id || (sameClientMatch(tx) && tx.voucherNo === `INV-${ord.orderNumber}`)) {
       const paid = Number(tx.paidAmount || 0);
       if (paid > 0 && state.treasuryBalances) {
         const pm = tx.paymentMethod || '';
@@ -15962,18 +16008,20 @@ function deleteOrderWithStockRestore(orderId) {
       markRecordIdDeleted(tx.id);
     }
   });
-  state.financialTransactions = (state.financialTransactions || []).filter(tx => tx.orderId !== ord.id && tx.voucherNo !== `INV-${ord.orderNumber}`);
+  state.financialTransactions = (state.financialTransactions || []).filter(tx =>
+    !(tx.orderId === ord.id || (sameClientMatch(tx) && tx.voucherNo === `INV-${ord.orderNumber}`))
+  );
 
-  // Finally remove order itself
-  const deletedClientId = ord.clientId;
+  // Finally remove order itself & recalculate client account chain from Opening Balance
+  const deletedClientId = ord.clientId || ((state.partners || []).find(p => p.name && ord.clientName && p.name.trim() === ord.clientName.trim())?.id);
   markRecordIdDeleted(ord.id);
   state.productionOrders = (state.productionOrders || []).filter(o => o.id !== ord.id);
   if (deletedClientId) {
-    recalculateClientAccountChainFromOpeningBalance(deletedClientId, false);
+    recalculateClientAccountChainFromOpeningBalance(deletedClientId, true);
   }
 
   closeModal();
-  saveState(`🗑️ قام ${currentUser.name} بحذف بيان الطلبية (${ord.orderNumber}) للعميل (${ord.clientName})${isCompletedOrDeducted ? ' وإرجاع كامل أرصدتها إلى المخزن تلقائياً' : ''}`);
+  saveState(`🗑️ قام ${currentUser.name} بحذف بيان الطلبية (${ord.orderNumber}) للعميل (${ord.clientName}) وإرجاع كامل أرصدتها إلى ${isCompletedOrDeducted ? 'المخازن والحسابات' : 'حسابات العميل'} تلقائياً`);
 }
 
 // 2) Edit & Delete Warehouse Movements with Automatic Stock Adjustment / Restoration
@@ -16095,25 +16143,73 @@ function deleteWarehouseMovementWithRestore(movId) {
   const mov = (state.warehouseMovements || []).find(m => m.id === movId);
   if (!mov) return;
 
-  if (!confirm(`⚠️ هل أنت متأكد من حذف الحركة المخزنية (${mov.voucherNumber})؟\nسيقوم النظام بعكس أثرها وإرجاع/تحديث رصيد المخزن تلقائياً!`)) return;
+  if (!confirm(`⚠️ هل أنت متأكد من حذف البيان / الحركة المخزنية (${mov.voucherNumber})؟\n🔄 سيقوم النظام بعكس أثرها وإرجاع الرصيد إلى المخزن والحسابات المرتبطة تلقائياً!`)) return;
+
+  // If this movement is a CAR- order dispatch movement, ask or restore the order stock & linked financial invoice
+  if (mov.voucherNumber && mov.voucherNumber.startsWith('CAR-')) {
+    const ordNum = mov.voucherNumber.replace(/^CAR-/, '');
+    const linkedOrd = (state.productionOrders || []).find(o => o.orderNumber === ordNum || o.carDispatchVoucher?.voucherNo === mov.voucherNumber);
+    if (linkedOrd) {
+      deleteOrderWithStockRestore(linkedOrd.id, true);
+      return;
+    }
+  }
 
   if (mov.warehouseType === 'finished_veneers' && mov.cellKey) {
     const [thkId, gradeId] = mov.cellKey.split('__');
     const sh = Number(mov.sheetsCount || 0);
+    const movLen = Number(mov.lengthCm || 250);
+    const movWid = Number(mov.widthCm || 125);
     if (sh > 0 && thkId && gradeId) {
       if (mov.direction === 'out') {
         // Movement was an exit -> return sheets back to warehouse!
-        addSheetsToCellPallets(thkId, gradeId, 'wt-general', sh, `إرجاع رصيد لحذف حركة خروج ${mov.voucherNumber}`, todayStr(), Number(mov.unitSheetPrice || 0));
+        addSheetsToCellPallets(thkId, gradeId, 'wt-general', sh, `إرجاع رصيد لحذف حركة خروج ${mov.voucherNumber}`, todayStr(), Number(mov.unitSheetPrice || 0), movLen, movWid);
       } else {
         // Movement was an entry -> deduct those sheets from warehouse!
-        deductSheetsFromCellPallets(thkId, gradeId, 'wt-general', sh, Number(mov.unitSheetPrice || 0));
+        deductSheetsFromCellPallets(thkId, gradeId, 'wt-general', sh, Number(mov.unitSheetPrice || 0), movLen, movWid, true);
       }
     }
   }
 
+  // Also remove any linked financial invoice (e.g., INV-OUT-... or CRD-RET-...) and reverse treasury/client balance
+  const linkedVouchers = [`INV-${mov.voucherNumber}`, `CRD-${mov.voucherNumber}`];
+  let affectedClientName = '';
+  (state.financialTransactions || []).forEach(tx => {
+    if (linkedVouchers.includes(tx.voucherNo)) {
+      affectedClientName = tx.partnerName || affectedClientName;
+      const paid = Number(tx.paidAmount || 0);
+      if (paid > 0 && state.treasuryBalances && tx.type === 'sales_invoice') {
+        const pm = tx.paymentMethod || '';
+        if (pm.includes('بنك')) {
+          state.treasuryBalances.bankAccount = Math.max(0, Number(state.treasuryBalances.bankAccount || 0) - paid);
+        } else {
+          state.treasuryBalances.cashVault = Math.max(0, Number(state.treasuryBalances.cashVault || 0) - paid);
+        }
+      }
+      markRecordIdDeleted(tx.id);
+    }
+  });
+  state.financialTransactions = (state.financialTransactions || []).filter(tx => !linkedVouchers.includes(tx.voucherNo));
+
+  // If it was a sales return movement (RET-...), also remove the salesReturns record
+  if (mov.voucherNumber && mov.voucherNumber.startsWith('RET-')) {
+    (state.salesReturns || []).forEach(r => {
+      if (r.returnNumber === mov.voucherNumber) {
+        affectedClientName = r.clientName || affectedClientName;
+        markRecordIdDeleted(r.id);
+      }
+    });
+    state.salesReturns = (state.salesReturns || []).filter(r => r.returnNumber !== mov.voucherNumber);
+  }
+
+  if (affectedClientName) {
+    const ptObj = (state.partners || []).find(p => p.name && p.name.trim() === affectedClientName.trim());
+    if (ptObj) recalculateClientAccountChainFromOpeningBalance(ptObj.id, true);
+  }
+
   markRecordIdDeleted(mov.id);
   state.warehouseMovements = (state.warehouseMovements || []).filter(m => m.id !== mov.id);
-  saveState(`🗑️ حذف حركة مخزنية (${mov.voucherNumber}) بواسطة ${currentUser.name} وإرجاع رصيد المخزن تلقائياً`);
+  saveState(`🗑️ حذف الحركة المخزنية (${mov.voucherNumber}) بواسطة ${currentUser.name} وإرجاع رصيد المخزن والحسابات تلقائياً`);
 }
 
 // 3) Edit & Delete Pallet Records in Warehouse
@@ -16940,6 +17036,7 @@ function openClientPiecePriceAdjustmentModal(preselectedClientId = '', focusOrde
                         <span style="color:var(--success);font-weight:800;">💵 المسدد (ج.م):</span>
                         <input id="pp-ord-paid-${ord.id}" type="number" step="0.5" min="0" class="form-control" style="width:100px;padding:3px 6px;font-weight:900;border:2px solid var(--success);color:var(--success);" value="${oldPaidOnOrder}" data-old-paid="${oldPaidOnOrder}" oninput="recalcClientPiecePriceModalLive('${selectedClient.id}')" />
                         <span>صافي الطلبية: <strong id="pp-ord-newnet-${ord.id}" style="color:var(--primary);font-size:0.9rem;">${fmtMoney(ord.netTotalAmount || 0)}</strong></span>
+                        <button type="button" class="btn btn-sm btn-danger" style="padding:3px 8px;font-weight:800;" onclick="deleteOrderWithStockRestore('${ord.id}')" title="حذف هذا البيان وإرجاع أرصدته إلى المخازن وحسابات العميل فوراً">🗑️ حذف البيان وإرجاع الأرصدة</button>
                       </div>
                     </div>
 
@@ -17699,16 +17796,85 @@ function deleteFinancialTxRecord(txId) {
   if (!isFullAdmin(currentUser)) return;
   const tx = (state.financialTransactions || []).find(t => t.id === txId);
   if (!tx) return;
-  if (!confirm(`⚠️ هل أنت متأكد من حذف السند المالي / الفاتورة (${tx.voucherNo}) بقيمة ${fmtMoney(tx.totalAmount)}؟`)) return;
 
-  const paid = Number(tx.paidAmount || 0);
-  if (paid > 0 && state.treasuryBalances) {
-    state.treasuryBalances.cashVault = Math.max(0, Number(state.treasuryBalances.cashVault || 0) - paid);
+  // 1) Check if this financial transaction is an Order Invoice (linked via orderId or INV-ORD-...)
+  const linkedOrder = (state.productionOrders || []).find(o =>
+    (tx.orderId && o.id === tx.orderId) ||
+    (tx.voucherNo === `INV-${o.orderNumber}` && ((o.clientId && o.clientId === tx.partnerId) || (o.clientName && tx.partnerName && o.clientName.trim() === tx.partnerName.trim())))
+  );
+  if (linkedOrder) {
+    deleteOrderWithStockRestore(linkedOrder.id, false);
+    return;
   }
+
+  if (!confirm(`⚠️ هل أنت متأكد من حذف البيان / السند المالي (${tx.voucherNo}) بقيمة ${fmtMoney(tx.totalAmount || tx.paidAmount || 0)}؟\n🔄 سيقوم النظام تلقائياً بإرجاع الأرصدة المرتبطة به إلى المخازن وحسابات العميل والخزينة!`)) return;
+
+  // 2) If it's a direct warehouse sale invoice (INV-OUT-...), restore its sheets to warehouse and remove OUT-... movement
+  if (tx.voucherNo && tx.voucherNo.startsWith('INV-OUT-')) {
+    const outVoucher = tx.voucherNo.replace(/^INV-/, '');
+    const outMovs = (state.warehouseMovements || []).filter(m => m.voucherNumber === outVoucher);
+    outMovs.forEach(mov => {
+      if (mov.warehouseType === 'finished_veneers' && mov.cellKey) {
+        const [thkId, gradeId] = mov.cellKey.split('__');
+        const sh = Number(mov.sheetsCount || 0);
+        if (sh > 0 && thkId && gradeId) {
+          addSheetsToCellPallets(thkId, gradeId, 'wt-general', sh, `إرجاع رصيد لحذف فاتورة مبيعات ${tx.voucherNo}`, todayStr(), Number(mov.unitSheetPrice || 0), Number(mov.lengthCm || 250), Number(mov.widthCm || 125));
+        }
+      }
+      markRecordIdDeleted(mov.id);
+    });
+    state.warehouseMovements = (state.warehouseMovements || []).filter(m => m.voucherNumber !== outVoucher);
+  }
+
+  // 3) If it's a sales return credit note (CRD-RET-...), reverse the return from warehouse and remove salesReturns record
+  if (tx.voucherNo && tx.voucherNo.startsWith('CRD-')) {
+    const retNum = tx.voucherNo.replace(/^CRD-/, '');
+    const linkedRet = (state.salesReturns || []).find(r => r.returnNumber === retNum);
+    if (linkedRet) {
+      if (linkedRet.status === 'approved') {
+        deductSheetsFromCellPallets(linkedRet.thkId, linkedRet.gradeId, linkedRet.woodTypeId || 'wt-general', Number(linkedRet.sheetsCount || 0), Number(linkedRet.unitPrice || 0), Number(linkedRet.lengthCm || 250), Number(linkedRet.widthCm || 125), true);
+        (state.warehouseMovements || []).forEach(m => {
+          if (m.referenceCode === retNum || m.voucherNumber === retNum) markRecordIdDeleted(m.id);
+        });
+        state.warehouseMovements = (state.warehouseMovements || []).filter(m => m.referenceCode !== retNum && m.voucherNumber !== retNum);
+      }
+      markRecordIdDeleted(linkedRet.id);
+      state.salesReturns = (state.salesReturns || []).filter(r => r.id !== linkedRet.id);
+    }
+  }
+
+  // 4) If it's linked to a collected check, also remove/reverse the check record
+  if (tx.checkId) {
+    (state.checksUnderCollection || []).forEach(c => {
+      if (c.id === tx.checkId) markRecordIdDeleted(c.id);
+    });
+    state.checksUnderCollection = (state.checksUnderCollection || []).filter(c => c.id !== tx.checkId);
+  }
+
+  // 5) Reverse treasury / bank balance impact
+  const paid = Number(tx.paidAmount || (tx.type === 'client_payment' || tx.type === 'receipt' || isPalletDepositTransaction(tx) ? tx.totalAmount : 0) || 0);
+  if (paid > 0 && state.treasuryBalances && tx.type !== 'client_credit') {
+    const pm = tx.paymentMethod || '';
+    const sign = tx.type === 'pallet_deposit_refund' ? 1 : -1;
+    if (pm.includes('بنك')) {
+      state.treasuryBalances.bankAccount = Math.max(0, Number(state.treasuryBalances.bankAccount || 0) + sign * paid);
+    } else if (pm.includes('شيك')) {
+      state.treasuryBalances.checksUnderCollection = Math.max(0, Number(state.treasuryBalances.checksUnderCollection || 0) + sign * paid);
+    } else {
+      state.treasuryBalances.cashVault = Math.max(0, Number(state.treasuryBalances.cashVault || 0) + sign * paid);
+    }
+  }
+
+  const affectedClientId = tx.partnerId || ((state.partners || []).find(p => p.name && tx.partnerName && p.name.trim() === tx.partnerName.trim())?.id);
   markRecordIdDeleted(tx.id);
   state.financialTransactions = (state.financialTransactions || []).filter(t => t.id !== tx.id);
+
+  if (affectedClientId) {
+    recalculateClientAccountChainFromOpeningBalance(affectedClientId, true);
+  }
+
   closeModal();
-  saveState(`🗑️ حذف السند المالي (${tx.voucherNo}) بواسطة ${currentUser.name} وتحديث رصيد العميل والخزينة`);
+  saveState(`🗑️ حذف السند / البيان المالي (${tx.voucherNo}) للعميل (${tx.partnerName || ''}) بواسطة ${currentUser.name} وإرجاع الأرصدة إلى المخازن والحسابات تلقائياً`);
 }
 
 function openEditPalletMovementModal(pmId) {
