@@ -1,10 +1,10 @@
-const CACHE_NAME = 'al-asimah-factory-v50';
+const CACHE_NAME = 'al-asimah-factory-v51';
 const ASSETS = [
   './',
   './index.html',
   './print.html',
-  './styles.css?v=50',
-  './app.js?v=50',
+  './styles.css?v=51',
+  './app.js?v=51',
   './manifest.webmanifest',
   './icons/logo.svg'
 ];

@@ -3053,7 +3053,7 @@ function renderDashboard() {
         <div style="font-weight:800;font-size:0.98rem;">⚡ حركات المخازن والإجراءات السريعة (${currentUser.name}):</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;">
           ${hasPerm('warehouseIssueReceive') ? `
-            <button class="btn btn-primary" onclick="openWarehouseOpShortcut('in')">📥 إضافة كميات إنتاج للمخزن</button>
+            <button class="btn btn-primary" style="font-weight:900;" onclick="openMultiProductionEntryModal()">📥 إضافة كميات إنتاج متعددة للمخازن</button>
             <button class="btn" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openWarehouseOpShortcut('sales_return')">🔄 إضافة مرتجع مبيعات (يدخل المخزن بعد الموافقة)</button>
             <button class="btn btn-success" onclick="openWarehouseOpShortcut('out')">📤 خروج الكميات حسب المبيعات</button>
             <button class="btn btn-accent" onclick="openWarehouseOpShortcut('rework')">♻️ خروج الكميات لإعادة التشغيل</button>
@@ -3620,7 +3620,7 @@ function renderFinishedVeneerWarehouse() {
           </small>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button class="btn btn-sm btn-primary" onclick="openWarehouseOpShortcut('in')">📥 إضافة كميات إنتاج</button>
+          <button class="btn btn-sm btn-primary" style="font-weight:900;" onclick="openMultiProductionEntryModal()">📥 إضافة كميات إنتاج متعددة للمخازن</button>
           <button class="btn btn-sm" style="background:#0284c7;color:#fff;font-weight:800;" onclick="activeWarehouseSubTab='production_log'; render();">📊 جدول الإنتاج (يومي / أسبوعي / شهري)</button>
           <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openWarehouseOpShortcut('sales_return')">🔄 إضافة مرتجع مبيعات</button>
           <button class="btn btn-sm btn-success" onclick="openWarehouseOpShortcut('out')">📤 خروج الكميات حسب المبيعات</button>
@@ -4791,8 +4791,8 @@ function renderProductionLogTableSection() {
           <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#d97706,#b45309);color:#fff;font-weight:900;" onclick="openAiLogToMultiPalletProductionModal()">
             🪵⚙️ تشغيل جذع + إنتاج بالتات متعددة (جودة وتخانة) للمخزن
           </button>
-          <button class="btn btn-sm btn-primary" onclick="openWarehouseOpShortcut('in')">
-            📥 تسجيل إضافة إنتاج جديد للمخزن
+          <button class="btn btn-sm btn-primary" style="font-weight:900;" onclick="openMultiProductionEntryModal()">
+            📥 إضافة كميات إنتاج متعددة للمخازن
           </button>
           <button class="btn btn-sm btn-accent" style="font-weight:800;" onclick="printProductionLogReportPdf()">
             🖨️ طباعة جدول الإنتاج (${data.periodLabel}) PDF
@@ -20375,30 +20375,37 @@ function executeLogAndMultiPalletProductionBatch({ logIds = [], palletRows = [],
   };
 }
 
+function openMultiProductionEntryModal() {
+  openAiLogToMultiPalletProductionModal('__none__');
+}
+
 function openAiLogToMultiPalletProductionModal(preselectedLogs = '', prefilledPallets = null) {
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) return;
 
   const allLogs = state.logItems || [];
   const containers = state.logContainers || [];
+  const isPureMultiProdMode = preselectedLogs === '__none__';
 
   // Initialize selected logs
   draftAiLogProdSelectedIds = [];
-  if (Array.isArray(preselectedLogs) && preselectedLogs.length > 0) {
-    for (const item of preselectedLogs) {
-      const found = allLogs.find(l => l.id === item || String(l.serialNumber).toLowerCase() === String(item).toLowerCase());
-      if (found && !draftAiLogProdSelectedIds.includes(found.id)) {
-        draftAiLogProdSelectedIds.push(found.id);
+  if (!isPureMultiProdMode) {
+    if (Array.isArray(preselectedLogs) && preselectedLogs.length > 0) {
+      for (const item of preselectedLogs) {
+        const found = allLogs.find(l => l.id === item || String(l.serialNumber).toLowerCase() === String(item).toLowerCase());
+        if (found && !draftAiLogProdSelectedIds.includes(found.id)) {
+          draftAiLogProdSelectedIds.push(found.id);
+        }
       }
+    } else if (typeof preselectedLogs === 'string' && preselectedLogs.trim() !== '') {
+      const found = allLogs.find(l => l.id === preselectedLogs || String(l.serialNumber).toLowerCase() === preselectedLogs.trim().toLowerCase());
+      if (found) draftAiLogProdSelectedIds.push(found.id);
     }
-  } else if (typeof preselectedLogs === 'string' && preselectedLogs.trim() !== '') {
-    const found = allLogs.find(l => l.id === preselectedLogs || String(l.serialNumber).toLowerCase() === preselectedLogs.trim().toLowerCase());
-    if (found) draftAiLogProdSelectedIds.push(found.id);
-  }
 
-  if (draftAiLogProdSelectedIds.length === 0) {
-    const firstInStock = allLogs.find(l => l.status !== 'processed');
-    if (firstInStock) draftAiLogProdSelectedIds.push(firstInStock.id);
+    if (draftAiLogProdSelectedIds.length === 0) {
+      const firstInStock = allLogs.find(l => l.status !== 'processed');
+      if (firstInStock) draftAiLogProdSelectedIds.push(firstInStock.id);
+    }
   }
 
   // Initialize multi-grade & multi-thickness pallet rows
@@ -20438,15 +20445,18 @@ function openAiLogToMultiPalletProductionModal(preselectedLogs = '', prefilledPa
       <div class="modal-box" style="max-width:1060px;">
         <div class="card-header" style="border-bottom:2px solid rgba(217,119,6,0.25);padding-bottom:10px;">
           <div>
-            <div class="card-title" style="color:#b45309;font-size:1.08rem;">
-              🪵⚙️ المساعد الذكي: تشغيل الجذع وربطه بالنظام + إنتاج بالتات متعددة الجودة والتخانة ودخولها المخزن
+            <div class="card-title" style="color:${isPureMultiProdMode ? 'var(--primary)' : '#b45309'};font-size:1.08rem;">
+              ${isPureMultiProdMode
+                ? '📥 إضافة كميات إنتاج متعددة للمخازن (متعددة الجودة والتخانة والمقاسات في خطوة واحدة)'
+                : '🪵⚙️ المساعد الذكي: تشغيل الجذع وربطه بالنظام + إنتاج بالتات متعددة الجودة والتخانة ودخولها المخزن'}
             </div>
             <small style="color:var(--text-muted);">
-              اختر الجذع (أو عدة جذوع) بالسيريال، وحدد البالتات الناتجة بمختلف الجودات والتخانات ليتم خصم الجذع وإدخال البالتات في مخزن القشرة وجدول الإنتاج وحساب الاستخراج والهالك تلقائياً!
+              أدخل جميع كميات وبالتات الإنتاج بمختلف الجودات والتخانات (قص / سدا) دفعة واحدة لتدخل مخزن القشرة التامة وجدول الإنتاج اليومي والأسبوعي والشهري (مع إمكانية ربطها بتشغيل سيريال جذع اختيارياً)
             </small>
           </div>
           <div style="display:flex;gap:6px;align-items:center;">
-            <button type="button" class="btn btn-sm btn-outline" onclick="openSmartAiAssistantModal()">🤖 عودة للمساعد الذكي</button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="openWarehouseOpShortcut('in')" title="فتح نافذة خلية منفردة">خلية منفردة</button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="openSmartAiAssistantModal()">🤖 المساعد الذكي</button>
             <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
           </div>
         </div>
