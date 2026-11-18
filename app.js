@@ -538,6 +538,20 @@ function dismissLiveBannerAlert() {
   renderLiveBannerDOM();
 }
 
+function openBannerAlertTarget() {
+  if (!activeBannerAlert) return;
+  const item = activeBannerAlert;
+  const targetTab = item.targetTab || inferActionScope(item.action).targetTab || 'dashboard';
+  const chatCh = item.targetChatChannel || '';
+  dismissLiveBannerAlert();
+  if (targetTab === 'chat' && chatCh) {
+    activeTab = 'chat';
+    selectChatChannel(chatCh);
+  } else {
+    setTab(targetTab);
+  }
+}
+
 function renderLiveBannerDOM() {
   let bannerEl = document.getElementById('live-alert-banner-root');
   if (!bannerEl) {
@@ -550,7 +564,6 @@ function renderLiveBannerDOM() {
     return;
   }
   const item = activeBannerAlert;
-  const targetTab = item.targetTab || inferActionScope(item.action).targetTab || 'dashboard';
   bannerEl.innerHTML = `
     <div class="live-alert-banner">
       <div style="display:flex;align-items:center;gap:12px;">
@@ -565,7 +578,7 @@ function renderLiveBannerDOM() {
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <button class="btn btn-sm btn-primary" onclick="setTab('${targetTab}'); dismissLiveBannerAlert();">
+        <button class="btn btn-sm btn-primary" onclick="openBannerAlertTarget();">
           👁️ فتح ومراجعة الآن
         </button>
         <button class="btn btn-sm btn-outline" style="color:#fff;border-color:#94a3b8;" onclick="dismissLiveBannerAlert()">
@@ -698,13 +711,20 @@ function checkIncomingNotifications(prevLogs = [], newLogs = [], prevChats = [],
   if (freshAuthorizedChats.length > 0) {
     const latestChat = freshAuthorizedChats[freshAuthorizedChats.length - 1];
     const isUrgent = latestChat.msgType === 'urgent' || latestChat.msgType === 'task';
+    const isDirectToMe =
+      (latestChat.channel && latestChat.channel.startsWith('dm_')) ||
+      latestChat.recipientUserId === currentUser.id ||
+      latestChat.assignedToUserId === currentUser.id;
+    const targetChatChannel = isDirectToMe ? `dm_${latestChat.senderId}` : (latestChat.channel || 'general');
+
     playLongAlertSound(isUrgent);
     showLiveBannerAlert({
       id: latestChat.id,
       userName: latestChat.senderName,
       roleTitle: latestChat.senderRoleTitle,
       action: `${latestChat.msgType === 'task' ? '📌 مهمة عمل جديدة: ' : latestChat.msgType === 'urgent' ? '🚨 تنبيه عاجل: ' : '💬 رسالة جديدة: '}${latestChat.text}`,
-      targetTab: 'chat'
+      targetTab: 'chat',
+      targetChatChannel
     });
     markNotifIdsSeen(freshAuthorizedChats.map(c => c.id));
     return;
@@ -876,6 +896,15 @@ function normalizeState(s) {
       const tB = new Date(b?.updatedAt || b?.timestamp || b?.createdAt || b?.date || b?.issueDate || 0).getTime() || 0;
       return tB - tA;
     });
+  }
+  for (const cm of (s.chatMessages || [])) {
+    if (!cm) continue;
+    if (cm.assignedToUserId && !cm.recipientUserId) cm.recipientUserId = cm.assignedToUserId;
+    if (cm.recipientUserId && !cm.assignedToUserId) cm.assignedToUserId = cm.recipientUserId;
+    if (!cm.assignedToUserName && cm.assignedToUserId) {
+      const uTarget = (s.users || []).find(u => u.id === cm.assignedToUserId);
+      if (uTarget) cm.assignedToUserName = uTarget.name;
+    }
   }
   s.chatMessages.sort((a, b) => {
     const tA = new Date(a?.createdAt || a?.updatedAt || 0).getTime() || 0;
@@ -1262,9 +1291,16 @@ function isSafeToAutoRenderFromPoll() {
   if (window._isPrintingActive || window._isSavingState) return false;
   const modalOpen = (document.getElementById('modal-root')?.innerHTML || '').trim() !== '';
   if (modalOpen || sidebarOpen) return false;
-  const activeTag = document.activeElement?.tagName;
-  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') return false;
-  if (Date.now() - (window._lastUserInteractionAt || 0) < 3500) return false;
+  const activeEl = document.activeElement;
+  const activeTag = activeEl?.tagName;
+  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') {
+    // Allow auto-render on chat tab if user hasn't typed in the last 1.2s (render() preserves #chat-text-input value & cursor!)
+    if (activeEl?.id === 'chat-text-input' && Date.now() - (window._lastUserInteractionAt || 0) >= 1200) {
+      return true;
+    }
+    return false;
+  }
+  if (Date.now() - (window._lastUserInteractionAt || 0) < 2500) return false;
   return true;
 }
 
@@ -1283,20 +1319,27 @@ setInterval(async () => {
         const prevChats = state?.chatMessages || [];
         const prevOrders = state?.productionOrders || [];
         const prevReturns = state?.salesReturns || [];
+        const chatsChanged = JSON.stringify(prevChats) !== JSON.stringify(mergedFresh.chatMessages || []);
         state = mergedFresh;
         localStorage.setItem(STORAGE_KEY, newJson);
         if (currentUser) {
           currentUser = state.users.find(u => u.id === currentUser.id) || currentUser;
           checkIncomingNotifications(prevLogs, state.auditLogs || [], prevChats, state.chatMessages || [], prevOrders, state.productionOrders || [], prevReturns, state.salesReturns || []);
         }
-        if (isSafeToAutoRenderFromPoll()) {
+        if ((chatsChanged && activeTab === 'chat') || isSafeToAutoRenderFromPoll()) {
           render();
+          if (chatsChanged && activeTab === 'chat') {
+            setTimeout(() => {
+              const box = document.getElementById('chat-messages-scroll');
+              if (box) box.scrollTop = box.scrollHeight;
+            }, 40);
+          }
         } else if (!window._isPrintingActive) {
           renderLiveBannerDOM();
           if (window._pendingPollRenderTimer) clearTimeout(window._pendingPollRenderTimer);
           window._pendingPollRenderTimer = setTimeout(() => {
-            if (isSafeToAutoRenderFromPoll()) render();
-          }, 3600);
+            if (isSafeToAutoRenderFromPoll() || activeTab === 'chat') render();
+          }, 2200);
         }
       }
       isOnline = true;
@@ -1579,6 +1622,12 @@ function setTab(tabName) {
   activeTab = tabName;
   sidebarOpen = false;
   render();
+  if (tabName === 'chat') {
+    setTimeout(() => {
+      const box = document.getElementById('chat-messages-scroll');
+      if (box) box.scrollTop = box.scrollHeight;
+    }, 50);
+  }
   try {
     if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2427,14 +2476,32 @@ function getChatChannelsList() {
   ];
 }
 
+function isDirectConversationBetween(m, userAId, userBId) {
+  if (!m || !userAId || !userBId) return false;
+  const fromAToB =
+    m.senderId === userAId &&
+    (m.recipientUserId === userBId || m.assignedToUserId === userBId || m.channel === `dm_${userBId}`);
+  const fromBToA =
+    m.senderId === userBId &&
+    (m.recipientUserId === userAId || m.assignedToUserId === userAId || m.channel === `dm_${userAId}`);
+  return fromAToB || fromBToA;
+}
+
 function canUserSeeChatMessage(user, msg) {
   if (!user || !msg) return false;
   if (isFullAdmin(user)) return true; // المدير التنفيذي ومدير المشروعات يرون كافة المحادثات والمهام
-  if (msg.senderId === user.id || msg.assignedToUserId === user.id) return true;
+  if (
+    msg.senderId === user.id ||
+    msg.assignedToUserId === user.id ||
+    msg.recipientUserId === user.id ||
+    msg.channel === `dm_${user.id}`
+  ) {
+    return true;
+  }
 
   if (msg.channel && msg.channel.startsWith('dm_')) {
     const targetId = msg.channel.replace('dm_', '');
-    return targetId === user.id || msg.recipientUserId === user.id || msg.senderId === user.id;
+    return targetId === user.id || msg.recipientUserId === user.id || msg.assignedToUserId === user.id || msg.senderId === user.id;
   }
   if (msg.channel === 'warehouses') return Boolean(user.permissions?.warehouses);
   if (msg.channel === 'production') return Boolean(user.permissions?.production);
@@ -2446,6 +2513,8 @@ function selectChatChannel(chId) {
   activeChatChannel = chId;
   if (chId.startsWith('dm_')) {
     chatAssignedUserId = chId.replace('dm_', '');
+  } else {
+    chatAssignedUserId = '';
   }
   render();
   setTimeout(() => {
@@ -2475,20 +2544,30 @@ function sendChatMessage(e) {
   const msgType = document.getElementById('chat-msg-type')?.value || chatMsgType || 'message';
   const assignedToId = document.getElementById('chat-assigned-user')?.value || '';
   const linkedTab = document.getElementById('chat-linked-tab')?.value || '';
-  const assignedUser = state.users.find(u => u.id === assignedToId);
 
   let recipientUserId = '';
-  let channelLabel = 'القناة العامة';
   if (activeChatChannel.startsWith('dm_')) {
     recipientUserId = activeChatChannel.replace('dm_', '');
+  } else if (assignedToId) {
+    recipientUserId = assignedToId;
+  }
+
+  const effectiveTargetUserId = assignedToId || recipientUserId || '';
+  const assignedUser = state.users.find(u => u.id === effectiveTargetUserId);
+
+  let channelLabel = 'القناة العامة';
+  if (activeChatChannel.startsWith('dm_')) {
     const recUser = state.users.find(u => u.id === recipientUserId);
     channelLabel = `محادثة مباشرة مع ${recUser ? recUser.name : 'مستخدم'}`;
   } else {
     const chObj = getChatChannelsList().find(c => c.id === activeChatChannel);
     if (chObj) channelLabel = chObj.name;
+    if (assignedUser) {
+      channelLabel += ` (موجهة إلى: ${assignedUser.name})`;
+    }
   }
 
-  const now = new Date().toISOString();
+  const now = getMonotonicIso();
   const newMsg = {
     id: uid('chat'),
     channel: activeChatChannel,
@@ -2497,10 +2576,10 @@ function sendChatMessage(e) {
     senderName: currentUser.name,
     senderRoleTitle: currentUser.roleTitle,
     senderColor: currentUser.avatarColor || '#0f766e',
-    recipientUserId,
+    recipientUserId: effectiveTargetUserId,
     msgType, // 'message' | 'task' | 'urgent'
     text,
-    assignedToUserId: assignedToId || recipientUserId || '',
+    assignedToUserId: effectiveTargetUserId,
     assignedToUserName: assignedUser ? assignedUser.name : '',
     taskStatus: msgType === 'task' ? 'pending' : '',
     completedBy: '',
@@ -2513,10 +2592,10 @@ function sendChatMessage(e) {
   state.chatMessages = state.chatMessages || [];
   state.chatMessages.push(newMsg);
   markNotifIdsSeen([newMsg.id]);
+  if (inputEl) inputEl.value = '';
 
-  const logTargetUser = recipientUserId || assignedToId || 'all';
   const logPrefix = msgType === 'task' ? '📌 تكليف مهمة عمل جديدة' : msgType === 'urgent' ? '🚨 تنبيه عاجل' : '💬 رسالة عمل';
-  saveState(`${logPrefix} في (${channelLabel})${assignedUser ? ' موجهة إلى ' + assignedUser.name : ''}: ${text}`);
+  saveState(`${logPrefix} من (${currentUser.name}) في (${channelLabel})${assignedUser ? ' موجهة إلى ' + assignedUser.name : ''}: ${text}`);
 
   setTimeout(() => {
     const box = document.getElementById('chat-messages-scroll');
@@ -2527,7 +2606,7 @@ function sendChatMessage(e) {
 function completeChatTask(msgId) {
   const msg = (state.chatMessages || []).find(m => m.id === msgId);
   if (!msg) return;
-  const now = new Date().toISOString();
+  const now = getMonotonicIso();
   msg.taskStatus = 'completed';
   msg.completedBy = currentUser.name;
   msg.completedAt = now;
@@ -2546,12 +2625,20 @@ function renderChatAndTasksTab() {
     if (!canUserSeeChatMessage(currentUser, m)) return false;
     if (activeChatChannel.startsWith('dm_')) {
       const otherUserId = activeChatChannel.replace('dm_', '');
-      return (
-        (m.channel === `dm_${otherUserId}` && m.senderId === currentUser.id) ||
-        (m.channel === `dm_${currentUser.id}` && m.senderId === otherUserId) ||
-        (m.senderId === currentUser.id && m.recipientUserId === otherUserId) ||
-        (m.senderId === otherUserId && m.recipientUserId === currentUser.id)
-      );
+      return isDirectConversationBetween(m, currentUser.id, otherUserId);
+    }
+    if (activeChatChannel === 'general') {
+      // Show all general messages PLUS any direct/assigned messages involving currentUser so no reply is ever missed!
+      if (m.channel === 'general') return true;
+      if (
+        m.senderId === currentUser.id ||
+        m.recipientUserId === currentUser.id ||
+        m.assignedToUserId === currentUser.id ||
+        m.channel === `dm_${currentUser.id}`
+      ) {
+        return true;
+      }
+      return false;
     }
     return m.channel === activeChatChannel;
   });
@@ -2559,13 +2646,13 @@ function renderChatAndTasksTab() {
   const pendingTasksCount = allMsgs.filter(m => m.msgType === 'task' && m.taskStatus !== 'completed' && canUserSeeChatMessage(currentUser, m)).length;
   const completedTasksCount = allMsgs.filter(m => m.msgType === 'task' && m.taskStatus === 'completed' && canUserSeeChatMessage(currentUser, m)).length;
 
-  let activeHeaderTitle = '📢 القناة العامة للمصنع';
+  let activeHeaderTitle = '📢 القناة العامة للمصنع (شامل جميع الرسائل المباشرة والموجهة إليك)';
   if (activeChatChannel.startsWith('dm_')) {
     const uObj = state.users.find(u => u.id === activeChatChannel.replace('dm_', ''));
     if (uObj) activeHeaderTitle = `👤 محادثة ومهام مباشرة مع: ${uObj.name} (${uObj.roleTitle})`;
   } else {
     const chObj = channels.find(c => c.id === activeChatChannel);
-    if (chObj) activeHeaderTitle = `${chObj.name} — ${chObj.desc}`;
+    if (chObj && activeChatChannel !== 'general') activeHeaderTitle = `${chObj.name} — ${chObj.desc}`;
   }
 
   const tabLabels = {
@@ -2605,20 +2692,24 @@ function renderChatAndTasksTab() {
 
           ${state.users.filter(u => u.id !== currentUser.id).map(u => {
             const dmKey = `dm_${u.id}`;
-            const dmTasks = allMsgs.filter(m =>
-              m.msgType === 'task' && m.taskStatus !== 'completed' &&
-              ((m.senderId === u.id && m.recipientUserId === currentUser.id) || (m.senderId === currentUser.id && m.recipientUserId === u.id))
-            ).length;
+            const dmAllMsgs = allMsgs.filter(m => isDirectConversationBetween(m, currentUser.id, u.id));
+            const dmTasks = dmAllMsgs.filter(m => m.msgType === 'task' && m.taskStatus !== 'completed').length;
+            const lastMsg = dmAllMsgs.length > 0 ? dmAllMsgs[dmAllMsgs.length - 1] : null;
             return `
               <button class="chat-channel-btn ${activeChatChannel === dmKey ? 'active' : ''}" onclick="selectChatChannel('${dmKey}')">
-                <div style="display:flex;align-items:center;gap:8px;">
-                  <div class="user-avatar" style="width:28px;height:28px;font-size:0.78rem;background:${u.avatarColor || '#0f766e'};">${u.name.charAt(0)}</div>
-                  <div>
-                    <div style="font-size:0.84rem;">${u.name}</div>
-                    <small style="color:var(--text-muted);font-size:0.7rem;font-weight:500;">${u.roleTitle}</small>
+                <div style="display:flex;align-items:center;gap:8px;overflow:hidden;">
+                  <div class="user-avatar" style="width:28px;height:28px;flex-shrink:0;font-size:0.78rem;background:${u.avatarColor || '#0f766e'};">${u.name.charAt(0)}</div>
+                  <div style="overflow:hidden;text-align:right;">
+                    <div style="font-size:0.84rem;font-weight:800;">${u.name}</div>
+                    <small style="color:var(--text-muted);font-size:0.68rem;font-weight:500;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:155px;">
+                      ${lastMsg ? `💬 ${lastMsg.senderId === currentUser.id ? 'أنت: ' : ''}${lastMsg.text}` : u.roleTitle}
+                    </small>
                   </div>
                 </div>
-                ${dmTasks > 0 ? `<span class="badge badge-warning">${dmTasks} مهمة</span>` : ''}
+                <div style="display:flex;flex-direction:column;gap:3px;align-items:flex-end;">
+                  ${dmTasks > 0 ? `<span class="badge badge-danger">${dmTasks} مهمة</span>` : ''}
+                  ${dmAllMsgs.length > 0 ? `<span class="badge badge-info" style="font-size:0.66rem;">${dmAllMsgs.length} رسالة</span>` : ''}
+                </div>
               </button>
             `;
           }).join('')}
@@ -2652,16 +2743,19 @@ function renderChatAndTasksTab() {
             const isTask = m.msgType === 'task';
             const isUrgent = m.msgType === 'urgent';
             const isCompleted = m.taskStatus === 'completed';
+            const targetPartnerId = isMine ? (m.recipientUserId || m.assignedToUserId || (m.channel?.startsWith('dm_') ? m.channel.replace('dm_', '') : '')) : m.senderId;
+            const targetPartnerObj = state.users.find(u => u.id === targetPartnerId);
 
             return `
               <div class="chat-bubble ${isMine ? 'mine' : 'others'} ${isTask ? 'type-task' : ''} ${isUrgent ? 'type-urgent' : ''}">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px;">
-                  <div style="display:flex;align-items:center;gap:6px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px;flex-wrap:wrap;">
+                  <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                     <span class="user-avatar" style="width:24px;height:24px;font-size:0.72rem;background:${m.senderColor || '#0f766e'};">${(m.senderName || 'م').charAt(0)}</span>
                     <strong style="font-size:0.86rem;">${m.senderName}</strong>
                     <small style="color:var(--text-muted);font-size:0.72rem;">(${m.senderRoleTitle || ''})</small>
                     ${isTask ? `<span class="badge badge-info">📌 مهمة عمل</span>` : ''}
                     ${isUrgent ? `<span class="badge badge-danger">🚨 عاجل</span>` : ''}
+                    ${m.channel && m.channel.startsWith('dm_') ? `<span class="badge" style="background:#7c3aed;color:#fff;">🔒 محادثة خاصة</span>` : ''}
                   </div>
                   <small style="color:var(--text-muted);font-size:0.72rem;">
                     ${fmtDate(m.createdAt)} — ${new Date(m.createdAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
@@ -2672,8 +2766,13 @@ function renderChatAndTasksTab() {
 
                 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
                   <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                    ${m.assignedToUserName ? `
-                      <span class="badge badge-warning">👤 موجهة إلى: ${m.assignedToUserName}</span>
+                    ${m.assignedToUserName || targetPartnerObj ? `
+                      <span class="badge badge-warning">👤 موجهة إلى: ${m.assignedToUserName || targetPartnerObj?.name || ''}</span>
+                    ` : ''}
+                    ${!activeChatChannel.startsWith('dm_') && targetPartnerObj && targetPartnerObj.id !== currentUser.id ? `
+                      <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;" onclick="selectChatChannel('dm_${targetPartnerObj.id}')">
+                        💬 فتح المحادثة المباشرة مع ${targetPartnerObj.name}
+                      </button>
                     ` : ''}
                     ${m.linkedTab && tabLabels[m.linkedTab] ? `
                       <button class="btn btn-sm btn-outline" style="padding:3px 10px;font-size:0.76rem;" onclick="setTab('${m.linkedTab}')">
