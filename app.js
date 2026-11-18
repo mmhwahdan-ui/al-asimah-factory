@@ -39,6 +39,14 @@ function getMonotonicIso(prevIso = '') {
       const t = new Date(o?.updatedAt || 0).getTime() || 0;
       if (t >= maxMs) maxMs = t + 1000;
     }
+    for (const l of (state.logItems || [])) {
+      const t = new Date(l?.updatedAt || 0).getTime() || 0;
+      if (t >= maxMs) maxMs = t + 1000;
+    }
+    for (const c of (state.logContainers || [])) {
+      const t = new Date(c?.updatedAt || 0).getTime() || 0;
+      if (t >= maxMs) maxMs = t + 1000;
+    }
   }
   return new Date(maxMs).toISOString();
 }
@@ -1041,6 +1049,14 @@ function normalizeState(s) {
         if (seenLogKey.has(key)) {
           delSet.add(l.id);
           continue;
+        }
+        // Clean up the two auto-selected test timestamps on 84820 & 84810 so stale local caches never re-mark them processed
+        if ((l.serialNumber === '84820' || l.serialNumber === '84810') && (l.processedAt === '2026-11-17T19:36:39.295Z' || l.processedAt === '2026-11-17T19:41:06.134Z')) {
+          l.status = 'in_stock';
+          l.processedAt = '';
+          l.processedBy = '';
+          l.producedSummary = '';
+          l.producedVolumeM3 = 0;
         }
         seenLogKey.add(key);
         cleanLogs.push(l);
@@ -19421,8 +19437,10 @@ function toggleSingleLogProcessStatus(logId, markProcessed = true) {
     saveState(`⚙️ تشغيل الجذع سيريال (${logItem.serialNumber}) من الحاوية (${logItem.containerNumber}) بتكعيب (${fmtNum(logItem.volumeM3, 4)} م³) بواسطة ${currentUser?.name}`);
   } else if (!markProcessed && logItem.status === 'processed') {
     logItem.status = 'in_stock';
-    delete logItem.processedAt;
-    delete logItem.processedBy;
+    logItem.processedAt = '';
+    logItem.processedBy = '';
+    logItem.producedSummary = '';
+    logItem.producedVolumeM3 = 0;
     logItem.updatedAt = now;
 
     syncRawMaterialsWithLogContainers(now);
@@ -19544,8 +19562,10 @@ function submitEditSingleLogModal(e, logId) {
     l.processedAt = now;
     l.processedBy = currentUser?.name || 'الإدارة';
   } else if (newStatus !== 'processed') {
-    delete l.processedAt;
-    delete l.processedBy;
+    l.processedAt = '';
+    l.processedBy = '';
+    l.producedSummary = '';
+    l.producedVolumeM3 = 0;
   }
   l.status = newStatus;
   l.lengthM = Number(document.getElementById('elog-len')?.value || 0);
@@ -19980,11 +20000,6 @@ function parseAiLogAndMultiPalletsCommand(rawText) {
 function buildAiLogAndMultiPalletChatResponse(plan) {
   const showPrices = canSeeFinancialPrices();
   let logsToUse = plan.matchedLogs || [];
-  // If user didn't specify a serial number, pick the first available in_stock log as a smart suggestion
-  if (logsToUse.length === 0) {
-    const firstAvailLog = (state.logItems || []).find(l => l.status !== 'processed');
-    if (firstAvailLog) logsToUse = [firstAvailLog];
-  }
 
   let rowsToUse = plan.palletRows && plan.palletRows.length > 0 ? plan.palletRows : [
     createDefaultAiLogPalletRow({ sheetsCount: 400, palletsCount: 1 }),
@@ -20400,11 +20415,6 @@ function openAiLogToMultiPalletProductionModal(preselectedLogs = '', prefilledPa
     } else if (typeof preselectedLogs === 'string' && preselectedLogs.trim() !== '') {
       const found = allLogs.find(l => l.id === preselectedLogs || String(l.serialNumber).toLowerCase() === preselectedLogs.trim().toLowerCase());
       if (found) draftAiLogProdSelectedIds.push(found.id);
-    }
-
-    if (draftAiLogProdSelectedIds.length === 0) {
-      const firstInStock = allLogs.find(l => l.status !== 'processed');
-      if (firstInStock) draftAiLogProdSelectedIds.push(firstInStock.id);
     }
   }
 
