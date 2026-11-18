@@ -193,12 +193,12 @@
               <h1 style="margin:0;font-size:22px;color:#000;">${d.fn || 'مصنع العاصمة للصناعات المتخصصة'}</h1>
               <h2 style="margin:6px 0 0;font-size:17px;color:#000;">🚚 إذن صرف وتحميل سيارة بالبضاعة (معتمد للخروج من البوابة)</h2>
             </div>
-            <div style="display:flex;align-items:center;gap:12px;direction:rtl;text-align:left;">
-              <div style="text-align:left;font-size:11.5px;line-height:1.45;">
+            <div style="display:flex;align-items:center;gap:12px;direction:rtl;text-align:right;">
+              <div style="text-align:right;direction:rtl;font-size:12px;line-height:1.55;">
                 <div style="border:2px solid #000;padding:5px 10px;border-radius:8px;background:#fff;color:#000;">
-                  <div><strong>رقم إذن السيارة:</strong> ${d.vn || '-'}</div>
-                  <div><strong>رقم الطلبية:</strong> ${d.on || '-'}</div>
-                  <div><strong>تاريخ التحميل:</strong> ${d.dt || '-'}</div>
+                  <div><strong>رقم إذن السيارة</strong> ${d.vn || '-'}</div>
+                  <div><strong>رقم الطلبية</strong> ${d.on || '-'}</div>
+                  <div><strong>تاريخ التحميل</strong> ${d.dt || '-'}</div>
                 </div>
               </div>
               <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;border:1.5px solid #0f172a;border-radius:8px;padding:4px 8px;background:#ffffff;min-width:64px;">
@@ -291,9 +291,91 @@
       } catch (e) {}
     }
 
+    function normalizeDomForHtml2CanvasArabic(rootEl) {
+      if (!rootEl) return;
+      try {
+        rootEl.querySelectorAll('table').forEach(tbl => {
+          tbl.style.borderCollapse = 'collapse';
+        });
+        rootEl.querySelectorAll('td, th').forEach(cell => {
+          cell.style.boxSizing = 'border-box';
+          cell.style.overflowWrap = 'break-word';
+        });
+
+        const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, {
+          acceptNode(node) {
+            const p = node.parentElement;
+            if (!p) return NodeFilter.FILTER_REJECT;
+            const tag = p.tagName ? p.tagName.toUpperCase() : '';
+            if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return NodeFilter.FILTER_REJECT;
+            if (p.closest('[data-bidi-fixed="1"]')) return NodeFilter.FILTER_REJECT;
+            if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+            return NodeFilter.FILTER_ACCEPT;
+          }
+        });
+
+        const textNodes = [];
+        let current;
+        while ((current = walker.nextNode())) {
+          textNodes.push(current);
+        }
+
+        const ltrRunRegex = /[+-]?[A-Za-z0-9\u0660-\u0669]+(?:\s*[-×/:.,٬٫+]\s*[A-Za-z0-9\u0660-\u0669]+)*[%+]?/g;
+
+        for (const tNode of textNodes) {
+          let txt = tNode.nodeValue || '';
+          const hasArabic = /[\u0600-\u06FF]/.test(txt);
+
+          txt = txt
+            .replace(/([A-Za-z]+)\s*-\s*([A-Za-z]+)/g, '$1-$2')
+            .replace(/([0-9\u0660-\u0669])([\u0621-\u064A])/g, '$1 $2')
+            .replace(/([\u0621-\u064A])([0-9\u0660-\u0669])/g, '$1 $2')
+            .replace(/[()\[\]{}]/g, ' ')
+            .replace(/([\u0600-\u06FF])\s*:/g, '$1 ')
+            .replace(/:\s*([\u0600-\u06FF])/g, ' $1')
+            .replace(/\s{2,}/g, ' ');
+
+          ltrRunRegex.lastIndex = 0;
+          if (!ltrRunRegex.test(txt)) {
+            tNode.nodeValue = txt;
+            continue;
+          }
+
+          ltrRunRegex.lastIndex = 0;
+          const frag = document.createDocumentFragment();
+          let lastIdx = 0;
+          let match;
+          while ((match = ltrRunRegex.exec(txt)) !== null) {
+            if (match.index > lastIdx) {
+              frag.appendChild(document.createTextNode(txt.slice(lastIdx, match.index)));
+            }
+            const rawToken = match[0].trim();
+            const trailSpace = match[0].endsWith(' ') ? ' ' : '';
+            const leadSpace = match[0].startsWith(' ') ? ' ' : '';
+            if (leadSpace) frag.appendChild(document.createTextNode(' '));
+            const span = document.createElement('span');
+            span.setAttribute('data-bidi-fixed', '1');
+            span.setAttribute('dir', 'ltr');
+            span.style.cssText = 'display:inline-block;direction:ltr;unicode-bidi:isolate;white-space:nowrap;margin:0 1.5px;';
+            span.textContent = rawToken;
+            frag.appendChild(span);
+            if (trailSpace) frag.appendChild(document.createTextNode(' '));
+            lastIdx = ltrRunRegex.lastIndex;
+          }
+          if (lastIdx < txt.length) {
+            frag.appendChild(document.createTextNode(txt.slice(lastIdx)));
+          }
+          if (tNode.parentNode) {
+            tNode.parentNode.replaceChild(frag, tNode);
+          }
+        }
+      } catch (_) {}
+    }
+
     function downloadDirectPdfFile() {
       const container = document.getElementById('standalone-print-body');
       if (!container || !container.innerHTML.trim()) return;
+      normalizeDomForHtml2CanvasArabic(container);
       if (typeof window.html2pdf !== 'function') {
         triggerBrowserPrintNow();
         return;
@@ -352,6 +434,7 @@
 
       const bodyEl = document.getElementById('standalone-print-body');
       bodyEl.innerHTML = finalHtml;
+      normalizeDomForHtml2CanvasArabic(bodyEl);
       void bodyEl.offsetHeight;
 
       const imgs = Array.from(bodyEl.querySelectorAll('img'));

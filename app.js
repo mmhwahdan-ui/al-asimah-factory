@@ -1664,8 +1664,8 @@ function getFactoryLogoSrc() {
 function getPrintTopLeftLogoHtml(metaHtml = '') {
   const logoSrc = getFactoryLogoSrc();
   return `
-    <div style="display:flex;align-items:center;gap:12px;direction:rtl;text-align:left;">
-      ${metaHtml ? `<div style="text-align:left;font-size:11.5px;line-height:1.45;">${metaHtml}</div>` : ''}
+    <div style="display:flex;align-items:center;gap:12px;direction:rtl;text-align:right;">
+      ${metaHtml ? `<div style="text-align:right;direction:rtl;font-size:12px;line-height:1.6;">${metaHtml}</div>` : ''}
       <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;border:1.5px solid #0f172a;border-radius:8px;padding:4px 8px;background:#ffffff;min-width:64px;">
         <img src="${logoSrc}" alt="لوجو الشركة" style="height:64px;max-width:140px;object-fit:contain;display:block;" />
       </div>
@@ -13981,9 +13981,99 @@ function closeUniversalPrintView() {
   render();
 }
 
+function normalizeDomForHtml2CanvasArabic(rootEl) {
+  if (!rootEl) return;
+  try {
+    rootEl.querySelectorAll('table').forEach(tbl => {
+      tbl.style.borderCollapse = 'collapse';
+    });
+    rootEl.querySelectorAll('td, th').forEach(cell => {
+      cell.style.boxSizing = 'border-box';
+      cell.style.overflowWrap = 'break-word';
+    });
+
+    const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const p = node.parentElement;
+        if (!p) return NodeFilter.FILTER_REJECT;
+        const tag = p.tagName ? p.tagName.toUpperCase() : '';
+        if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return NodeFilter.FILTER_REJECT;
+        if (p.closest('[data-bidi-fixed="1"]')) return NodeFilter.FILTER_REJECT;
+        if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+
+    const textNodes = [];
+    let current;
+    while ((current = walker.nextNode())) {
+      textNodes.push(current);
+    }
+
+    const ltrRunRegex = /[+-]?[A-Za-z0-9\u0660-\u0669]+(?:\s*[-×/:.,٬٫+]\s*[A-Za-z0-9\u0660-\u0669]+)*[%+]?/g;
+
+    for (const tNode of textNodes) {
+      let txt = tNode.nodeValue || '';
+      const hasArabic = /[\u0600-\u06FF]/.test(txt);
+      const hasParentArabic = Boolean(tNode.parentElement && tNode.parentElement.closest('[dir="rtl"], .pdf-report-wrap, #print-document-content, #standalone-print-body'));
+
+      // Clean punctuation that html2canvas reverses in RTL text nodes
+      txt = txt
+        .replace(/([A-Za-z]+)\s*-\s*([A-Za-z]+)/g, '$1-$2')
+        .replace(/([0-9\u0660-\u0669])([\u0621-\u064A])/g, '$1 $2')
+        .replace(/([\u0621-\u064A])([0-9\u0660-\u0669])/g, '$1 $2')
+        .replace(/[()\[\]{}]/g, ' ')
+        .replace(/([\u0600-\u06FF])\s*:/g, '$1 ')
+        .replace(/:\s*([\u0600-\u06FF])/g, ' $1')
+        .replace(/\s{2,}/g, ' ');
+
+      if (!hasArabic && !hasParentArabic) {
+        tNode.nodeValue = txt;
+        continue;
+      }
+
+      ltrRunRegex.lastIndex = 0;
+      if (!ltrRunRegex.test(txt)) {
+        tNode.nodeValue = txt;
+        continue;
+      }
+
+      ltrRunRegex.lastIndex = 0;
+      const frag = document.createDocumentFragment();
+      let lastIdx = 0;
+      let match;
+      while ((match = ltrRunRegex.exec(txt)) !== null) {
+        if (match.index > lastIdx) {
+          const arPart = txt.slice(lastIdx, match.index);
+          frag.appendChild(document.createTextNode(arPart));
+        }
+        const rawToken = match[0].trim();
+        const trailSpace = match[0].endsWith(' ') ? ' ' : '';
+        const leadSpace = match[0].startsWith(' ') ? ' ' : '';
+        if (leadSpace) frag.appendChild(document.createTextNode(' '));
+        const span = document.createElement('span');
+        span.setAttribute('data-bidi-fixed', '1');
+        span.setAttribute('dir', 'ltr');
+        span.style.cssText = 'display:inline-block;direction:ltr;unicode-bidi:isolate;white-space:nowrap;margin:0 1.5px;';
+        span.textContent = rawToken;
+        frag.appendChild(span);
+        if (trailSpace) frag.appendChild(document.createTextNode(' '));
+        lastIdx = ltrRunRegex.lastIndex;
+      }
+      if (lastIdx < txt.length) {
+        frag.appendChild(document.createTextNode(txt.slice(lastIdx)));
+      }
+      if (tNode.parentNode) {
+        tNode.parentNode.replaceChild(frag, tNode);
+      }
+    }
+  } catch (_) {}
+}
+
 function downloadInPagePdfFile() {
   const contentEl = document.getElementById('print-document-content');
   if (!contentEl || !contentEl.innerHTML.trim()) return;
+  normalizeDomForHtml2CanvasArabic(contentEl);
   if (typeof window.html2pdf !== 'function') {
     window.focus();
     window.print();
@@ -13996,7 +14086,7 @@ function downloadInPagePdfFile() {
     filename: safeName,
     pagebreak: { mode: ['css', 'legacy'] },
     image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollY: 0 },
+    html2canvas: { scale: 2, useCORS: true, letterRendering: false, backgroundColor: '#ffffff', scrollY: 0 },
     jsPDF: { unit: 'mm', format: 'a4', orientation: _lastPrintLandscape ? 'landscape' : 'portrait' }
   }).from(contentEl).toPdf();
 
@@ -14057,7 +14147,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '34');
+  urlObj.searchParams.set('v', '58');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
@@ -14243,6 +14333,13 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
       ${docHtml}
     </div>
   `;
+
+  const contentDomEl = document.getElementById('print-document-content');
+  if (contentDomEl) {
+    normalizeDomForHtml2CanvasArabic(contentDomEl);
+    docHtml = contentDomEl.innerHTML;
+    _lastPrintDocumentHtml = docHtml;
+  }
 
   if (typeof window.scrollTo === 'function') {
     window.scrollTo(0, 0);
@@ -15019,75 +15116,181 @@ function printClientFullStatement(clientId) {
   if (!pt) return;
   const m = computeClientMetrics(pt);
   const factoryName = state.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة';
+  const stampSrc = typeof getFactoryStampSrc === 'function' ? getFactoryStampSrc() : '';
+  const openBal = Number(pt.openingBalance || 0);
+  const openDir = pt.openingBalanceDirection || (openBal < 0 ? 'credit' : 'debit');
+  const openAbs = Math.abs(openBal);
+
+  const clientTxs = (m.txs || []).slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+
   const html = `
-    <div style="border:3px solid #000;padding:24px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
-      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #000;padding-bottom:12px;margin-bottom:16px;">
-        <div>
-          <h1 style="margin:0;font-size:21px;">${factoryName}</h1>
-          <p style="margin:4px 0 0;font-size:14px;">بيان كشف حساب عميل شامل (الطلبيات الفائتة + أذون السيارات + المديونيات والمستحقات + حساب البالتات)</p>
+    <div style="border:3px solid #000;padding:22px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;box-sizing:border-box;">
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2.5px solid #000;padding-bottom:12px;margin-bottom:16px;gap:14px;">
+        <div style="text-align:right;">
+          <h1 style="margin:0;font-size:21px;font-weight:900;color:#000;">${factoryName}</h1>
+          <div style="margin:5px 0 0;font-size:14px;font-weight:700;color:#1e293b;">
+            بيان كشف حساب عميل شامل للطلبيات وأذون السيارات والمدفوعات وحساب البالتات
+          </div>
         </div>
         ${getPrintTopLeftLogoHtml(`
-          <div><strong>كود العميل:</strong> ${pt.code || 'CL'}</div>
-          <div><strong>اسم العميل:</strong> ${pt.name}</div>
-          <div><strong>تاريخ البيان:</strong> ${todayStr()}</div>
+          <table style="border-collapse:collapse;border:1.5px solid #000;background:#f8fafc;font-size:12px;direction:rtl;">
+            <tr>
+              <td style="border:1px solid #000;padding:3px 8px;font-weight:800;text-align:right;">كود العميل</td>
+              <td style="border:1px solid #000;padding:3px 8px;font-weight:900;text-align:center;direction:ltr;white-space:nowrap;">${pt.code || 'CL'}</td>
+            </tr>
+            <tr>
+              <td style="border:1px solid #000;padding:3px 8px;font-weight:800;text-align:right;">اسم العميل</td>
+              <td style="border:1px solid #000;padding:3px 8px;font-weight:800;text-align:right;">${pt.name}</td>
+            </tr>
+            <tr>
+              <td style="border:1px solid #000;padding:3px 8px;font-weight:800;text-align:right;">تاريخ البيان</td>
+              <td style="border:1px solid #000;padding:3px 8px;font-weight:800;text-align:center;direction:ltr;white-space:nowrap;">${todayStr()}</td>
+            </tr>
+          </table>
         `)}
       </div>
 
-      <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px;">
+      <table style="width:100%;table-layout:fixed;border-collapse:collapse;margin-bottom:16px;font-size:13px;direction:rtl;">
         <tr style="background:#f1f5f9;">
-          <td style="border:1px solid #000;padding:8px;"><strong>إجمالي المسحوبات (مدين):</strong> ${fmtMoney(m.totalDebit)}</td>
-          <td style="border:1px solid #000;padding:8px;"><strong>إجمالي المدفوعات (دائن):</strong> ${fmtMoney(m.totalCredit)}</td>
-          <td style="border:1px solid #000;padding:8px;font-size:15px;">
-            <strong>صافي الرصيد المالي:</strong>
-            ${m.netDebt > 0 ? 'مدين (عليه للمصنع): ' + fmtMoney(m.netDebt) : m.netDebt < 0 ? 'دائن (له مستحقات): ' + fmtMoney(Math.abs(m.netDebt)) : 'خالص (0 ج.م)'}
+          <td style="width:32%;border:1.5px solid #000;padding:8px;text-align:center;vertical-align:middle;">
+            <div style="font-weight:800;color:#334155;margin-bottom:4px;">إجمالي المسحوبات والطلبيات مدين</div>
+            <div style="font-size:15px;font-weight:900;color:#0f172a;">${fmtMoney(m.totalDebit)}</div>
+          </td>
+          <td style="width:32%;border:1.5px solid #000;padding:8px;text-align:center;vertical-align:middle;">
+            <div style="font-weight:800;color:#334155;margin-bottom:4px;">إجمالي المدفوعات والمرتجعات دائن</div>
+            <div style="font-size:15px;font-weight:900;color:#15803d;">${fmtMoney(m.totalCredit)}</div>
+          </td>
+          <td style="width:36%;border:1.5px solid #000;padding:8px;text-align:center;vertical-align:middle;background:#fffbeb;">
+            <div style="font-weight:800;color:#0f172a;margin-bottom:4px;">
+              ${m.netDebt > 0 ? 'صافي الرصيد المالي مدين عليه للمصنع' : m.netDebt < 0 ? 'صافي الرصيد المالي دائن له مستحقات' : 'صافي الرصيد المالي خالص'}
+            </div>
+            <div style="font-size:16px;font-weight:900;color:${m.netDebt > 0 ? '#b91c1c' : '#15803d'};">
+              ${fmtMoney(Math.abs(m.netDebt || 0))}
+            </div>
           </td>
         </tr>
         <tr>
-          <td style="border:1px solid #000;padding:8px;"><strong>بالتات مسلمة للعميل:</strong> ${m.palletsDelivered} بالتة (${fmtMoney(m.palletsDeliveredValue || 0)})</td>
-          <td style="border:1px solid #000;padding:8px;"><strong>بالتات مستلمة من العميل:</strong> ${m.palletsReceived} بالتة (${fmtMoney(m.palletsReceivedValue || 0)})</td>
-          <td style="border:1px solid #000;padding:8px;font-size:14px;">
-            <strong>حساب تأمين البالتات طرف العميل:</strong> ${m.netPalletsAtClient} بالتة (${fmtMoney(Math.abs(m.netPalletsValue || 0))})<br/>
-            <span style="font-size:12px;">قيمة البالتة: <strong>${fmtMoney(m.palletUnitPrice || 0)}</strong> | المسدد في حساب تأمين البالتات: <strong>${fmtMoney(m.netPalletDepositPaid || 0)}</strong></span>
+          <td style="border:1.5px solid #000;padding:8px;text-align:center;vertical-align:middle;">
+            <div style="font-weight:800;color:#334155;margin-bottom:3px;">بالتات مسلمة للعميل</div>
+            <div style="font-weight:900;font-size:14px;">${m.palletsDelivered} بالتة — بقيمة ${fmtMoney(m.palletsDeliveredValue || 0)}</div>
+          </td>
+          <td style="border:1.5px solid #000;padding:8px;text-align:center;vertical-align:middle;">
+            <div style="font-weight:800;color:#334155;margin-bottom:3px;">بالتات مستلمة من العميل</div>
+            <div style="font-weight:900;font-size:14px;">${m.palletsReceived} بالتة — بقيمة ${fmtMoney(m.palletsReceivedValue || 0)}</div>
+          </td>
+          <td style="border:1.5px solid #000;padding:8px;text-align:center;vertical-align:middle;">
+            <div style="font-weight:800;color:#0f172a;margin-bottom:3px;">حساب تأمين البالتات طرف العميل</div>
+            <div style="font-weight:900;font-size:14px;">${m.netPalletsAtClient} بالتة — بقيمة ${fmtMoney(Math.abs(m.netPalletsValue || 0))}</div>
+            <div style="font-size:11.5px;margin-top:3px;color:#334155;">
+              سعر البالتة ${fmtMoney(m.palletUnitPrice || 0)} | المسدد في التأمين ${fmtMoney(m.netPalletDepositPaid || 0)}
+            </div>
           </td>
         </tr>
       </table>
 
-      <h3 style="margin:12px 0 6px;font-size:14px;">1. بيان الطلبيات وأذون صرف السيارات (${m.orders.length} طلبية):</h3>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:12.5px;">
+      <div style="margin:12px 0 6px;font-size:14px;font-weight:900;color:#000;text-align:right;">
+        أولاً — بيان الطلبيات وأذون صرف السيارات وعددها ${m.orders.length} طلبية
+      </div>
+      <table style="width:100%;table-layout:fixed;border-collapse:collapse;margin-bottom:16px;font-size:12.5px;direction:rtl;">
         <thead>
           <tr style="background:#e2e8f0;">
-            <th style="border:1px solid #000;padding:6px;">رقم الطلبية</th>
-            <th style="border:1px solid #000;padding:6px;">التاريخ</th>
-            <th style="border:1px solid #000;padding:6px;">الأصناف (التخانات والجودات)</th>
-            <th style="border:1px solid #000;padding:6px;">إذن السيارة والسائق</th>
-            <th style="border:1px solid #000;padding:6px;">الخصم</th>
-            <th style="border:1px solid #000;padding:6px;">الصافي</th>
+            <th style="width:15%;border:1.5px solid #000;padding:6px 4px;text-align:center;font-weight:900;">رقم الطلبية</th>
+            <th style="width:12%;border:1.5px solid #000;padding:6px 4px;text-align:center;font-weight:900;">التاريخ</th>
+            <th style="width:37%;border:1.5px solid #000;padding:6px 6px;text-align:right;font-weight:900;">الأصناف والتخانات والجودات</th>
+            <th style="width:18%;border:1.5px solid #000;padding:6px 4px;text-align:center;font-weight:900;">إذن السيارة والسائق</th>
+            <th style="width:8%;border:1.5px solid #000;padding:6px 4px;text-align:center;font-weight:900;">الخصم</th>
+            <th style="width:10%;border:1.5px solid #000;padding:6px 4px;text-align:center;font-weight:900;">الصافي</th>
           </tr>
         </thead>
         <tbody>
           ${m.orders.map(o => {
             const car = o.carDispatchVoucher || {};
+            const itemsLines = (o.items || []).map(i => {
+              const rawGr = String(i.gradeCode || i.gradeName || '-').replace(/[()\[\]]/g, ' ').replace(/P-\s*C/gi, 'P-C').replace(/\s+/g, ' ').trim();
+              const dirTxt = i.direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص';
+              const dimTxt = formatVeneerDimensions(i.lengthCm, i.widthCm, false).replace(/[()\[\]]/g, '');
+              return `<div style="padding:2px 0;">تخانة ${i.thicknessMm} مم ${dirTxt} — ${rawGr} — مقاس ${dimTxt} — عدد ${i.sheetsCount} قطعة</div>`;
+            }).join('');
             return `
             <tr>
-              <td style="border:1px solid #000;padding:6px;font-weight:700;">${o.orderNumber}</td>
-              <td style="border:1px solid #000;padding:6px;">${o.date}</td>
-              <td style="border:1px solid #000;padding:6px;">${(o.items || []).map(i => `${i.thicknessMm}مم (${i.direction === 'sada' ? 'سدا' : 'قص'}) ${i.gradeName} [${formatVeneerDimensions(i.lengthCm, i.widthCm, false)}]: ${i.sheetsCount} ق`).join(' + ')}</td>
-              <td style="border:1px solid #000;padding:6px;">${car.carPlateNumber ? `سيارة: <strong>${car.carPlateNumber}</strong><br/>سائق: ${car.driverName || '-'}<br/>بالتات: +${car.palletsDeliveredCount ?? 0}/-${car.palletsReceivedCount ?? 0}` : '-'}</td>
-              <td style="border:1px solid #000;padding:6px;">${fmtMoney(o.discountAmount || 0)}</td>
-              <td style="border:1px solid #000;padding:6px;font-weight:700;">${fmtMoney(o.netTotalAmount || 0)}</td>
+              <td style="border:1.5px solid #000;padding:6px 4px;font-weight:800;text-align:center;direction:ltr;white-space:nowrap;">${o.orderNumber}</td>
+              <td style="border:1.5px solid #000;padding:6px 4px;font-weight:700;text-align:center;direction:ltr;white-space:nowrap;">${o.date || '-'}</td>
+              <td style="border:1.5px solid #000;padding:6px 6px;text-align:right;line-height:1.5;">${itemsLines || '-'}</td>
+              <td style="border:1.5px solid #000;padding:6px 4px;text-align:center;line-height:1.5;">
+                ${car.carPlateNumber ? `
+                  <div>سيارة رقم <strong>${car.carPlateNumber}</strong></div>
+                  <div>السائق ${car.driverName || '-'}</div>
+                  <div>بالتات مسلم ${car.palletsDeliveredCount ?? 0} | مستلم ${car.palletsReceivedCount ?? 0}</div>
+                ` : (o.skipWarehouseDeduction ? 'طلبية قديمة بالحسابات فقط' : '-')}
+              </td>
+              <td style="border:1.5px solid #000;padding:6px 4px;text-align:center;font-weight:700;">${fmtMoney(o.discountAmount || 0)}</td>
+              <td style="border:1.5px solid #000;padding:6px 4px;text-align:center;font-weight:900;">${fmtMoney(o.netTotalAmount || 0)}</td>
             </tr>
           `;}).join('')}
         </tbody>
       </table>
 
-      <div style="display:flex;justify-content:space-between;margin-top:30px;font-weight:700;font-size:13px;">
-        <span>إعداد الحسابات: ${currentUser?.name || '-'}</span>
-        <span>اعتماد مدير الحسابات / المدير التنفيذي: ....................</span>
-        <span>توقيع ومصادقة العميل: ....................</span>
+      ${(openAbs > 0 || clientTxs.length > 0) ? `
+        <div style="margin:12px 0 6px;font-size:14px;font-weight:900;color:#000;text-align:right;">
+          ثانياً — بيان الرصيد الافتتاحي والفواتير والدفعات المسددة
+        </div>
+        <table style="width:100%;table-layout:fixed;border-collapse:collapse;margin-bottom:16px;font-size:12px;direction:rtl;">
+          <thead>
+            <tr style="background:#e2e8f0;">
+              <th style="width:15%;border:1.5px solid #000;padding:5px 4px;text-align:center;font-weight:900;">رقم المستند</th>
+              <th style="width:12%;border:1.5px solid #000;padding:5px 4px;text-align:center;font-weight:900;">التاريخ</th>
+              <th style="width:41%;border:1.5px solid #000;padding:5px 6px;text-align:right;font-weight:900;">البيان والتفاصيل</th>
+              <th style="width:11%;border:1.5px solid #000;padding:5px 4px;text-align:center;font-weight:900;">إجمالي الفاتورة</th>
+              <th style="width:11%;border:1.5px solid #000;padding:5px 4px;text-align:center;font-weight:900;">المدفوع والمحصل</th>
+              <th style="width:10%;border:1.5px solid #000;padding:5px 4px;text-align:center;font-weight:900;">المتبقي</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${openAbs > 0 ? `
+              <tr style="background:#fef3c7;font-weight:800;">
+                <td style="border:1.5px solid #000;padding:5px 4px;text-align:center;">رصيد افتتاحي</td>
+                <td style="border:1.5px solid #000;padding:5px 4px;text-align:center;direction:ltr;">${pt.openingBalanceDate || '-'}</td>
+                <td style="border:1.5px solid #000;padding:5px 6px;text-align:right;">
+                  ${openDir === 'credit' ? 'رصيد افتتاحي سابق دائن لصالح العميل' : 'رصيد افتتاحي سابق مدين على العميل'}
+                  ${pt.openingBalanceNotes ? ' — ' + pt.openingBalanceNotes : ''}
+                </td>
+                <td style="border:1.5px solid #000;padding:5px 4px;text-align:center;">${openDir === 'debit' ? fmtMoney(openAbs) : fmtMoney(0)}</td>
+                <td style="border:1.5px solid #000;padding:5px 4px;text-align:center;">${openDir === 'credit' ? fmtMoney(openAbs) : fmtMoney(0)}</td>
+                <td style="border:1.5px solid #000;padding:5px 4px;text-align:center;">${fmtMoney(openAbs)}</td>
+              </tr>
+            ` : ''}
+            ${clientTxs.map(tx => `
+              <tr>
+                <td style="border:1.5px solid #000;padding:5px 4px;text-align:center;font-weight:800;direction:ltr;white-space:nowrap;">${tx.voucherNo || '-'}</td>
+                <td style="border:1.5px solid #000;padding:5px 4px;text-align:center;direction:ltr;white-space:nowrap;">${tx.date || '-'}</td>
+                <td style="border:1.5px solid #000;padding:5px 6px;text-align:right;">${(tx.description || tx.typeLabel || '-').replace(/[()\[\]]/g, ' ')}</td>
+                <td style="border:1.5px solid #000;padding:5px 4px;text-align:center;font-weight:700;">${fmtMoney(tx.totalAmount || 0)}</td>
+                <td style="border:1.5px solid #000;padding:5px 4px;text-align:center;font-weight:800;color:#15803d;">${fmtMoney(tx.paidAmount || 0)}</td>
+                <td style="border:1.5px solid #000;padding:5px 4px;text-align:center;font-weight:800;">${fmtMoney(tx.remainingAmount || 0)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      ` : ''}
+
+      <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:14px;margin-top:24px;padding-top:12px;border-top:1.5px dashed #334155;font-weight:800;font-size:13px;text-align:center;align-items:start;">
+        <div>
+          <div>إعداد ومراجعة الحسابات</div>
+          <div style="margin-top:8px;font-weight:900;">${currentUser?.name || 'إدارة الحسابات'}</div>
+        </div>
+        <div>
+          <div>اعتماد الإدارة التنفيذية</div>
+          <div style="margin-top:8px;">....................</div>
+          ${stampSrc ? `<img src="${stampSrc}" alt="ختم الشركة" style="height:72px;width:auto;object-fit:contain;display:block;margin:6px auto 0;" />` : ''}
+        </div>
+        <div>
+          <div>توقيع ومصادقة العميل</div>
+          <div style="margin-top:8px;">....................</div>
+        </div>
       </div>
     </div>
   `;
-  openUniversalPrintDocument(html, `كشف حساب عميل [${pt.code || 'CL'}] ${pt.name}`, false);
+  openUniversalPrintDocument(html, `كشف حساب عميل ${pt.code || 'CL'} ${pt.name}`, false);
 }
 
 function printFinancialInvoice(txId) {
