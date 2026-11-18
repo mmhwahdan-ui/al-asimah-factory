@@ -2248,6 +2248,15 @@ function render() {
           </button>
           ` : ''}
 
+          ${isExecRole ? `
+          <button class="nav-item" style="background:rgba(15,118,110,0.22);border:1px solid #14b8a6;color:#5eead4;font-weight:800;" onclick="sidebarOpen=false; openNewClientOrderPrepModal('', true);">
+            <span>📜 تنفيذ الطلبيات القديمة للعملاء</span>
+          </button>
+          <button class="nav-item" style="background:rgba(220,38,38,0.22);border:1px solid #f87171;color:#fca5a5;font-weight:800;" onclick="sidebarOpen=false; openClientPiecePriceAdjustmentModal();">
+            <span>💲 تعديل حسابات العملاء وأسعار القطع</span>
+          </button>
+          ` : ''}
+
           <button class="nav-item ${activeTab === 'chat' ? 'active' : ''}" onclick="setTab('chat')">
             <span>💬 الشات والمهام بين الحسابات</span>
             ${openTasksForMeCount > 0 ? `<span class="nav-badge" style="background:#2563eb;">${openTasksForMeCount}</span>` : ''}
@@ -2291,6 +2300,14 @@ function render() {
           </div>
 
           <div class="topbar-actions">
+            ${isExecRole ? `
+              <button class="btn btn-sm" style="background:#0f766e;color:#fff;font-weight:900;border:none;" onclick="openNewClientOrderPrepModal('', true)" title="تنفيذ الطلبيات القديمة للعملاء بعد الرصيد الافتتاحي مع السؤال هل تخرج من المخازن أم لا">
+                📜 تنفيذ طلبية قديمة
+              </button>
+              <button class="btn btn-sm" style="background:#dc2626;color:#fff;font-weight:900;border:none;" onclick="openClientPiecePriceAdjustmentModal()" title="تعديل حسابات العملاء والرصيد الافتتاحي وأسعار القطع والدفعات المسددة">
+                💲 تعديل حسابات العملاء
+              </button>
+            ` : ''}
             <button class="btn btn-sm btn-outline" onclick="openFactoryLogoModal()" title="رفع أو تغيير لوجو الشركة ليظهر في النظام وفي أعلى يسار جميع التقارير">
               🖼️ لوجو الشركة
             </button>
@@ -2911,6 +2928,29 @@ function renderDashboard() {
   const avgPalletStockValue = totalPallets > 0 ? (totalVeneerValue / totalPallets) : 0;
 
   return `
+    ${isExec ? `
+      <div class="card" style="background:linear-gradient(135deg, rgba(15,118,110,0.12), rgba(220,38,38,0.08));border:2px solid #0f766e;padding:16px 20px;margin-bottom:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <div style="font-weight:900;font-size:1.06rem;color:#0f766e;">
+              👑 صلاحيات المدير التنفيذي ومدير المشروعات: تنفيذ الطلبيات القديمة + تعديل الرصيد الافتتاحي وأسعار القطع والدفعات
+            </div>
+            <small style="color:var(--text-main);">
+              تنفيذ طلبيات قديمة للعملاء (مع السؤال هل تخرج من المخازن أم لا)، وتعديل الرصيد الافتتاحي وربط حسابات الطلبيات به، وتعديل أسعار القطع والدفعات المسددة في أي وقت.
+            </small>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" class="btn" style="background:#0f766e;color:#fff;font-weight:900;" onclick="openNewClientOrderPrepModal('', true)">
+              📜 تنفيذ الطلبيات القديمة للعملاء (بعد الرصيد الافتتاحي)
+            </button>
+            <button type="button" class="btn" style="background:#dc2626;color:#fff;font-weight:900;" onclick="openClientPiecePriceAdjustmentModal()">
+              💲 تعديل حسابات العملاء (الرصيد الافتتاحي + أسعار القطع + الدفعات)
+            </button>
+          </div>
+        </div>
+      </div>
+    ` : ''}
+
     ${pendingSalesReturns.length > 0 && canApproveSalesReturn(currentUser) ? `
       <div class="card" style="background:rgba(124,58,237,0.12);border:2px solid #7c3aed;padding:16px 20px;margin-bottom:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
@@ -3077,6 +3117,10 @@ function renderDashboard() {
           ` : ''}
           ${hasPerm('production') && !isWarehouseKeeperOnly(currentUser) ? `
             <button class="btn btn-accent" onclick="openNewClientOrderPrepModal()">📋 أمر تجهيز طلبية جديدة للعميل</button>
+          ` : ''}
+          ${isExec ? `
+            <button class="btn" style="background:#0f766e;color:#fff;font-weight:900;" onclick="openNewClientOrderPrepModal('', true)">📜 تنفيذ الطلبيات القديمة للعملاء (بعد الرصيد الافتتاحي)</button>
+            <button class="btn" style="background:#dc2626;color:#fff;font-weight:900;" onclick="openClientPiecePriceAdjustmentModal()">💲 تعديل حسابات العملاء والرصيد الافتتاحي وأسعار القطع والدفعات</button>
           ` : ''}
           ${hasPerm('approvals') ? `
             <button class="btn btn-outline" onclick="setTab('approvals')">✅ أذون الصرف وتحميل السيارات</button>
