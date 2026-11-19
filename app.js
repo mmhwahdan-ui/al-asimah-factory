@@ -746,7 +746,7 @@ function checkIncomingNotifications(prevLogs = [], newLogs = [], prevChats = [],
   }
 }
 
-function addAuditLog(actionText, explicitPermKeys = null, explicitTargetTab = null, targetUserId = 'all', hiddenFromRoles = []) {
+function addAuditLog(actionText, explicitPermKeys = null, explicitTargetTab = null, targetUserId = 'all', hiddenFromRoles = [], linkedUndoId = '') {
   if (!state) return;
   state.auditLogs = state.auditLogs || [];
   const inferred = inferActionScope(actionText);
@@ -760,7 +760,8 @@ function addAuditLog(actionText, explicitPermKeys = null, explicitTargetTab = nu
     permKeys: explicitPermKeys || inferred.permKeys,
     targetTab: explicitTargetTab || inferred.targetTab,
     targetUserId,
-    hiddenFromRoles
+    hiddenFromRoles,
+    undoId: linkedUndoId || ''
   };
   state.auditLogs.unshift(newLog);
   if (state.auditLogs.length > 250) {
@@ -887,7 +888,7 @@ function normalizeState(s) {
     'users', 'pallets', 'rawMaterials', 'logContainers', 'logItems', 'scrapItems', 'spareParts',
     'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
     'partners', 'palletMovements', 'financialTransactions', 'checksUnderCollection',
-    'auditLogs', 'chatMessages', 'deletedIds'
+    'auditLogs', 'chatMessages', 'deletedIds', 'undoHistory'
   ];
   for (const k of arrayKeys) {
     if (!Array.isArray(s[k])) {
@@ -895,6 +896,18 @@ function normalizeState(s) {
     }
   }
   if (s.users.length === 0) s.users = def.users;
+  s.restoredIds = (s.restoredIds && typeof s.restoredIds === 'object') ? s.restoredIds : {};
+  s.forceSnapshotAt = Number(s.forceSnapshotAt || 0);
+  if (Array.isArray(s.deletedIds) && Object.keys(s.restoredIds).length > 0) {
+    s.deletedIds = s.deletedIds.filter(id => !s.restoredIds[id]);
+  }
+  if (Array.isArray(s.undoHistory)) {
+    const uDelSet = new Set(Array.isArray(s.deletedIds) ? s.deletedIds : []);
+    s.undoHistory = s.undoHistory
+      .filter(u => u && u.id && !uDelSet.has(u.id))
+      .sort((a, b) => Number(b.createdAtMs || 0) - Number(a.createdAtMs || 0))
+      .slice(0, 25);
+  }
 
   // Keep newest records first (index 0) so new orders, movements, and notifications always appear at the top
   const descTimeKeys = ['productionOrders', 'warehouseMovements', 'salesReturns', 'financialTransactions', 'checksUnderCollection', 'palletMovements', 'auditLogs'];
@@ -1082,11 +1095,25 @@ function smartMergeClientState(current, incoming) {
   if (!current || !current.users) return normalizeState(incoming);
   if (!incoming || !incoming.users) return normalizeState(current);
 
+  const curSnap = Number(current.forceSnapshotAt || 0);
+  const incSnap = Number(incoming.forceSnapshotAt || 0);
+  if (incSnap > curSnap) {
+    return normalizeState(incoming);
+  }
+  if (curSnap > incSnap) {
+    return normalizeState(current);
+  }
+
   const curReset = Number(current.lastResetAt || 0);
   const incReset = Number(incoming.lastResetAt || 0);
   const minResetTs = Math.max(curReset, incReset);
 
-  const deletedIds = Array.from(new Set([...(current.deletedIds || []), ...(incoming.deletedIds || [])]));
+  const restoredIds = {
+    ...(current.restoredIds || {}),
+    ...(incoming.restoredIds || {})
+  };
+
+  const deletedIds = Array.from(new Set([...(current.deletedIds || []), ...(incoming.deletedIds || [])])).filter(id => !restoredIds[id]);
   const delSet = new Set(deletedIds);
 
   // If one state has a newer system reset timestamp (lastResetAt), discard the older pre-reset state completely!
@@ -1095,10 +1122,12 @@ function smartMergeClientState(current, incoming) {
     const listKeys = [
       'pallets', 'rawMaterials', 'logContainers', 'logItems', 'scrapItems', 'spareParts',
       'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
-      'partners', 'palletMovements', 'financialTransactions', 'checksUnderCollection', 'auditLogs', 'chatMessages'
+      'partners', 'palletMovements', 'financialTransactions', 'checksUnderCollection', 'auditLogs', 'chatMessages', 'undoHistory'
     ];
     const cleanedIncoming = {
       ...incoming,
+      forceSnapshotAt: Math.max(curSnap, incSnap),
+      restoredIds,
       lastResetAt: minResetTs,
       users: smartMergeListClient(current.users, incoming.users, new Set(), 0)
     };
@@ -1112,12 +1141,14 @@ function smartMergeClientState(current, incoming) {
   const listKeys = [
     'users', 'pallets', 'rawMaterials', 'logContainers', 'logItems', 'scrapItems', 'spareParts',
     'productionOrders', 'approvalRequests', 'warehouseMovements', 'salesReturns',
-    'partners', 'palletMovements', 'financialTransactions', 'checksUnderCollection', 'auditLogs', 'chatMessages'
+    'partners', 'palletMovements', 'financialTransactions', 'checksUnderCollection', 'auditLogs', 'chatMessages', 'undoHistory'
   ];
 
   const merged = {
     ...current,
     ...incoming,
+    forceSnapshotAt: Math.max(curSnap, incSnap),
+    restoredIds,
     lastResetAt: minResetTs,
     factoryInfo: { ...(current.factoryInfo || {}), ...(incoming.factoryInfo || {}) },
     treasuryBalances: { ...(current.treasuryBalances || {}), ...(incoming.treasuryBalances || {}) },
@@ -1285,6 +1316,7 @@ async function loadData() {
       ]);
     }
   }
+  updateUndoBaselineSnapshot(state);
   render();
 }
 
@@ -1338,6 +1370,7 @@ setInterval(async () => {
         const chatsChanged = JSON.stringify(prevChats) !== JSON.stringify(mergedFresh.chatMessages || []);
         state = mergedFresh;
         localStorage.setItem(STORAGE_KEY, newJson);
+        updateUndoBaselineSnapshot(state);
         if (currentUser) {
           currentUser = state.users.find(u => u.id === currentUser.id) || currentUser;
           checkIncomingNotifications(prevLogs, state.auditLogs || [], prevChats, state.chatMessages || [], prevOrders, state.productionOrders || [], prevReturns, state.salesReturns || []);
@@ -1367,25 +1400,636 @@ setInterval(async () => {
   }
 }, 2500);
 
-async function saveState(logMessage = '', hiddenFromRoles = []) {
+// ============================================================================
+// UNIVERSAL UNDO & RESTORATION ENGINE (نظام التراجع الشامل وإرجاع الشيء لأصله قبل التعديل — خاص بالمدير التنفيذي ومدير المشروعات)
+// ============================================================================
+const UNDO_COLLECTION_KEYS = [
+  'pallets',
+  'rawMaterials',
+  'logContainers',
+  'logItems',
+  'scrapItems',
+  'spareParts',
+  'productionOrders',
+  'approvalRequests',
+  'warehouseMovements',
+  'salesReturns',
+  'partners',
+  'palletMovements',
+  'financialTransactions',
+  'checksUnderCollection',
+  'users'
+];
+
+const UNDO_COLLECTION_LABELS = {
+  pallets: 'بالتات مخزن القشرة',
+  rawMaterials: 'مخزن الخامات',
+  logContainers: 'حاويات الخشب الخام',
+  logItems: 'أصناف فلوق الخشب',
+  scrapItems: 'مخزن الهالك',
+  spareParts: 'مخزن قطع الغيار',
+  productionOrders: 'أوامر وبيانات طلبيات العملاء',
+  approvalRequests: 'طلبات اعتماد الصرف',
+  warehouseMovements: 'سجل حركات المخازن',
+  salesReturns: 'مرتجعات المبيعات',
+  partners: 'ملفات وأرصدة العملاء',
+  palletMovements: 'حركات البالتات الخشبية',
+  financialTransactions: 'الفواتير والسندات والدفعات',
+  checksUnderCollection: 'الشيكات تحت التحصيل',
+  users: 'حسابات وصلاحيات المستخدمين'
+};
+
+window._undoBaselineState = null;
+window._isPerformingUndoOrRedo = false;
+window._localRedoStack = [];
+
+function cloneCleanStateForUndo(sObj) {
+  if (!sObj || typeof sObj !== 'object') return null;
+  const snap = {};
+  for (const colKey of UNDO_COLLECTION_KEYS) {
+    snap[colKey] = Array.isArray(sObj[colKey]) ? JSON.parse(JSON.stringify(sObj[colKey])) : [];
+  }
+  snap.catalog = sObj.catalog ? JSON.parse(JSON.stringify(sObj.catalog)) : {};
+  snap.treasuryBalances = sObj.treasuryBalances ? JSON.parse(JSON.stringify(sObj.treasuryBalances)) : {};
+  snap.factoryInfo = sObj.factoryInfo ? JSON.parse(JSON.stringify(sObj.factoryInfo)) : {};
+  return snap;
+}
+
+function updateUndoBaselineSnapshot(sObj = state) {
+  if (!sObj || window._isPerformingUndoOrRedo) return;
+  try {
+    window._undoBaselineState = cloneCleanStateForUndo(sObj);
+  } catch (_) {}
+}
+
+function stripTimestampForComparison(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const copy = { ...obj };
+  delete copy.updatedAt;
+  return copy;
+}
+
+function computeUndoDeltaBetweenStates(beforeSnap, afterState) {
+  const beforeRecords = {};
+  const addedIds = {};
+  const beforeSingletons = {};
+  const afterRecords = {};
+  const addedRecords = {};
+  const afterSingletons = {};
+  const summaryParts = [];
+  let hasChanges = false;
+
+  if (!beforeSnap || !afterState) {
+    return { hasChanges: false, beforeRecords, addedIds, beforeSingletons, afterRecords, addedRecords, afterSingletons, changesSummary: '' };
+  }
+
+  for (const colKey of UNDO_COLLECTION_KEYS) {
+    const bList = Array.isArray(beforeSnap[colKey]) ? beforeSnap[colKey] : [];
+    const aList = Array.isArray(afterState[colKey]) ? afterState[colKey] : [];
+    const bMap = new Map();
+    const aMap = new Map();
+    for (const item of bList) {
+      if (item && item.id) bMap.set(item.id, item);
+    }
+    for (const item of aList) {
+      if (item && item.id) aMap.set(item.id, item);
+    }
+
+    const colBeforeRecs = [];
+    const colAfterRecs = [];
+    const colAddedIds = [];
+    const colAddedRecs = [];
+    let modifiedCount = 0;
+    let deletedCount = 0;
+
+    for (const [id, bItem] of bMap.entries()) {
+      if (!aMap.has(id)) {
+        colBeforeRecs.push(JSON.parse(JSON.stringify(bItem)));
+        colAfterRecs.push({ id, _wasDeleted: true });
+        deletedCount++;
+      } else {
+        const aItem = aMap.get(id);
+        const bStr = JSON.stringify(stripTimestampForComparison(bItem));
+        const aStr = JSON.stringify(stripTimestampForComparison(aItem));
+        if (bStr !== aStr) {
+          colBeforeRecs.push(JSON.parse(JSON.stringify(bItem)));
+          colAfterRecs.push(JSON.parse(JSON.stringify(aItem)));
+          modifiedCount++;
+        }
+      }
+    }
+
+    for (const [id, aItem] of aMap.entries()) {
+      if (!bMap.has(id)) {
+        colAddedIds.push(id);
+        colAddedRecs.push(JSON.parse(JSON.stringify(aItem)));
+      }
+    }
+
+    if (colBeforeRecs.length > 0) {
+      beforeRecords[colKey] = colBeforeRecs;
+      afterRecords[colKey] = colAfterRecs;
+      hasChanges = true;
+    }
+    if (colAddedIds.length > 0) {
+      addedIds[colKey] = colAddedIds;
+      addedRecords[colKey] = colAddedRecs;
+      hasChanges = true;
+    }
+
+    if (modifiedCount > 0 || deletedCount > 0 || colAddedIds.length > 0) {
+      const label = UNDO_COLLECTION_LABELS[colKey] || colKey;
+      const acts = [];
+      if (colAddedIds.length > 0) acts.push(`إضافة (${colAddedIds.length})`);
+      if (modifiedCount > 0) acts.push(`تعديل (${modifiedCount})`);
+      if (deletedCount > 0) acts.push(`حذف (${deletedCount})`);
+      summaryParts.push(`${label}: ${acts.join(' + ')}`);
+    }
+  }
+
+  for (const sKey of ['catalog', 'treasuryBalances', 'factoryInfo']) {
+    const bVal = beforeSnap[sKey] || {};
+    const aVal = afterState[sKey] || {};
+    if (JSON.stringify(bVal) !== JSON.stringify(aVal)) {
+      beforeSingletons[sKey] = JSON.parse(JSON.stringify(bVal));
+      afterSingletons[sKey] = JSON.parse(JSON.stringify(aVal));
+      hasChanges = true;
+      if (sKey === 'catalog') summaryParts.push('جدول أسعار وتخانات القشرة');
+      if (sKey === 'treasuryBalances') summaryParts.push('أرصدة الخزينة والبنك');
+      if (sKey === 'factoryInfo') summaryParts.push('بيانات ولوجو المصنع');
+    }
+  }
+
+  return {
+    hasChanges,
+    beforeRecords,
+    addedIds,
+    beforeSingletons,
+    afterRecords,
+    addedRecords,
+    afterSingletons,
+    changesSummary: summaryParts.join(' | ') || 'تحديث بيانات النظام'
+  };
+}
+
+function recordUndoStepFromBaseline(beforeSnap, afterState, logMessage) {
+  if (!beforeSnap || !afterState || window._isPerformingUndoOrRedo) return null;
+  try {
+    const diff = computeUndoDeltaBetweenStates(beforeSnap, afterState);
+    if (!diff.hasChanges) return null;
+
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const entry = {
+      id: uid('undo'),
+      createdAtMs: nowMs,
+      timestamp: nowIso,
+      updatedAt: nowIso,
+      actionLabel: logMessage || diff.changesSummary || 'تعديل في النظام',
+      actorId: currentUser ? currentUser.id : 'u-1',
+      actorName: currentUser ? currentUser.name : 'المدير التنفيذي',
+      actorRole: currentUser ? currentUser.roleTitle : '',
+      targetTab: activeTab || 'dashboard',
+      changesSummary: diff.changesSummary,
+      beforeRecords: diff.beforeRecords,
+      addedIds: diff.addedIds,
+      beforeSingletons: diff.beforeSingletons,
+      afterRecords: diff.afterRecords,
+      addedRecords: diff.addedRecords,
+      afterSingletons: diff.afterSingletons
+    };
+
+    afterState.undoHistory = Array.isArray(afterState.undoHistory) ? afterState.undoHistory : [];
+    afterState.undoHistory.unshift(entry);
+    if (afterState.undoHistory.length > 25) {
+      afterState.undoHistory = afterState.undoHistory.slice(0, 25);
+    }
+    return entry;
+  } catch (_) {
+    return null;
+  }
+}
+
+function getAvailableUndoEntries() {
+  if (!state || !Array.isArray(state.undoHistory)) return [];
+  const delSet = new Set(Array.isArray(state.deletedIds) ? state.deletedIds : []);
+  return state.undoHistory
+    .filter(u => u && u.id && !delSet.has(u.id))
+    .sort((a, b) => Number(b.createdAtMs || 0) - Number(a.createdAtMs || 0));
+}
+
+async function triggerImmediateUndo() {
+  if (!isFullAdmin(currentUser)) {
+    alert('⛔ صلاحية التراجع (Undo) وإرجاع البيانات لأصلها مخصصة للمدير التنفيذي ومدير المشروعات فقط.');
+    return;
+  }
+  const entries = getAvailableUndoEntries();
+  if (entries.length === 0) {
+    alert('ℹ️ لا توجد عمليات تعديل مسجلة للتراجع عنها حالياً.');
+    return;
+  }
+  await executeUndoEntry(entries[0].id);
+}
+
+async function executeUndoEntry(undoId, skipConfirm = false) {
+  if (!isFullAdmin(currentUser)) {
+    alert('⛔ صلاحية التراجع (Undo) وإرجاع البيانات لأصلها مخصصة للمدير التنفيذي ومدير المشروعات فقط.');
+    return;
+  }
+  const entries = getAvailableUndoEntries();
+  const entry = entries.find(u => u.id === undoId);
+  if (!entry) {
+    alert('⚠️ لم يتم العثور على سجل التعديل المطلوب التراجع عنه.');
+    return;
+  }
+
+  if (!skipConfirm) {
+    const msg =
+      `↩️ تأكيد التراجع (Undo) وإرجاع الشيء لأصله قبل التعديل:\n\n` +
+      `📌 العملية التي سيتم إلغاؤها: ${entry.actionLabel}\n` +
+      `👤 المنفذ: ${entry.actorName} (${new Date(entry.timestamp).toLocaleString('ar-EG')})\n` +
+      `🔄 ما سيتم إرجاعه لأصله: ${entry.changesSummary || 'كافة الأرصدة والبيانات المرتبطة'}\n\n` +
+      `هل تريد إرجاع المخازن والحسابات والبيانات لحالتها الأصلية قبل هذا التعديل فوراً؟`;
+    if (!confirm(msg)) return;
+  }
+
+  window._isPerformingUndoOrRedo = true;
+  try {
+    const snapTs = Date.now();
+    const nowIso = getMonotonicIso();
+    state.forceSnapshotAt = snapTs;
+    state.restoredIds = state.restoredIds || {};
+    state.deletedIds = Array.isArray(state.deletedIds) ? state.deletedIds : [];
+    const delSet = new Set(state.deletedIds);
+
+    // 1) Remove any records that were newly created by the undone action
+    if (entry.addedIds && typeof entry.addedIds === 'object') {
+      for (const [colKey, idsArr] of Object.entries(entry.addedIds)) {
+        if (!Array.isArray(idsArr) || idsArr.length === 0) continue;
+        const removeSet = new Set(idsArr);
+        if (Array.isArray(state[colKey])) {
+          state[colKey] = state[colKey].filter(item => !item || !removeSet.has(item.id));
+        }
+        for (const rId of idsArr) {
+          delSet.add(rId);
+          delete state.restoredIds[rId];
+        }
+      }
+    }
+
+    // 2) Restore every modified or deleted record to its exact original state before the modification
+    const affectedClientIds = new Set();
+    if (entry.beforeRecords && typeof entry.beforeRecords === 'object') {
+      for (const [colKey, origItems] of Object.entries(entry.beforeRecords)) {
+        if (!Array.isArray(origItems) || origItems.length === 0) continue;
+        state[colKey] = Array.isArray(state[colKey]) ? state[colKey] : [];
+        for (const orig of origItems) {
+          if (!orig || !orig.id) continue;
+          const restored = JSON.parse(JSON.stringify(orig));
+          restored.updatedAt = nowIso;
+          delSet.delete(restored.id);
+          state.restoredIds[restored.id] = snapTs;
+
+          const existingIdx = state[colKey].findIndex(x => x && x.id === restored.id);
+          if (existingIdx !== -1) {
+            state[colKey][existingIdx] = restored;
+          } else {
+            state[colKey].unshift(restored);
+          }
+
+          if (colKey === 'partners') affectedClientIds.add(restored.id);
+          if (colKey === 'productionOrders' && restored.clientId) affectedClientIds.add(restored.clientId);
+          if (colKey === 'financialTransactions' && restored.partnerId) affectedClientIds.add(restored.partnerId);
+        }
+      }
+    }
+
+    // 3) Restore singletons (catalog prices, treasury balances, factory info)
+    if (entry.beforeSingletons && typeof entry.beforeSingletons === 'object') {
+      if (entry.beforeSingletons.treasuryBalances) {
+        state.treasuryBalances = JSON.parse(JSON.stringify(entry.beforeSingletons.treasuryBalances));
+      }
+      if (entry.beforeSingletons.catalog) {
+        state.catalog = JSON.parse(JSON.stringify(entry.beforeSingletons.catalog));
+        state.catalog.woodenPalletUnitPriceUpdatedAt = snapTs;
+      }
+      if (entry.beforeSingletons.factoryInfo) {
+        state.factoryInfo = JSON.parse(JSON.stringify(entry.beforeSingletons.factoryInfo));
+      }
+    }
+
+    // 4) Move this entry from undoHistory to _localRedoStack so user can Redo if needed
+    window._localRedoStack = window._localRedoStack || [];
+    window._localRedoStack.unshift(JSON.parse(JSON.stringify(entry)));
+    if (window._localRedoStack.length > 20) window._localRedoStack = window._localRedoStack.slice(0, 20);
+
+    delSet.add(entry.id);
+    state.deletedIds = Array.from(delSet);
+    state.undoHistory = (state.undoHistory || []).filter(u => u && u.id !== entry.id);
+
+    await saveState(
+      `↩️ تراجع (Undo) بواسطة ${currentUser.name} وإرجاع البيانات والأرصدة لأصلها قبل: [${entry.actionLabel}]`,
+      [],
+      true
+    );
+
+    const modalRoot = document.getElementById('modal-root');
+    if (modalRoot && modalRoot.innerHTML.includes('سجل التراجع الشامل')) {
+      openUndoHistoryModal();
+    }
+  } finally {
+    window._isPerformingUndoOrRedo = false;
+    updateUndoBaselineSnapshot(state);
+  }
+}
+
+async function executeRedoEntry(redoIdx = 0) {
+  if (!isFullAdmin(currentUser)) return;
+  const redoList = window._localRedoStack || [];
+  const entry = redoList[redoIdx];
+  if (!entry) {
+    alert('ℹ️ لا توجد عملية متراجع عنها لإعادتها حالياً.');
+    return;
+  }
+  if (!confirm(`↪️ هل تريد إعادة تطبيق العملية (Redo):\n"${entry.actionLabel}"؟`)) return;
+
+  window._isPerformingUndoOrRedo = true;
+  try {
+    const snapTs = Date.now();
+    const nowIso = getMonotonicIso();
+    state.forceSnapshotAt = snapTs;
+    state.restoredIds = state.restoredIds || {};
+    state.deletedIds = Array.isArray(state.deletedIds) ? state.deletedIds : [];
+    const delSet = new Set(state.deletedIds);
+
+    // 1) Re-add records that were added by the original action
+    if (entry.addedRecords && typeof entry.addedRecords === 'object') {
+      for (const [colKey, recsArr] of Object.entries(entry.addedRecords)) {
+        if (!Array.isArray(recsArr)) continue;
+        state[colKey] = Array.isArray(state[colKey]) ? state[colKey] : [];
+        for (const rec of recsArr) {
+          if (!rec || !rec.id) continue;
+          const copy = JSON.parse(JSON.stringify(rec));
+          copy.updatedAt = nowIso;
+          delSet.delete(copy.id);
+          state.restoredIds[copy.id] = snapTs;
+          const idx = state[colKey].findIndex(x => x && x.id === copy.id);
+          if (idx !== -1) state[colKey][idx] = copy;
+          else state[colKey].unshift(copy);
+        }
+      }
+    }
+
+    // 2) Re-apply modified or deleted records from afterRecords
+    if (entry.afterRecords && typeof entry.afterRecords === 'object') {
+      for (const [colKey, afterItems] of Object.entries(entry.afterRecords)) {
+        if (!Array.isArray(afterItems)) continue;
+        state[colKey] = Array.isArray(state[colKey]) ? state[colKey] : [];
+        for (const aItem of afterItems) {
+          if (!aItem || !aItem.id) continue;
+          if (aItem._wasDeleted) {
+            state[colKey] = state[colKey].filter(x => x && x.id !== aItem.id);
+            delSet.add(aItem.id);
+            delete state.restoredIds[aItem.id];
+          } else {
+            const copy = JSON.parse(JSON.stringify(aItem));
+            copy.updatedAt = nowIso;
+            delSet.delete(copy.id);
+            state.restoredIds[copy.id] = snapTs;
+            const idx = state[colKey].findIndex(x => x && x.id === copy.id);
+            if (idx !== -1) state[colKey][idx] = copy;
+            else state[colKey].unshift(copy);
+          }
+        }
+      }
+    }
+
+    // 3) Re-apply singletons
+    if (entry.afterSingletons && typeof entry.afterSingletons === 'object') {
+      if (entry.afterSingletons.treasuryBalances) {
+        state.treasuryBalances = JSON.parse(JSON.stringify(entry.afterSingletons.treasuryBalances));
+      }
+      if (entry.afterSingletons.catalog) {
+        state.catalog = JSON.parse(JSON.stringify(entry.afterSingletons.catalog));
+        state.catalog.woodenPalletUnitPriceUpdatedAt = snapTs;
+      }
+      if (entry.afterSingletons.factoryInfo) {
+        state.factoryInfo = JSON.parse(JSON.stringify(entry.afterSingletons.factoryInfo));
+      }
+    }
+
+    // Put entry back into undoHistory
+    delSet.delete(entry.id);
+    state.restoredIds[entry.id] = snapTs;
+    state.deletedIds = Array.from(delSet);
+    entry.createdAtMs = snapTs;
+    entry.updatedAt = nowIso;
+    state.undoHistory = Array.isArray(state.undoHistory) ? state.undoHistory : [];
+    state.undoHistory.unshift(entry);
+    window._localRedoStack.splice(redoIdx, 1);
+
+    await saveState(
+      `↪️ إعادة تطبيق العملية (Redo) بواسطة ${currentUser.name}: [${entry.actionLabel}]`,
+      [],
+      true
+    );
+
+    const modalRoot = document.getElementById('modal-root');
+    if (modalRoot && modalRoot.innerHTML.includes('سجل التراجع الشامل')) {
+      openUndoHistoryModal();
+    }
+  } finally {
+    window._isPerformingUndoOrRedo = false;
+    updateUndoBaselineSnapshot(state);
+  }
+}
+
+function renderUniversalUndoBarHtml() {
+  if (!isFullAdmin(currentUser)) return '';
+  const entries = getAvailableUndoEntries();
+  const redoList = window._localRedoStack || [];
+  const latest = entries[0] || null;
+
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;background:linear-gradient(135deg, rgba(30,41,59,0.96), rgba(15,23,42,0.96));color:#fff;padding:10px 14px;border-radius:12px;margin-bottom:14px;border:1.5px solid #f59e0b;box-shadow:0 4px 12px rgba(15,23,42,0.12);">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:240px;flex:1;">
+        <span style="background:#f59e0b;color:#0f172a;font-weight:900;font-size:0.76rem;padding:4px 10px;border-radius:999px;white-space:nowrap;">
+          ↩️ نظام التراجع الفوري (Undo)
+        </span>
+        ${latest ? `
+          <div style="font-size:0.8rem;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;">
+            <strong style="color:#fbbf24;">آخر عملية قابلة للتراجع:</strong>
+            <span>${latest.actionLabel}</span>
+            <small style="color:#94a3b8;margin-right:6px;">(${latest.changesSummary || ''})</small>
+          </div>
+        ` : `
+          <div style="font-size:0.8rem;color:#cbd5e1;">
+            أي تعديل أو إضافة أو حذف في المخازن أو الطلبيات أو الحسابات يُحفظ هنا تلقائياً لإرجاعه لأصله بضغطة واحدة (أو Ctrl+Z)
+          </div>
+        `}
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <button type="button" class="btn btn-sm" style="background:${latest ? '#f59e0b' : '#475569'};color:${latest ? '#0f172a' : '#cbd5e1'};font-weight:900;border:none;cursor:${latest ? 'pointer' : 'not-allowed'};" onclick="triggerImmediateUndo()" ${latest ? '' : 'disabled'} title="التراجع الفوري عن آخر عملية وإرجاع المخازن والحسابات لأصلها قبل التعديل (Ctrl+Z)">
+          ↩️ تراجع عن آخر تعديل وإرجاع لأصله (Undo)
+        </button>
+        ${redoList.length > 0 ? `
+          <button type="button" class="btn btn-sm" style="background:#10b981;color:#fff;font-weight:900;border:none;" onclick="executeRedoEntry(0)" title="إعادة تطبيق آخر عملية تم التراجع عنها (Redo)">
+            ↪️ إعادة التعديل (Redo)
+          </button>
+        ` : ''}
+        <button type="button" class="btn btn-sm" style="background:#3b82f6;color:#fff;font-weight:800;border:none;" onclick="openUndoHistoryModal()" title="عرض سجل كافة التعديلات واسترجاع أي بيان أو عملية سابقة لأصلها">
+          🕒 سجل التراجع واسترجاع التعديلات (${entries.length})
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function openUndoHistoryModal() {
+  if (!isFullAdmin(currentUser)) {
+    alert('⛔ هذه الصلاحية مخصصة للمدير التنفيذي ومدير المشروعات فقط.');
+    return;
+  }
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  const entries = getAvailableUndoEntries();
+  const redoList = window._localRedoStack || [];
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:980px;">
+        <div class="card-header" style="border-bottom:2px solid #f59e0b;padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:#d97706;font-size:1.12rem;">
+              ↩️ سجل التراجع الشامل وإرجاع البيانات والأرصدة لأصلها قبل التعديل (Undo / Redo Center)
+            </div>
+            <small style="color:var(--text-muted);">
+              صلاحية المدير التنفيذي ومدير المشروعات: يمكنك التراجع عن آخر عملية أو أي عملية سابقة في المخازن أو الطلبيات أو حسابات العملاء وإرجاع كل شيء لحالته الأصلية قبل التعديل مباشرةً.
+            </small>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            ${entries.length > 0 ? `
+              <button type="button" class="btn btn-sm" style="background:#f59e0b;color:#0f172a;font-weight:900;" onclick="triggerImmediateUndo()">
+                ↩️ تراجع فوري عن آخر تعديل
+              </button>
+            ` : ''}
+            ${redoList.length > 0 ? `
+              <button type="button" class="btn btn-sm btn-success" style="font-weight:900;" onclick="executeRedoEntry(0)">
+                ↪️ إعادة آخر تراجع (${redoList.length})
+              </button>
+            ` : ''}
+            <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+          </div>
+        </div>
+
+        <div class="table-responsive" style="max-height:62vh;overflow-y:auto;margin-top:12px;">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:5%;">#</th>
+                <th style="width:14%;">التاريخ والوقت</th>
+                <th style="width:13%;">المستخدم المنفذ</th>
+                <th style="width:34%;">وصف العملية / التعديل</th>
+                <th style="width:20%;">البيانات والأرصدة المتأثرة</th>
+                <th style="width:14%;text-align:center;">إرجاع لأصله (Undo)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${entries.length === 0 ? `
+                <tr>
+                  <td colspan="6" style="text-align:center;padding:28px;color:var(--text-muted);font-weight:700;">
+                    لا توجد تعديلات مسجلة في سجل التراجع حالياً. أي تعديل أو إضافة أو حذف تقوم به سيظهر هنا فوراً مع زر إرجاعه لأصله قبل التعديل.
+                  </td>
+                </tr>
+              ` : entries.map((u, idx) => `
+                <tr style="${idx === 0 ? 'background:rgba(245,158,11,0.08);' : ''}">
+                  <td><strong>${idx + 1}</strong></td>
+                  <td style="white-space:nowrap;font-size:0.76rem;">
+                    ${fmtDate(u.timestamp)}<br/>
+                    <strong>${new Date(u.timestamp).toLocaleTimeString('ar-EG')}</strong>
+                  </td>
+                  <td>
+                    <strong>${u.actorName || '-'}</strong><br/>
+                    <small style="color:var(--text-muted);font-size:0.7rem;">${u.actorRole || ''}</small>
+                  </td>
+                  <td style="font-weight:800;color:var(--text-main);">
+                    ${idx === 0 ? `<span class="badge badge-warning" style="margin-left:4px;">آخر تعديل</span>` : ''}
+                    ${u.actionLabel}
+                  </td>
+                  <td style="font-size:0.76rem;color:var(--accent);font-weight:700;">
+                    ${u.changesSummary || 'تحديث بيانات وأرصدة'}
+                  </td>
+                  <td style="text-align:center;">
+                    <button type="button" class="btn btn-sm" style="background:#f59e0b;color:#0f172a;font-weight:900;white-space:nowrap;" onclick="executeUndoEntry('${u.id}')">
+                      ↩️ إرجاع لأصله (Undo)
+                    </button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        ${redoList.length > 0 ? `
+          <div style="margin-top:14px;padding:12px;background:rgba(16,185,129,0.08);border:1.5px solid #10b981;border-radius:10px;">
+            <div style="font-weight:900;color:#047857;margin-bottom:8px;">↪️ عمليات تم التراجع عنها ويمكنك إعادتها (Redo):</div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              ${redoList.map((r, rIdx) => `
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--bg-card);padding:8px 12px;border-radius:8px;border:1px solid var(--border-color);">
+                  <div style="font-size:0.82rem;font-weight:700;">
+                    <span>${r.actionLabel}</span>
+                    <small style="color:var(--text-muted);margin-right:6px;">(${r.changesSummary || ''})</small>
+                  </div>
+                  <button type="button" class="btn btn-sm btn-success" style="font-weight:800;white-space:nowrap;" onclick="executeRedoEntry(${rIdx})">
+                    ↪️ إعادة التعديل (Redo)
+                  </button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    </div>
+  `;
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('keydown', (e) => {
+    if (!currentUser || !isFullAdmin(currentUser)) return;
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z' || e.key === 'ئ')) {
+      const activeTag = document.activeElement?.tagName;
+      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') return;
+      e.preventDefault();
+      triggerImmediateUndo();
+    }
+  });
+}
+
+async function saveState(logMessage = '', hiddenFromRoles = [], forceReplaceMode = false) {
   if (!state) return;
   window._isSavingState = true;
   try {
-    if (logMessage) addAuditLog(logMessage, null, null, 'all', hiddenFromRoles);
+    let createdUndoEntry = null;
+    if (!window._isPerformingUndoOrRedo && window._undoBaselineState) {
+      createdUndoEntry = recordUndoStepFromBaseline(window._undoBaselineState, state, logMessage);
+    }
+    if (logMessage) addAuditLog(logMessage, null, null, 'all', hiddenFromRoles, createdUndoEntry ? createdUndoEntry.id : '');
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     if (currentUser) {
       currentUser = state.users.find(u => u.id === currentUser.id) || currentUser;
     }
+    updateUndoBaselineSnapshot(state);
     render();
     let synced = false;
-    const isLocalHost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname.startsWith('192.168.');
+    const isLocalHost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname.startsWith('192.168.') || location.hostname.endsWith('.trycloudflare.com');
 
     if (isLocalHost) {
       try {
+        const payload = forceReplaceMode ? { ...state, _forceReplace: true } : state;
         const res = await fetch('/api/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(state)
+          body: JSON.stringify(payload)
         });
         if (res.ok) {
           const merged = await res.json();
@@ -1398,16 +2042,18 @@ async function saveState(logMessage = '', hiddenFromRoles = []) {
 
     try {
       // Also sync directly with Firebase Cloud Database so Factory & Administration devices anywhere stay 100% in sync
-      try {
-        const curFbRes = await fetch(FIREBASE_CLOUD_URL, { cache: 'no-store' });
-        if (curFbRes.ok) {
-          const curFb = await curFbRes.json();
-          if (curFb && curFb.users) {
-            state = smartMergeClientState(curFb, state);
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      if (!forceReplaceMode) {
+        try {
+          const curFbRes = await fetch(FIREBASE_CLOUD_URL, { cache: 'no-store' });
+          if (curFbRes.ok) {
+            const curFb = await curFbRes.json();
+            if (curFb && curFb.users) {
+              state = smartMergeClientState(curFb, state);
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            }
           }
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }
 
       const fbRes = await fetch(FIREBASE_CLOUD_URL, {
         method: 'PUT',
@@ -1417,6 +2063,7 @@ async function saveState(logMessage = '', hiddenFromRoles = []) {
       if (fbRes.ok) synced = true;
     } catch (_) {}
 
+    updateUndoBaselineSnapshot(state);
     isOnline = synced;
     updateSyncIndicator();
   } finally {
@@ -2249,6 +2896,10 @@ function render() {
           ` : ''}
 
           ${isExecRole ? `
+          <button class="nav-item" style="background:rgba(245,158,11,0.22);border:1.5px solid #f59e0b;color:#fde68a;font-weight:900;" onclick="sidebarOpen=false; openUndoHistoryModal();">
+            <span>↩️ تراجع فوري (Undo) / سجل الاسترجاع</span>
+            <span class="nav-badge" style="background:#d97706;">${getAvailableUndoEntries().length}</span>
+          </button>
           <button class="nav-item" style="background:rgba(15,118,110,0.22);border:1px solid #14b8a6;color:#5eead4;font-weight:800;" onclick="sidebarOpen=false; openNewClientOrderPrepModal('', true);">
             <span>📜 تنفيذ الطلبيات القديمة للعملاء</span>
           </button>
@@ -2301,6 +2952,12 @@ function render() {
 
           <div class="topbar-actions">
             ${isExecRole ? `
+              <button class="btn btn-sm" style="background:#f59e0b;color:#0f172a;font-weight:900;border:none;" onclick="triggerImmediateUndo()" title="تراجع فوري عن آخر عملية وإرجاع المخازن والحسابات لأصلها قبل التعديل (Ctrl+Z)">
+                ↩️ تراجع (Undo)
+              </button>
+              <button class="btn btn-sm" style="background:#2563eb;color:#fff;font-weight:800;border:none;" onclick="openUndoHistoryModal()" title="سجل التراجع الشامل وإرجاع أي بيان أو عملية سابقة لأصلها قبل التعديل">
+                🕒 سجل التراجع (${getAvailableUndoEntries().length})
+              </button>
               <button class="btn btn-sm" style="background:#0f766e;color:#fff;font-weight:900;border:none;" onclick="openNewClientOrderPrepModal('', true)" title="تنفيذ الطلبيات القديمة للعملاء بعد الرصيد الافتتاحي مع السؤال هل تخرج من المخازن أم لا">
                 📜 تنفيذ طلبية قديمة
               </button>
@@ -2339,6 +2996,7 @@ function render() {
         </header>
 
         <main class="content-container">
+          ${isExecRole ? renderUniversalUndoBarHtml() : ''}
           ${renderActiveTabContent()}
         </main>
       </div>
@@ -2481,13 +3139,20 @@ function openNotificationsCenterModal() {
                 <tr><td colspan="4" style="text-align:center;padding:24px;color:var(--text-muted);">لا توجد إشعارات أو تعديلات مسجلة حتى الآن.</td></tr>
               ` : authorizedLogs.slice(0, 60).map(l => {
                 const tTab = l.targetTab || inferActionScope(l.action).targetTab || 'dashboard';
+                const undoEntries = isFullAdmin(currentUser) ? getAvailableUndoEntries() : [];
+                const matchedUndo = undoEntries.find(u => (l.undoId && u.id === l.undoId) || (u.actionLabel && u.actionLabel === l.action));
                 return `
                   <tr>
                     <td style="white-space:nowrap;font-size:0.78rem;">${fmtDate(l.timestamp)}<br/><strong>${new Date(l.timestamp).toLocaleTimeString('ar-EG')}</strong></td>
                     <td><strong>${l.userName}</strong><br/><small style="color:var(--text-muted);">${l.roleTitle || ''}</small></td>
                     <td style="font-weight:700;">${sanitizeTextForWarehouseKeeper(l.action)}</td>
                     <td>
-                      <button class="btn btn-sm btn-outline" onclick="closeModal(); setTab('${tTab}');">👁️ عرض</button>
+                      <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                        <button class="btn btn-sm btn-outline" onclick="closeModal(); setTab('${tTab}');">👁️ عرض</button>
+                        ${matchedUndo ? `
+                          <button class="btn btn-sm" style="background:#f59e0b;color:#0f172a;font-weight:900;" onclick="executeUndoEntry('${matchedUndo.id}')">↩️ تراجع (Undo)</button>
+                        ` : ''}
+                      </div>
                     </td>
                   </tr>
                 `;
@@ -6711,9 +7376,15 @@ function renderReports() {
     </div>
 
     <div class="card">
-      <div class="card-header">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
         <div class="card-title">🛡️ سجل الرقابة والحركات الإدارية (Audit Log)</div>
-        <button class="btn btn-sm btn-outline" onclick="printAuditLogReportPdf()">🖨️ طباعة سجل الرقابة PDF</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${isFullAdmin(currentUser) ? `
+            <button class="btn btn-sm" style="background:#f59e0b;color:#0f172a;font-weight:900;" onclick="triggerImmediateUndo()">↩️ تراجع عن آخر تعديل (Undo)</button>
+            <button class="btn btn-sm" style="background:#2563eb;color:#fff;font-weight:800;" onclick="openUndoHistoryModal()">🕒 سجل التراجع (${getAvailableUndoEntries().length})</button>
+          ` : ''}
+          <button class="btn btn-sm btn-outline" onclick="printAuditLogReportPdf()">🖨️ طباعة سجل الرقابة PDF</button>
+        </div>
       </div>
       <div class="table-responsive">
         <table>
@@ -6723,17 +7394,26 @@ function renderReports() {
               <th>المستخدم</th>
               <th>الوظيفة</th>
               <th>العملية المنفذة</th>
+              ${isFullAdmin(currentUser) ? '<th>إرجاع لأصله (Undo)</th>' : ''}
             </tr>
           </thead>
           <tbody>
-            ${(state.auditLogs || []).filter(l => canUserSeeNotification(currentUser, l)).slice(0, 30).map(l => `
+            ${(state.auditLogs || []).filter(l => canUserSeeNotification(currentUser, l)).slice(0, 30).map(l => {
+              const undoEntries = isFullAdmin(currentUser) ? getAvailableUndoEntries() : [];
+              const matchedUndo = undoEntries.find(u => (l.undoId && u.id === l.undoId) || (u.actionLabel && u.actionLabel === l.action));
+              return `
               <tr>
                 <td>${new Date(l.timestamp).toLocaleString('ar-EG')}</td>
                 <td><strong>${l.userName}</strong></td>
                 <td>${l.roleTitle}</td>
                 <td>${sanitizeTextForWarehouseKeeper(l.action)}</td>
+                ${isFullAdmin(currentUser) ? `
+                  <td>
+                    ${matchedUndo ? `<button class="btn btn-sm" style="background:#f59e0b;color:#0f172a;font-weight:900;white-space:nowrap;" onclick="executeUndoEntry('${matchedUndo.id}')">↩️ إرجاع لأصله (Undo)</button>` : '<span style="color:var(--text-muted);font-size:0.75rem;">—</span>'}
+                  </td>
+                ` : ''}
               </tr>
-            `).join('')}
+            `;}).join('')}
           </tbody>
         </table>
       </div>
@@ -14153,7 +14833,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '61');
+  urlObj.searchParams.set('v', '62');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
@@ -17228,7 +17908,13 @@ function openClientPiecePriceAdjustmentModal(preselectedClientId = '', focusOrde
               صلاحية المدير التنفيذي ومدير المشروعات: تعديل <strong>الرصيد الافتتاحي</strong> وربط الطلبيات به، وتحديد <strong>هل تخرج الطلبية من المخازن أم لا</strong>، وتعديل <strong>سعر القطعة</strong> و<strong>الدفعات المسددة</strong> في أي وقت.
             </small>
           </div>
-          <div style="display:flex;gap:6px;align-items:center;">
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm" style="background:#f59e0b;color:#0f172a;font-weight:900;" onclick="triggerImmediateUndo()" title="تراجع فوري عن آخر تعديل وإرجاع البيانات لأصلها">
+              ↩️ تراجع عن آخر تعديل (Undo)
+            </button>
+            <button type="button" class="btn btn-sm" style="background:#2563eb;color:#fff;font-weight:800;" onclick="openUndoHistoryModal()" title="سجل التراجع واسترجاع أي تعديل سابق">
+              🕒 سجل التراجع (${getAvailableUndoEntries().length})
+            </button>
             <button type="button" class="btn btn-sm" style="background:#0f766e;color:#fff;font-weight:800;" onclick="closeModal(); openNewClientOrderPrepModal('${selectedClient.id}', true);">
               📜 + تنفيذ طلبية قديمة لهذا العميل
             </button>
