@@ -17,6 +17,10 @@
       box-sizing: border-box;
       font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif;
       letter-spacing: normal !important;
+      word-spacing: normal !important;
+      overflow-wrap: normal !important;
+      word-wrap: normal !important;
+      word-break: normal !important;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
     }
@@ -297,9 +301,13 @@
         rootEl.querySelectorAll('table').forEach(tbl => {
           tbl.style.borderCollapse = 'collapse';
         });
-        rootEl.querySelectorAll('td, th').forEach(cell => {
-          cell.style.boxSizing = 'border-box';
-          cell.style.overflowWrap = 'break-word';
+        rootEl.querySelectorAll('*').forEach(el => {
+          el.style.boxSizing = 'border-box';
+          el.style.overflowWrap = 'normal';
+          el.style.wordWrap = 'normal';
+          el.style.wordBreak = 'normal';
+          el.style.letterSpacing = 'normal';
+          el.style.wordSpacing = 'normal';
         });
 
         const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, {
@@ -330,8 +338,9 @@
             .replace(/([0-9\u0660-\u0669])([\u0621-\u064A])/g, '$1 $2')
             .replace(/([\u0621-\u064A])([0-9\u0660-\u0669])/g, '$1 $2')
             .replace(/[()\[\]{}]/g, ' ')
-            .replace(/:\s*(?![0-9\u0660-\u0669]{2}\b)/g, ' — ')
-            .replace(/([\u0600-\u06FF])\s*:/g, '$1 — ')
+            .replace(/([\u0621-\u064A])\s*:/g, '$1 — ')
+            .replace(/:\s*([\u0621-\u064A])/g, ' — $1')
+            .replace(/([A-Za-z0-9\u0660-\u0669])\s+:\s+([A-Za-z0-9\u0660-\u0669])/g, '$1 — $2')
             .replace(/\s{2,}/g, ' ');
 
           ltrRunRegex.lastIndex = 0;

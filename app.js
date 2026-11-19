@@ -13987,9 +13987,15 @@ function normalizeDomForHtml2CanvasArabic(rootEl) {
     rootEl.querySelectorAll('table').forEach(tbl => {
       tbl.style.borderCollapse = 'collapse';
     });
-    rootEl.querySelectorAll('td, th').forEach(cell => {
-      cell.style.boxSizing = 'border-box';
-      cell.style.overflowWrap = 'break-word';
+    // CRITICAL FOR HTML2CANVAS ARABIC: Never use overflow-wrap:break-word or word-break:break-all/break-word or letter-spacing,
+    // because html2canvas switches from whole-word rendering to per-character glyph splitting when break-word is active!
+    rootEl.querySelectorAll('*').forEach(el => {
+      el.style.boxSizing = 'border-box';
+      el.style.overflowWrap = 'normal';
+      el.style.wordWrap = 'normal';
+      el.style.wordBreak = 'normal';
+      el.style.letterSpacing = 'normal';
+      el.style.wordSpacing = 'normal';
     });
 
     const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, {
@@ -14017,14 +14023,15 @@ function normalizeDomForHtml2CanvasArabic(rootEl) {
       const hasArabic = /[\u0600-\u06FF]/.test(txt);
       const hasParentArabic = Boolean(tNode.parentElement && tNode.parentElement.closest('[dir="rtl"], .pdf-report-wrap, #print-document-content, #standalone-print-body'));
 
-      // Clean punctuation that html2canvas reverses in RTL text nodes
+      // Clean punctuation that html2canvas reverses in RTL text nodes (preserve time colons between digits)
       txt = txt
         .replace(/([A-Za-z]+)\s*-\s*([A-Za-z]+)/g, '$1-$2')
         .replace(/([0-9\u0660-\u0669])([\u0621-\u064A])/g, '$1 $2')
         .replace(/([\u0621-\u064A])([0-9\u0660-\u0669])/g, '$1 $2')
         .replace(/[()\[\]{}]/g, ' ')
-        .replace(/:\s*(?![0-9\u0660-\u0669]{2}\b)/g, ' — ')
-        .replace(/([\u0600-\u06FF])\s*:/g, '$1 — ')
+        .replace(/([\u0621-\u064A])\s*:/g, '$1 — ')
+        .replace(/:\s*([\u0621-\u064A])/g, ' — $1')
+        .replace(/([A-Za-z0-9\u0660-\u0669])\s+:\s+([A-Za-z0-9\u0660-\u0669])/g, '$1 — $2')
         .replace(/\s{2,}/g, ' ');
 
       if (!hasArabic && !hasParentArabic) {
@@ -14146,7 +14153,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '60');
+  urlObj.searchParams.set('v', '61');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
@@ -14281,6 +14288,13 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
         padding-bottom: 8px;
         margin-bottom: 10px;
       }
+      #print-area *, #print-document-content * {
+        overflow-wrap: normal !important;
+        word-wrap: normal !important;
+        word-break: normal !important;
+        letter-spacing: normal !important;
+        word-spacing: normal !important;
+      }
       .pdf-report-table {
         width: 100%;
         border-collapse: collapse;
@@ -14292,6 +14306,10 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
         padding: 4px 6px;
         text-align: center;
         vertical-align: middle;
+        overflow-wrap: normal !important;
+        word-wrap: normal !important;
+        word-break: normal !important;
+        letter-spacing: normal !important;
       }
       .pdf-report-table th {
         background: #e2e8f0;
@@ -15884,16 +15902,16 @@ function printAllClientsAccountingReportPdf() {
     <table class="pdf-report-table">
       <thead>
         <tr>
-          <th>كود العميل</th>
-          <th>اسم العميل</th>
-          <th>التليفون / المدينة</th>
-          <th>عدد الطلبيات</th>
-          <th>إجمالي المسحوبات (مدين)</th>
-          <th>إجمالي المدفوعات (دائن)</th>
-          <th>صافي المديونية / المستحقات</th>
-          <th>رصيد البالتات طرف العميل</th>
-          <th>قيمة البالتة</th>
-          <th>إجمالي قيمة البالتات</th>
+          <th style="width:7%;">كود العميل</th>
+          <th style="width:16%;">اسم العميل</th>
+          <th style="width:12%;">التليفون والمدينة</th>
+          <th style="width:7%;">عدد الطلبيات</th>
+          <th style="width:11%;">إجمالي المسحوبات مدين</th>
+          <th style="width:11%;">إجمالي المدفوعات دائن</th>
+          <th style="width:13%;">صافي المديونية أو المستحقات</th>
+          <th style="width:11%;">رصيد البالتات طرف العميل</th>
+          <th style="width:6%;">قيمة البالتة</th>
+          <th style="width:6%;">إجمالي قيمة البالتات</th>
         </tr>
       </thead>
       <tbody>
@@ -15901,12 +15919,18 @@ function printAllClientsAccountingReportPdf() {
           <tr>
             <td><strong>${pt.code || 'CL'}</strong></td>
             <td><strong>${pt.name}</strong></td>
-            <td>${pt.phone || '-'} / ${pt.city || '-'}</td>
+            <td>
+              <div>${pt.phone || '-'}</div>
+              <div style="font-size:10px;color:#334155;">${pt.city || '-'}</div>
+            </td>
             <td>${m.orders.length} طلبية</td>
             <td>${fmtMoney(m.totalDebit)}</td>
             <td>${fmtMoney(m.totalCredit)}</td>
-            <td><strong>${m.netDebt > 0 ? 'مدين (عليه): ' + fmtMoney(m.netDebt) : m.netDebt < 0 ? 'دائن (له): ' + fmtMoney(Math.abs(m.netDebt)) : 'خالص (0 ج.م)'}</strong></td>
-            <td><strong>${m.netPalletsAtClient} بالتة</strong> (مسلم: ${m.palletsDelivered} / مستلم: ${m.palletsReceived})</td>
+            <td><strong>${m.netDebt > 0 ? 'مدين عليه — ' + fmtMoney(m.netDebt) : m.netDebt < 0 ? 'دائن له — ' + fmtMoney(Math.abs(m.netDebt)) : 'خالص 0 ج.م'}</strong></td>
+            <td>
+              <div><strong>${m.netPalletsAtClient} بالتة</strong></div>
+              <div style="font-size:10px;color:#334155;">مسلم ${m.palletsDelivered} — مستلم ${m.palletsReceived}</div>
+            </td>
             <td><strong>${fmtMoney(m.palletUnitPrice || 0)}</strong></td>
             <td><strong>${fmtMoney(Math.abs(m.netPalletsValue || 0))}</strong></td>
           </tr>
