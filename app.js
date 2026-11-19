@@ -14146,7 +14146,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '59');
+  urlObj.searchParams.set('v', '60');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
@@ -15116,9 +15116,10 @@ function printClientFullStatement(clientId) {
   const m = computeClientMetrics(pt);
   const factoryName = state.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة';
   const stampSrc = typeof getFactoryStampSrc === 'function' ? getFactoryStampSrc() : '';
-  const openBal = Number(pt.openingBalance || 0);
-  const openDir = pt.openingBalanceDirection || (openBal < 0 ? 'credit' : 'debit');
-  const openAbs = Math.abs(openBal);
+  const openDebitVal = Number(m.openingDebit || 0);
+  const openCreditVal = Number(m.openingCredit || 0);
+  const openAbs = Math.max(openDebitVal, openCreditVal);
+  const openDir = openCreditVal > 0 ? 'credit' : 'debit';
 
   const clientTxs = (m.txs || []).slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
 
@@ -16771,11 +16772,78 @@ function deletePartnerRecord(clientId) {
   if (!isFullAdmin(currentUser)) return;
   const pt = (state.partners || []).find(p => p.id === clientId);
   if (!pt) return;
-  if (!confirm(`⚠️ هل أنت متأكد من حذف ملف العميل (${pt.code} - ${pt.name})؟`)) return;
+  if (!confirm(`⚠️ هل أنت متأكد من حذف ملف العميل (${pt.code} - ${pt.name})؟\nسيتم أيضاً حذف وإرجاع أي طلبيات أو سندات مالية مرتبطة بهذا الملف لمنع تكرار أو تضارب الحسابات.`)) return;
+
+  const now = getMonotonicIso();
+  const matchClient = (recId, recName) => (recId && recId === pt.id) || (!recId && recName && pt.name && recName.trim() === pt.name.trim());
+
+  // 1) Restore warehouse stock for any deducted orders belonging to this client & delete those orders
+  const clientOrders = (state.productionOrders || []).filter(o => (o.clientId && o.clientId === pt.id) || (o.clientName && pt.name && o.clientName.trim() === pt.name.trim()));
+  for (const ord of clientOrders) {
+    const carVo = ord.carDispatchVoucher?.voucherNo || `CAR-${ord.orderNumber}`;
+    const hadOutMovs = (state.warehouseMovements || []).some(
+      m => m.direction === 'out' && (m.voucherNumber === carVo || m.voucherNumber === `CAR-${ord.orderNumber}` || m.voucherNumber === ord.orderNumber)
+    );
+    const wasDeducted = !ord.skipWarehouseDeduction && Boolean(ord.stockDeducted || hadOutMovs || ord.carDispatchVoucher || ord.stage === 'completed' || ord.status === 'completed');
+    if (wasDeducted) {
+      for (const it of (ord.items || [])) {
+        const thkId = it.thicknessId || `th-${it.thicknessMm}-${it.direction || 'qas'}`;
+        restoreSheetsToCellPallets(
+          thkId,
+          it.gradeId,
+          it.woodTypeId || 'wt-general',
+          Number(it.sheetsCount || 0),
+          Number(it.unitPrice || 0),
+          `إرجاع رصيد لحذف ملف العميل ${pt.name} وطلبية ${ord.orderNumber}`,
+          Number(it.lengthCm || 250),
+          Number(it.widthCm || 125)
+        );
+      }
+    }
+    (state.warehouseMovements || []).forEach(m => {
+      if (m.voucherNumber === carVo || m.voucherNumber === `CAR-${ord.orderNumber}` || m.voucherNumber === ord.orderNumber) {
+        markRecordIdDeleted(m.id);
+      }
+    });
+    state.warehouseMovements = (state.warehouseMovements || []).filter(
+      m => !(m.voucherNumber === carVo || m.voucherNumber === `CAR-${ord.orderNumber}` || m.voucherNumber === ord.orderNumber)
+    );
+    markRecordIdDeleted(ord.id);
+  }
+  state.productionOrders = (state.productionOrders || []).filter(o => !clientOrders.some(co => co.id === o.id));
+
+  // 2) Reverse treasury impact and delete all financial transactions belonging to this client
+  const clientTxs = (state.financialTransactions || []).filter(tx => (tx.partnerId && tx.partnerId === pt.id) || (tx.partnerName && pt.name && tx.partnerName.trim() === pt.name.trim()));
+  for (const tx of clientTxs) {
+    const paid = Number(tx.paidAmount || (tx.type === 'client_payment' || tx.type === 'receipt' ? tx.totalAmount : 0) || 0);
+    if (paid > 0 && state.treasuryBalances) {
+      const isBank = (tx.paymentMethod || '').includes('بنك') || (tx.paymentMethod || '').includes('تحويل');
+      const isRefund = tx.type === 'pallet_deposit_refund' || tx.type === 'expense';
+      const sign = isRefund ? 1 : -1;
+      if (isBank) {
+        state.treasuryBalances.bankAccount = Math.max(0, +(Number(state.treasuryBalances.bankAccount || 0) + sign * paid).toFixed(2));
+      } else if (!(tx.paymentMethod || '').includes('شيك')) {
+        state.treasuryBalances.cashVault = Math.max(0, +(Number(state.treasuryBalances.cashVault || 0) + sign * paid).toFixed(2));
+      }
+    }
+    markRecordIdDeleted(tx.id);
+  }
+  state.financialTransactions = (state.financialTransactions || []).filter(tx => !clientTxs.some(ct => ct.id === tx.id));
+
+  // 3) Delete pallet movements & checks belonging to this client
+  (state.palletMovements || []).forEach(pm => {
+    if ((pm.clientId && pm.clientId === pt.id) || (pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim())) {
+      markRecordIdDeleted(pm.id);
+    }
+  });
+  state.palletMovements = (state.palletMovements || []).filter(
+    pm => !((pm.clientId && pm.clientId === pt.id) || (pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim()))
+  );
+
   markRecordIdDeleted(pt.id);
   state.partners = (state.partners || []).filter(p => p.id !== pt.id);
   closeModal();
-  saveState(`🗑️ حذف ملف العميل (${pt.code} - ${pt.name}) بواسطة ${currentUser.name}`);
+  saveState(`🗑️ حذف ملف العميل (${pt.code} - ${pt.name}) وإرجاع كافة أرصدته إلى المخازن والحسابات بواسطة ${currentUser.name}`);
 }
 
 function openEditFinancialTxModal(txId) {
