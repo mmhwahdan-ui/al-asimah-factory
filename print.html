@@ -50,30 +50,32 @@
     .pdf-report-wrap {
       border: 2px solid #0f172a;
       border-radius: 8px;
-      padding: 14px 16px;
+      padding: 8px 12px;
       direction: rtl;
       color: #0f172a;
       background: #ffffff;
+      box-sizing: border-box;
     }
     .pdf-report-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
       border-bottom: 2px solid #0f172a;
-      padding-bottom: 8px;
-      margin-bottom: 10px;
+      padding-bottom: 5px;
+      margin-bottom: 6px;
     }
     .pdf-report-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 11px;
-      margin-bottom: 10px;
+      font-size: 10.5px;
+      margin-bottom: 6px;
     }
     .pdf-report-table th, .pdf-report-table td {
       border: 1px solid #334155;
-      padding: 4px 6px;
+      padding: 3px 5px;
       text-align: center;
       vertical-align: middle;
+      line-height: 1.25;
     }
     .pdf-report-table th {
       background: #e2e8f0;
@@ -83,10 +85,10 @@
     .pdf-report-footer {
       display: flex;
       justify-content: space-between;
-      margin-top: 16px;
-      padding-top: 8px;
+      margin-top: 8px;
+      padding-top: 6px;
       border-top: 1px dashed #64748b;
-      font-size: 11px;
+      font-size: 10.5px;
       font-weight: 700;
     }
     @media print {
@@ -426,22 +428,44 @@
       if (btn) btn.innerText = '⏳ جاري تحويل التقرير لـ PDF وإرساله للواتساب...';
 
       const isSinglePageStmt = Boolean(container.querySelector('[data-single-page-statement="1"]'));
+      const explicitBreaksCount = container.querySelectorAll('.html2pdf__page-break').length;
+      const expectedMaxPages = isSinglePageStmt ? 1 : (explicitBreaksCount > 0 ? (explicitBreaksCount + 1) : 0);
       const safeFile = buildCleanAsciiPdfFileName(_currentDocTitle || 'Report');
+
+      const prevWidth = container.style.width;
+      const prevMinWidth = container.style.minWidth;
+      const prevMaxWidth = container.style.maxWidth;
+      const targetA4Px = window._isLandscapeDoc ? '1040px' : '740px';
+      container.style.width = targetA4Px;
+      container.style.minWidth = targetA4Px;
+      container.style.maxWidth = targetA4Px;
 
       try {
         if (typeof window.html2pdf === 'function') {
           const worker = window.html2pdf().set({
-            margin: isSinglePageStmt ? 5 : 6,
+            margin: isSinglePageStmt ? 4 : 6,
             filename: safeFile,
             pagebreak: { mode: ['css', 'legacy'] },
             image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, useCORS: true, letterRendering: false, backgroundColor: '#ffffff', scrollY: 0 },
+            html2canvas: {
+              scale: 2,
+              useCORS: true,
+              letterRendering: false,
+              backgroundColor: '#ffffff',
+              scrollY: 0,
+              scrollX: 0,
+              windowWidth: window._isLandscapeDoc ? 1100 : 800
+            },
             jsPDF: { unit: 'mm', format: 'a4', orientation: window._isLandscapeDoc ? 'landscape' : 'portrait' }
           }).from(container).toPdf();
 
           const pdfObj = await worker.get('pdf');
-          if (isSinglePageStmt && pdfObj && pdfObj.internal && typeof pdfObj.internal.getNumberOfPages === 'function') {
-            while (pdfObj.internal.getNumberOfPages() > 1) {
+          container.style.width = prevWidth;
+          container.style.minWidth = prevMinWidth;
+          container.style.maxWidth = prevMaxWidth;
+
+          if (expectedMaxPages > 0 && pdfObj && pdfObj.internal && typeof pdfObj.internal.getNumberOfPages === 'function') {
+            while (pdfObj.internal.getNumberOfPages() > expectedMaxPages) {
               pdfObj.deletePage(pdfObj.internal.getNumberOfPages());
             }
           }
@@ -496,7 +520,11 @@
 
           window.open(`https://wa.me/?text=${encodeURIComponent(msgText)}`, '_blank');
         }
-      } catch (_) {}
+      } catch (_) {
+        container.style.width = prevWidth;
+        container.style.minWidth = prevMinWidth;
+        container.style.maxWidth = prevMaxWidth;
+      }
       if (btn) btn.innerHTML = oldTxt;
     }
 
@@ -507,63 +535,45 @@
         if (rootEl.querySelector('[data-single-page-statement="1"]')) return;
         if (rootEl.querySelector('.html2pdf__page-break')) return;
 
-        const wrapWidth = rootEl.getBoundingClientRect().width || (isLandscape ? 1050 : 740);
-        const maxPageHeightPx = Math.round(wrapWidth * (isLandscape ? 0.59 : 1.24));
-        const maxRowsFirstPage = isLandscape ? 10 : 18;
-        const maxRowsNextPage = isLandscape ? 11 : 20;
+        // Deterministic row-count limits per A4 page (never depend on narrow mobile screen viewport width!)
+        const maxRowsFirstPage = isLandscape ? 11 : 18;
+        const maxRowsNextPage = isLandscape ? 12 : 20;
 
         const tables = Array.from(rootEl.querySelectorAll('table')).filter(tbl =>
           tbl.tHead && tbl.tBodies && tbl.tBodies.length > 0 && tbl.tBodies[0].rows.length > 1
         );
         if (tables.length === 0) return;
 
-        const totalDocHeight = rootEl.getBoundingClientRect().height || 0;
         const hasTallTable = tables.some(tbl => tbl.tBodies[0].rows.length > maxRowsFirstPage);
-        if (totalDocHeight <= maxPageHeightPx && !hasTallTable) {
+        if (!hasTallTable) {
+          if (tables.length === 1) {
+            const mainWrap = rootEl.querySelector('.pdf-report-wrap') || rootEl.firstElementChild;
+            if (mainWrap) mainWrap.setAttribute('data-single-page-statement', '1');
+          }
           rootEl.setAttribute('data-paginated', '1');
           return;
         }
-
-        const mainWrap = rootEl.querySelector('.pdf-report-wrap') || rootEl.firstElementChild;
-        const reportHeaderEl = rootEl.querySelector('.pdf-report-header') || (mainWrap ? mainWrap.firstElementChild : null);
-        const headerHeight = reportHeaderEl && !reportHeaderEl.matches('table')
-          ? (reportHeaderEl.getBoundingClientRect().height || 75)
-          : 40;
 
         for (const tbl of tables) {
           const thead = tbl.tHead;
           const tbody = tbl.tBodies[0];
           const tfoot = tbl.tFoot;
           const allRows = Array.from(tbody.rows);
-          if (allRows.length <= 1) continue;
-
-          const theadHeight = thead.getBoundingClientRect().height || 38;
-          const tfootHeight = tfoot ? (tfoot.getBoundingClientRect().height || 38) : 0;
-          const tblRect = tbl.getBoundingClientRect();
-          const wrapRect = (mainWrap || rootEl).getBoundingClientRect();
-
-          const offsetBeforeTable = Math.max(headerHeight + 16, Math.min(maxPageHeightPx * 0.45, tblRect.top - wrapRect.top));
-          const rowHeights = allRows.map(r => Math.max(26, r.getBoundingClientRect().height || 36));
+          if (allRows.length <= maxRowsFirstPage) continue;
 
           const chunks = [];
           let currentChunk = [];
-          let usedHeight = offsetBeforeTable + theadHeight + 16;
           let isFirstChunk = true;
 
           for (let i = 0; i < allRows.length; i++) {
-            const rH = rowHeights[i];
-            const isLastRow = (i === allRows.length - 1);
-            const extraLastHeight = isLastRow ? (tfootHeight + 45) : 0;
             const rowLimit = isFirstChunk ? maxRowsFirstPage : maxRowsNextPage;
 
-            if (currentChunk.length > 0 && ((usedHeight + rH + extraLastHeight > maxPageHeightPx) || currentChunk.length >= rowLimit)) {
+            if (currentChunk.length >= rowLimit) {
               chunks.push(currentChunk);
               currentChunk = [];
               isFirstChunk = false;
-              usedHeight = Math.min(headerHeight, 75) + theadHeight + 24;
             }
             currentChunk.push(allRows[i]);
-            usedHeight += rH;
           }
           if (currentChunk.length > 0) {
             chunks.push(currentChunk);
@@ -631,19 +641,43 @@
       const oldText = btn ? btn.innerText : '';
       if (btn) btn.innerText = '⏳ جاري تجهيز الـ PDF...';
       const isSinglePageStmt = Boolean(container.querySelector('[data-single-page-statement="1"]'));
+      const explicitBreaksCount = container.querySelectorAll('.html2pdf__page-break').length;
+      const expectedMaxPages = isSinglePageStmt ? 1 : (explicitBreaksCount > 0 ? (explicitBreaksCount + 1) : 0);
       const safeFile = buildCleanAsciiPdfFileName(_currentDocTitle || 'Report');
+
+      const prevWidth = container.style.width;
+      const prevMinWidth = container.style.minWidth;
+      const prevMaxWidth = container.style.maxWidth;
+      const targetA4Px = window._isLandscapeDoc ? '1040px' : '740px';
+      container.style.width = targetA4Px;
+      container.style.minWidth = targetA4Px;
+      container.style.maxWidth = targetA4Px;
+      const restoreWidths = () => {
+        container.style.width = prevWidth;
+        container.style.minWidth = prevMinWidth;
+        container.style.maxWidth = prevMaxWidth;
+      };
+
       const worker = window.html2pdf().set({
-        margin: isSinglePageStmt ? 5 : 6,
+        margin: isSinglePageStmt ? 4 : 6,
         filename: safeFile,
         pagebreak: { mode: ['css', 'legacy'] },
         image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, letterRendering: false, backgroundColor: '#ffffff', scrollY: 0 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          letterRendering: false,
+          backgroundColor: '#ffffff',
+          scrollY: 0,
+          scrollX: 0,
+          windowWidth: window._isLandscapeDoc ? 1100 : 800
+        },
         jsPDF: { unit: 'mm', format: 'a4', orientation: window._isLandscapeDoc ? 'landscape' : 'portrait' }
       }).from(container).toPdf();
 
       worker.get('pdf').then((pdf) => {
-        if (isSinglePageStmt && pdf && pdf.internal && typeof pdf.internal.getNumberOfPages === 'function') {
-          while (pdf.internal.getNumberOfPages() > 1) {
+        if (expectedMaxPages > 0 && pdf && pdf.internal && typeof pdf.internal.getNumberOfPages === 'function') {
+          while (pdf.internal.getNumberOfPages() > expectedMaxPages) {
             pdf.deletePage(pdf.internal.getNumberOfPages());
           }
         }
@@ -656,8 +690,10 @@
           });
         }
       }).then(() => worker.save()).then(() => {
+        restoreWidths();
         if (btn) btn.innerText = oldText;
       }).catch(() => {
+        restoreWidths();
         if (btn) btn.innerText = oldText;
         triggerBrowserPrintNow();
       });

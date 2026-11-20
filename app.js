@@ -14893,66 +14893,50 @@ function paginateTablesForPrintAndPdf(rootEl, isLandscape = false) {
     if (rootEl.querySelector('[data-single-page-statement="1"]')) return;
     if (rootEl.querySelector('.html2pdf__page-break')) return;
 
-    const wrapWidth = rootEl.getBoundingClientRect().width || (isLandscape ? 1050 : 740);
-    const maxPageHeightPx = Math.round(wrapWidth * (isLandscape ? 0.59 : 1.24));
-    const maxRowsFirstPage = isLandscape ? 10 : 18;
-    const maxRowsNextPage = isLandscape ? 11 : 20;
+    const maxRowsFirstPage = isLandscape ? 11 : 18;
+    const maxRowsNextPage = isLandscape ? 12 : 20;
 
     const tables = Array.from(rootEl.querySelectorAll('table')).filter(tbl =>
       tbl.tHead && tbl.tBodies && tbl.tBodies.length > 0 && tbl.tBodies[0].rows.length > 1
     );
     if (tables.length === 0) return;
 
-    const totalDocHeight = rootEl.getBoundingClientRect().height || 0;
     const hasTallTable = tables.some(tbl => tbl.tBodies[0].rows.length > maxRowsFirstPage);
-    if (totalDocHeight <= maxPageHeightPx && !hasTallTable) {
+    if (!hasTallTable && tables.length === 1) {
+      // Single table with <= 11 rows (Landscape) or <= 18 rows (Portrait) fits on ONE SINGLE PAGE!
+      const wrap = rootEl.querySelector('.pdf-report-wrap') || rootEl.firstElementChild;
+      if (wrap) wrap.setAttribute('data-single-page-statement', '1');
       rootEl.setAttribute('data-paginated', '1');
       return;
     }
-
-    const mainWrap = rootEl.querySelector('.pdf-report-wrap') || rootEl.firstElementChild;
-    const reportHeaderEl = rootEl.querySelector('.pdf-report-header') || (mainWrap ? mainWrap.firstElementChild : null);
-    const headerHeight = reportHeaderEl && !reportHeaderEl.matches('table')
-      ? (reportHeaderEl.getBoundingClientRect().height || 75)
-      : 40;
 
     for (const tbl of tables) {
       const thead = tbl.tHead;
       const tbody = tbl.tBodies[0];
       const tfoot = tbl.tFoot;
       const allRows = Array.from(tbody.rows);
-      if (allRows.length <= 1) continue;
-
-      const theadHeight = thead.getBoundingClientRect().height || 38;
-      const tfootHeight = tfoot ? (tfoot.getBoundingClientRect().height || 38) : 0;
-      const tblRect = tbl.getBoundingClientRect();
-      const wrapRect = (mainWrap || rootEl).getBoundingClientRect();
-
-      const offsetBeforeTable = Math.max(headerHeight + 16, Math.min(maxPageHeightPx * 0.45, tblRect.top - wrapRect.top));
-      const rowHeights = allRows.map(r => Math.max(26, r.getBoundingClientRect().height || 36));
+      if (allRows.length <= maxRowsFirstPage) continue;
 
       const chunks = [];
       let currentChunk = [];
-      let usedHeight = offsetBeforeTable + theadHeight + 16;
       let isFirstChunk = true;
 
       for (let i = 0; i < allRows.length; i++) {
-        const rH = rowHeights[i];
-        const isLastRow = (i === allRows.length - 1);
-        const extraLastHeight = isLastRow ? (tfootHeight + 45) : 0;
+        const rowEl = allRows[i];
+        // Count a row with many lines (e.g. 4+ items inside one cell) as 2 row units so it doesn't overflow
+        const brCount = rowEl.querySelectorAll('br, div').length;
+        const rowWeight = brCount >= 6 ? 2 : 1;
         const rowLimit = isFirstChunk ? maxRowsFirstPage : maxRowsNextPage;
 
-        if (currentChunk.length > 0 && ((usedHeight + rH + extraLastHeight > maxPageHeightPx) || currentChunk.length >= rowLimit)) {
-          chunks.push(currentChunk);
+        if (currentChunk.length > 0 && (currentChunk.reduce((s, x) => s + x.weight, 0) + rowWeight > rowLimit)) {
+          chunks.push(currentChunk.map(x => x.row));
           currentChunk = [];
           isFirstChunk = false;
-          usedHeight = Math.min(headerHeight, 75) + theadHeight + 24;
         }
-        currentChunk.push(allRows[i]);
-        usedHeight += rH;
+        currentChunk.push({ row: rowEl, weight: rowWeight });
       }
       if (currentChunk.length > 0) {
-        chunks.push(currentChunk);
+        chunks.push(currentChunk.map(x => x.row));
       }
 
       if (chunks.length <= 1) continue;
@@ -15092,6 +15076,8 @@ async function generateCurrentReportPdfBlobAndUpload() {
   if (typeof window.html2pdf !== 'function') return null;
 
   const isSinglePageStmt = Boolean(contentEl.querySelector('[data-single-page-statement="1"]'));
+  const explicitBreaksCount = contentEl.querySelectorAll('.html2pdf__page-break').length;
+  const expectedMaxPages = isSinglePageStmt ? 1 : (explicitBreaksCount > 0 ? (explicitBreaksCount + 1) : 0);
   const safeName = buildCleanAsciiPdfFileName(_lastPrintDocumentTitle || 'Report');
 
   if (_cachedGeneratedPdfFile && _cachedGeneratedForDocTitle === _lastPrintDocumentTitle) {
@@ -15103,18 +15089,42 @@ async function generateCurrentReportPdfBlobAndUpload() {
     };
   }
 
-  const worker = window.html2pdf().set({
-    margin: isSinglePageStmt ? 5 : 6,
-    filename: safeName,
-    pagebreak: { mode: ['css', 'legacy'] },
-    image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: { scale: 2, useCORS: true, letterRendering: false, backgroundColor: '#ffffff', scrollY: 0 },
-    jsPDF: { unit: 'mm', format: 'a4', orientation: _lastPrintLandscape ? 'landscape' : 'portrait' }
-  }).from(contentEl).toPdf();
+  const prevWidth = contentEl.style.width;
+  const prevMinWidth = contentEl.style.minWidth;
+  const prevMaxWidth = contentEl.style.maxWidth;
+  const targetA4Px = _lastPrintLandscape ? '1040px' : '740px';
+  contentEl.style.width = targetA4Px;
+  contentEl.style.minWidth = targetA4Px;
+  contentEl.style.maxWidth = targetA4Px;
 
-  const pdfObj = await worker.get('pdf');
-  if (isSinglePageStmt && pdfObj && pdfObj.internal && typeof pdfObj.internal.getNumberOfPages === 'function') {
-    while (pdfObj.internal.getNumberOfPages() > 1) {
+  let pdfObj = null;
+  try {
+    const worker = window.html2pdf().set({
+      margin: isSinglePageStmt ? 4 : 6,
+      filename: safeName,
+      pagebreak: { mode: ['css', 'legacy'] },
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        letterRendering: false,
+        backgroundColor: '#ffffff',
+        scrollY: 0,
+        scrollX: 0,
+        windowWidth: _lastPrintLandscape ? 1100 : 800
+      },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: _lastPrintLandscape ? 'landscape' : 'portrait' }
+    }).from(contentEl).toPdf();
+
+    pdfObj = await worker.get('pdf');
+  } finally {
+    contentEl.style.width = prevWidth;
+    contentEl.style.minWidth = prevMinWidth;
+    contentEl.style.maxWidth = prevMaxWidth;
+  }
+
+  if (expectedMaxPages > 0 && pdfObj && pdfObj.internal && typeof pdfObj.internal.getNumberOfPages === 'function') {
+    while (pdfObj.internal.getNumberOfPages() > expectedMaxPages) {
       pdfObj.deletePage(pdfObj.internal.getNumberOfPages());
     }
   }
@@ -15414,19 +15424,44 @@ function downloadInPagePdfFile() {
     return;
   }
   const isSinglePageStmt = Boolean(contentEl.querySelector('[data-single-page-statement="1"]'));
+  const explicitBreaksCount = contentEl.querySelectorAll('.html2pdf__page-break').length;
+  const expectedMaxPages = isSinglePageStmt ? 1 : (explicitBreaksCount > 0 ? (explicitBreaksCount + 1) : 0);
   const safeName = buildCleanAsciiPdfFileName(_lastPrintDocumentTitle || 'Report');
+
+  const prevWidth = contentEl.style.width;
+  const prevMinWidth = contentEl.style.minWidth;
+  const prevMaxWidth = contentEl.style.maxWidth;
+  const targetA4Px = _lastPrintLandscape ? '1040px' : '740px';
+  contentEl.style.width = targetA4Px;
+  contentEl.style.minWidth = targetA4Px;
+  contentEl.style.maxWidth = targetA4Px;
+
+  const restoreWidths = () => {
+    contentEl.style.width = prevWidth;
+    contentEl.style.minWidth = prevMinWidth;
+    contentEl.style.maxWidth = prevMaxWidth;
+  };
+
   const worker = window.html2pdf().set({
-    margin: isSinglePageStmt ? 5 : 6,
+    margin: isSinglePageStmt ? 4 : 6,
     filename: safeName,
     pagebreak: { mode: ['css', 'legacy'] },
     image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: { scale: 2, useCORS: true, letterRendering: false, backgroundColor: '#ffffff', scrollY: 0 },
+    html2canvas: {
+      scale: 2,
+      useCORS: true,
+      letterRendering: false,
+      backgroundColor: '#ffffff',
+      scrollY: 0,
+      scrollX: 0,
+      windowWidth: _lastPrintLandscape ? 1100 : 800
+    },
     jsPDF: { unit: 'mm', format: 'a4', orientation: _lastPrintLandscape ? 'landscape' : 'portrait' }
   }).from(contentEl).toPdf();
 
   worker.get('pdf').then((pdf) => {
-    if (isSinglePageStmt && pdf && pdf.internal && typeof pdf.internal.getNumberOfPages === 'function') {
-      while (pdf.internal.getNumberOfPages() > 1) {
+    if (expectedMaxPages > 0 && pdf && pdf.internal && typeof pdf.internal.getNumberOfPages === 'function') {
+      while (pdf.internal.getNumberOfPages() > expectedMaxPages) {
         pdf.deletePage(pdf.internal.getNumberOfPages());
       }
     }
@@ -15438,7 +15473,10 @@ function downloadInPagePdfFile() {
         creator: 'Al Asimah Factory'
       });
     }
-  }).then(() => worker.save()).catch(() => {
+  }).then(() => worker.save()).then(() => {
+    restoreWidths();
+  }).catch(() => {
+    restoreWidths();
     window.focus();
     window.print();
   });
@@ -15489,7 +15527,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '68');
+  urlObj.searchParams.set('v', '69');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
@@ -15610,19 +15648,20 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
       .pdf-report-wrap {
         border: 2px solid #0f172a;
         border-radius: 8px;
-        padding: 14px 16px;
+        padding: 8px 12px;
         font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif;
         direction: rtl;
         color: #0f172a;
         background: #fff;
+        box-sizing: border-box;
       }
       .pdf-report-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
         border-bottom: 2px solid #0f172a;
-        padding-bottom: 8px;
-        margin-bottom: 10px;
+        padding-bottom: 5px;
+        margin-bottom: 6px;
       }
       #print-area *, #print-document-content * {
         overflow-wrap: normal !important;
@@ -15634,14 +15673,15 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
       .pdf-report-table {
         width: 100%;
         border-collapse: collapse;
-        font-size: 11px;
-        margin-bottom: 10px;
+        font-size: 10.5px;
+        margin-bottom: 6px;
       }
       .pdf-report-table th, .pdf-report-table td {
         border: 1px solid #334155;
-        padding: 4px 6px;
+        padding: 3px 5px;
         text-align: center;
         vertical-align: middle;
+        line-height: 1.25;
         overflow-wrap: normal !important;
         word-wrap: normal !important;
         word-break: normal !important;
@@ -15669,10 +15709,10 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
       .pdf-report-footer {
         display: flex;
         justify-content: space-between;
-        margin-top: 16px;
-        padding-top: 8px;
+        margin-top: 8px;
+        padding-top: 6px;
         border-top: 1px dashed #64748b;
-        font-size: 11px;
+        font-size: 10.5px;
         font-weight: 700;
       }
     </style>
