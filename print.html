@@ -518,8 +518,7 @@
 
           const msgText =
             `🏭 *مصنع العاصمة للصناعات المتخصصة*\n` +
-            `📄 مرفق تقرير (PDF): *${_currentDocTitle || 'تقرير رسمي'}*\n` +
-            (uploadedUrl ? `🔗 رابط فتح وتحميل ملف الـ PDF:\n${uploadedUrl}` : '');
+            `📄 مرفق تقرير (PDF): *${_currentDocTitle || 'تقرير رسمي'}*`;
 
           if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
             try {
@@ -530,7 +529,12 @@
               });
               if (btn) btn.innerHTML = oldTxt;
               return;
-            } catch (_) {}
+            } catch (err) {
+              if (err && err.name === 'AbortError') {
+                if (btn) btn.innerHTML = oldTxt;
+                return;
+              }
+            }
           }
 
           const blobUrl = URL.createObjectURL(pdfBlob);

@@ -15211,31 +15211,29 @@ function saveUserWhatsAppPhone(userId, phoneVal) {
   syncToServerAndCloud();
 }
 
-function buildWhatsAppReportMessageText(recipientName = '', pdfUrl = '') {
+function buildWhatsAppReportMessageText(recipientName = '', _pdfUrl = '') {
   const factoryName = state?.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة';
   const docTitle = _lastPrintDocumentTitle || 'تقرير رسمي';
   const senderName = currentUser ? `${currentUser.name}` : 'إدارة المصنع';
   const greet = recipientName ? `تحية طيبة أ/ ${recipientName}،\n` : 'تحية طيبة،\n';
-  const linkUrl = pdfUrl || _lastPrintUrl || '';
   return (
     `🏭 *${factoryName}*\n` +
     `${greet}` +
     `📄 مرفق لسيادتكم تقرير (PDF): *${docTitle}*\n` +
     `📅 التاريخ: ${todayStr()}\n` +
-    `👤 مرسل بواسطة: ${senderName}` +
-    (linkUrl ? `\n🔗 رابط فتح وتحميل ملف الـ PDF المباشر:\n${linkUrl}` : '')
+    `👤 مرسل بواسطة: ${senderName}`
   );
 }
 
-async function shareGeneratedPdfFileDirectly() {
+async function shareGeneratedPdfFileDirectly(recipientName = '') {
   const statusEl = document.getElementById('wa-pdf-status-box');
-  if (statusEl) statusEl.innerHTML = '⏳ جاري تجهيز ملف الـ PDF للمشاركة عبر الواتساب...';
+  if (statusEl) statusEl.innerHTML = '⏳ جاري تجهيز ملف الـ PDF لإرفاقه مباشرة في الواتساب...';
   const res = await generateCurrentReportPdfBlobAndUpload();
   if (!res || !res.file) {
     downloadInPagePdfFile();
     return;
   }
-  const msgText = buildWhatsAppReportMessageText('', res.pdfUrl);
+  const msgText = buildWhatsAppReportMessageText(recipientName);
   if (navigator.canShare && navigator.canShare({ files: [res.file] })) {
     try {
       await navigator.share({
@@ -15243,12 +15241,20 @@ async function shareGeneratedPdfFileDirectly() {
         title: res.safeName,
         text: msgText
       });
+      if (statusEl) {
+        statusEl.innerHTML = `✅ تم إرفاق ومشاركة ملف الـ PDF (<strong>${res.safeName}</strong>) مباشرة عبر تطبيق الواتساب بنجاح!`;
+      }
       return;
-    } catch (_) {}
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+    }
   }
   triggerBlobDownload(res.blob, res.safeName);
   const waUrl = `https://wa.me/?text=${encodeURIComponent(msgText)}`;
   window.open(waUrl, '_blank');
+  if (statusEl) {
+    statusEl.innerHTML = `✅ تم تحميل ملف الـ PDF (<strong>${res.safeName}</strong>) على جهازك — قم الآن بإرفاق الملف المحمل داخل محادثة الواتساب المفتوحة.`;
+  }
 }
 
 async function sendPdfToWhatsAppNumber(rawPhone = '', recipientName = '') {
@@ -15257,48 +15263,89 @@ async function sendPdfToWhatsAppNumber(rawPhone = '', recipientName = '') {
   const formattedPhone = formatEgyptianWhatsAppPhone(chosenPhone);
   const statusEl = document.getElementById('wa-pdf-status-box');
   if (statusEl) {
-    statusEl.innerHTML = `⏳ جاري تحويل التقرير إلى PDF وإرساله عبر الواتساب ${recipientName ? 'إلى (' + recipientName + ')' : ''}...`;
+    statusEl.innerHTML = `⏳ جاري تحويل التقرير إلى ملف PDF وإرفاقه عبر الواتساب ${recipientName ? 'إلى (' + recipientName + ')' : ''}...`;
   }
 
   const res = await generateCurrentReportPdfBlobAndUpload();
+  const msgText = buildWhatsAppReportMessageText(recipientName);
+
+  // On mobile phones / browsers that support Web Share API for files, attach the actual PDF file directly to WhatsApp (never send a link!)
+  if (res && res.file && navigator.canShare && navigator.canShare({ files: [res.file] })) {
+    if (formattedPhone && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      try { await navigator.clipboard.writeText(chosenPhone); } catch (_) {}
+    }
+    try {
+      await navigator.share({
+        files: [res.file],
+        title: res.safeName,
+        text: msgText
+      });
+      if (statusEl) {
+        statusEl.innerHTML = `✅ تم إرفاق ملف الـ PDF (<strong>${res.safeName}</strong>) مباشرة في الواتساب ${recipientName ? 'لإرساله إلى <strong>' + recipientName + '</strong>' : ''} بدون أي روابط!`;
+      }
+      return;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+    }
+  }
+
   if (res && res.blob) {
     triggerBlobDownload(res.blob, res.safeName);
   }
-  const msgText = buildWhatsAppReportMessageText(recipientName, res?.pdfUrl || '');
   const waUrl = formattedPhone
     ? `https://wa.me/${formattedPhone}?text=${encodeURIComponent(msgText)}`
     : `https://wa.me/?text=${encodeURIComponent(msgText)}`;
   window.open(waUrl, '_blank');
 
   if (statusEl) {
-    statusEl.innerHTML = `✅ تم تحميل ملف الـ PDF (<strong>${res?.safeName || 'report.pdf'}</strong>) وفتح محادثة الواتساب ${recipientName ? 'مع <strong>' + recipientName + '</strong>' : ''} بنجاح! يمكنك أيضاً سحب ملف الـ PDF المحمل وإرفاقه مباشرة في المحادثة.`;
+    statusEl.innerHTML = `✅ تم تحميل ملف الـ PDF (<strong>${res?.safeName || 'report.pdf'}</strong>) وفتح محادثة الواتساب ${recipientName ? 'مع <strong>' + recipientName + '</strong>' : ''} بدون أي روابط — يمكنك سحب وإرفاق ملف الـ PDF المحمل مباشرة في المحادثة.`;
   }
 }
 
 async function sendPdfToAllSystemUsersWhatsApp() {
   const usersWithPhones = (state.users || []).filter(u => u && u.active !== false && formatEgyptianWhatsAppPhone(u.phone));
   const statusEl = document.getElementById('wa-pdf-status-box');
+  if (statusEl) {
+    statusEl.innerHTML = '⏳ جاري تجهيز ملف الـ PDF لإرفاقه وإرساله لمستخدمي النظام عبر الواتساب...';
+  }
   const res = await generateCurrentReportPdfBlobAndUpload();
+  const msgText = buildWhatsAppReportMessageText('جميع مستخدمي النظام');
+
+  if (res && res.file && navigator.canShare && navigator.canShare({ files: [res.file] })) {
+    try {
+      await navigator.share({
+        files: [res.file],
+        title: res.safeName,
+        text: msgText
+      });
+      if (statusEl) {
+        statusEl.innerHTML = `✅ تم إرفاق ملف الـ PDF (<strong>${res.safeName}</strong>) مباشرة عبر تطبيق الواتساب لإرساله لمستخدمي النظام / جروب المصنع!`;
+      }
+      return;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+    }
+  }
+
   if (res && res.blob) {
     triggerBlobDownload(res.blob, res.safeName);
   }
   if (usersWithPhones.length === 0) {
-    const msgText = buildWhatsAppReportMessageText('جميع مستخدمي النظام', res?.pdfUrl || '');
     window.open(`https://wa.me/?text=${encodeURIComponent(msgText)}`, '_blank');
     if (statusEl) {
-      statusEl.innerHTML = `✅ تم تحميل ملف الـ PDF وفتح واتساب لاختيار جروب المصنع أو المستخدمين (يمكنك أيضاً كتابة أرقام واتساب المستخدمين في الجدول أدناه للإرسال المباشر لكل مستخدم بضغطة واحدة).`;
+      statusEl.innerHTML = `✅ تم تحميل ملف الـ PDF وفتح واتساب لإرفاق الملف مباشرة لجروب المصنع أو المستخدمين.`;
     }
     return;
   }
   usersWithPhones.forEach((u, idx) => {
     const ph = formatEgyptianWhatsAppPhone(u.phone);
-    const msgText = buildWhatsAppReportMessageText(u.name, res?.pdfUrl || '');
+    const userMsg = buildWhatsAppReportMessageText(u.name);
     setTimeout(() => {
-      window.open(`https://wa.me/${ph}?text=${encodeURIComponent(msgText)}`, '_blank');
+      window.open(`https://wa.me/${ph}?text=${encodeURIComponent(userMsg)}`, '_blank');
     }, idx * 600);
   });
   if (statusEl) {
-    statusEl.innerHTML = `✅ تم تحويل وتحميل التقرير PDF وفتح محادثات الواتساب لعدد (${usersWithPhones.length}) من مستخدمي النظام بنجاح!`;
+    statusEl.innerHTML = `✅ تم تحويل وتحميل التقرير PDF وفتح محادثات الواتساب لعدد (${usersWithPhones.length}) من مستخدمي النظام لإرفاق الملف مباشرة بدون روابط!`;
   }
 }
 
@@ -15564,7 +15611,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '70');
+  urlObj.searchParams.set('v', '71');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
