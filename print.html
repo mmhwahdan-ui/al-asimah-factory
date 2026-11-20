@@ -136,7 +136,11 @@
       <strong id="print-bar-title" style="font-size:15px;color:#fbbf24;">🖨️ معاينة الطباعة الرسمية - مصنع العاصمة للصناعات المتخصصة</strong>
       <div style="font-size:12px;color:#cbd5e1;">المستند جاهز للطباعة الفورية أو التحميل كملف PDF</div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button type="button" id="btn-wa-pdf" onclick="sendStandalonePdfViaWhatsApp()" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#ffffff;border:2px solid #ffffff;padding:8px 20px;border-radius:50px;font-weight:900;font-size:14px;cursor:pointer;box-shadow:0 4px 14px rgba(37,211,102,0.55);display:inline-flex;align-items:center;gap:8px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="22" height="22" fill="#ffffff" style="vertical-align:middle;flex-shrink:0;"><path d="M16.004 3.2c-7.072 0-12.8 5.728-12.8 12.8 0 2.256.592 4.464 1.712 6.416L3.2 28.8l6.56-1.712c1.888 1.024 4.016 1.568 6.24 1.568h.004c7.072 0 12.8-5.728 12.8-12.8 0-3.424-1.328-6.64-3.744-9.056C22.644 4.528 19.428 3.2 16.004 3.2zm7.488 18.288c-.32.896-1.856 1.712-2.592 1.824-.672.096-1.52.144-2.464-.16-.576-.176-1.312-.416-2.256-.816-3.968-1.712-6.56-5.696-6.752-5.968-.192-.256-1.616-2.144-1.616-4.096 0-1.952 1.024-2.912 1.392-3.312.368-.4.784-.496 1.056-.496.256 0 .528.016.752.016.24.016.56-.096.88.672.32.784 1.088 2.672 1.184 2.864.096.192.16.432.032.688-.128.256-.192.416-.384.64-.192.224-.4.496-.576.672-.192.192-.384.4-.16.784.224.384 1.008 1.664 2.16 2.688 1.488 1.328 2.736 1.744 3.12 1.936.384.192.608.16.832-.096.224-.256.96-1.12 1.216-1.504.256-.384.512-.32.864-.192.352.128 2.24 1.056 2.624 1.248.384.192.64.288.736.448.096.16.096.928-.224 1.824z"/></svg>
+        <span>إرسال واتساب PDF</span>
+      </button>
       <button type="button" onclick="triggerBrowserPrintNow()" style="background:#10b981;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">
         🖨️ فتح صفحة الطابعة الآن / حفظ PDF
       </button>
@@ -148,6 +152,10 @@
       </button>
     </div>
   </div>
+  <button type="button" class="no-print-bar" onclick="sendStandalonePdfViaWhatsApp()" style="position:fixed;bottom:24px;left:24px;z-index:99998;background:linear-gradient(135deg,#25D366,#128C7E);color:#ffffff;border:3px solid #ffffff;padding:12px 22px;border-radius:50px;font-weight:900;font-size:15px;cursor:pointer;box-shadow:0 8px 25px rgba(37,211,102,0.65);display:flex;align-items:center;gap:10px;">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="28" height="28" fill="#ffffff" style="vertical-align:middle;flex-shrink:0;"><path d="M16.004 3.2c-7.072 0-12.8 5.728-12.8 12.8 0 2.256.592 4.464 1.712 6.416L3.2 28.8l6.56-1.712c1.888 1.024 4.016 1.568 6.24 1.568h.004c7.072 0 12.8-5.728 12.8-12.8 0-3.424-1.328-6.64-3.744-9.056C22.644 4.528 19.428 3.2 16.004 3.2zm7.488 18.288c-.32.896-1.856 1.712-2.592 1.824-.672.096-1.52.144-2.464-.16-.576-.176-1.312-.416-2.256-.816-3.968-1.712-6.56-5.696-6.752-5.968-.192-.256-1.616-2.144-1.616-4.096 0-1.952 1.024-2.912 1.392-3.312.368-.4.784-.496 1.056-.496.256 0 .528.016.752.016.24.016.56-.096.88.672.32.784 1.088 2.672 1.184 2.864.096.192.16.432.032.688-.128.256-.192.416-.384.64-.192.224-.4.496-.576.672-.192.192-.384.4-.16.784.224.384 1.008 1.664 2.16 2.688 1.488 1.328 2.736 1.744 3.12 1.936.384.192.608.16.832-.096.224-.256.96-1.12 1.216-1.504.256-.384.512-.32.864-.192.352.128 2.24 1.056 2.624 1.248.384.192.64.288.736.448.096.16.096.928-.224 1.824z"/></svg>
+    <span>إرسال واتساب PDF</span>
+  </button>
 
   <div id="print-loading-indicator" style="text-align:center;padding:30px;font-weight:800;font-size:16px;color:#0f172a;">
     ⏳ جاري تجهيز مستند الطباعة الرسمي...
@@ -328,12 +336,13 @@
           textNodes.push(current);
         }
 
-        const ltrRunRegex = /[+-]?[A-Za-z0-9\u0660-\u0669]+(?:[-×/:.,٬٫][A-Za-z0-9\u0660-\u0669]+)*[%+]?/g;
+        const isPureLtrTokenRegex = /^[+-]?[A-Za-z0-9\u0660-\u0669]+(?:[-×/:.,٬٫][A-Za-z0-9\u0660-\u0669]+)*[%+]?$/;
 
         for (const tNode of textNodes) {
           let txt = tNode.nodeValue || '';
 
           txt = txt
+            .replace(/\u200F/g, '')
             .replace(/([A-Za-z]+)\s*-\s*([A-Za-z]+)/g, '$1-$2')
             .replace(/([0-9\u0660-\u0669])([\u0621-\u064A])/g, '$1 $2')
             .replace(/([\u0621-\u064A])([0-9\u0660-\u0669])/g, '$1 $2')
@@ -343,34 +352,27 @@
             .replace(/([A-Za-z0-9\u0660-\u0669])\s+:\s+([A-Za-z0-9\u0660-\u0669])/g, '$1 — $2')
             .replace(/\s{2,}/g, ' ');
 
-          ltrRunRegex.lastIndex = 0;
-          if (!ltrRunRegex.test(txt)) {
+          if (!/\s/.test(txt) && !isPureLtrTokenRegex.test(txt)) {
             tNode.nodeValue = txt;
             continue;
           }
 
-          ltrRunRegex.lastIndex = 0;
+          const parts = txt.split(/(\s+)/);
           const frag = document.createDocumentFragment();
-          let lastIdx = 0;
-          let match;
-          while ((match = ltrRunRegex.exec(txt)) !== null) {
-            if (match.index > lastIdx) {
-              frag.appendChild(document.createTextNode('\u200F' + txt.slice(lastIdx, match.index) + '\u200F'));
+          for (const part of parts) {
+            if (!part) continue;
+            if (/^\s+$/.test(part)) {
+              frag.appendChild(document.createTextNode(' '));
+            } else if (isPureLtrTokenRegex.test(part)) {
+              const span = document.createElement('span');
+              span.setAttribute('data-bidi-fixed', '1');
+              span.setAttribute('dir', 'ltr');
+              span.style.cssText = 'display:inline-block;direction:ltr;unicode-bidi:isolate;white-space:nowrap;margin:0 2.5px;';
+              span.textContent = part;
+              frag.appendChild(span);
             } else {
-              frag.appendChild(document.createTextNode('\u200F'));
+              frag.appendChild(document.createTextNode(part));
             }
-            const rawToken = match[0].trim();
-            const span = document.createElement('span');
-            span.setAttribute('data-bidi-fixed', '1');
-            span.setAttribute('dir', 'ltr');
-            span.style.cssText = 'display:inline-block;direction:ltr;unicode-bidi:isolate;white-space:nowrap;margin:0 1.5px;';
-            span.textContent = rawToken;
-            frag.appendChild(span);
-            frag.appendChild(document.createTextNode('\u200F'));
-            lastIdx = ltrRunRegex.lastIndex;
-          }
-          if (lastIdx < txt.length) {
-            frag.appendChild(document.createTextNode('\u200F' + txt.slice(lastIdx)));
           }
           if (tNode.parentNode) {
             tNode.parentNode.replaceChild(frag, tNode);
@@ -379,9 +381,204 @@
       } catch (_) {}
     }
 
+    async function sendStandalonePdfViaWhatsApp() {
+      const container = document.getElementById('standalone-print-body');
+      if (!container || !container.innerHTML.trim()) return;
+      paginateTablesForPrintAndPdf(container, Boolean(window._isLandscapeDoc));
+      normalizeDomForHtml2CanvasArabic(container);
+      const btn = document.getElementById('btn-wa-pdf');
+      const oldTxt = btn ? btn.innerText : '';
+      if (btn) btn.innerText = '⏳ جاري تحويل التقرير لـ PDF وإرساله للواتساب...';
+
+      const isSinglePageStmt = Boolean(container.querySelector('[data-single-page-statement="1"]'));
+      const safeFile = (_currentDocTitle || 'تقرير_مصنع_العاصمة').replace(/[\\/:*?"<>|]/g, '_') + '.pdf';
+
+      try {
+        if (typeof window.html2pdf === 'function') {
+          const worker = window.html2pdf().set({
+            margin: isSinglePageStmt ? 5 : 6,
+            filename: safeFile,
+            pagebreak: { mode: ['css', 'legacy'] },
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2, useCORS: true, letterRendering: false, backgroundColor: '#ffffff', scrollY: 0 },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: window._isLandscapeDoc ? 'landscape' : 'portrait' }
+          }).from(container).toPdf();
+
+          const pdfObj = await worker.get('pdf');
+          if (isSinglePageStmt && pdfObj && pdfObj.internal && typeof pdfObj.internal.getNumberOfPages === 'function') {
+            while (pdfObj.internal.getNumberOfPages() > 1) {
+              pdfObj.deletePage(pdfObj.internal.getNumberOfPages());
+            }
+          }
+          const pdfBlob = pdfObj.output('blob');
+          const pdfFile = new File([pdfBlob], safeFile, { type: 'application/pdf' });
+          let uploadedUrl = '';
+          try {
+            const dataUri = pdfObj.output('datauristring');
+            const upRes = await fetch('/api/upload-pdf', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ filename: safeFile, pdfBase64: dataUri })
+            });
+            if (upRes.ok) {
+              const upJson = await upRes.json();
+              if (upJson && upJson.pdfUrl) uploadedUrl = upJson.pdfUrl;
+            }
+          } catch (_) {}
+
+          const msgText =
+            `🏭 *مصنع العاصمة للصناعات المتخصصة*\n` +
+            `📄 مرفق تقرير (PDF): *${_currentDocTitle || 'تقرير رسمي'}*\n` +
+            (uploadedUrl ? `🔗 رابط فتح وتحميل ملف الـ PDF:\n${uploadedUrl}` : '');
+
+          if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+            try {
+              await navigator.share({
+                files: [pdfFile],
+                title: _currentDocTitle || 'تقرير مصنع العاصمة PDF',
+                text: msgText
+              });
+              if (btn) btn.innerText = oldTxt;
+              return;
+            } catch (_) {}
+          }
+
+          const blobUrl = URL.createObjectURL(pdfBlob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = safeFile;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => { try { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); } catch (_) {} }, 1000);
+
+          window.open(`https://wa.me/?text=${encodeURIComponent(msgText)}`, '_blank');
+        }
+      } catch (_) {}
+      if (btn) btn.innerText = oldTxt;
+    }
+
+    function paginateTablesForPrintAndPdf(rootEl, isLandscape = false) {
+      if (!rootEl) return;
+      try {
+        if (rootEl.getAttribute('data-paginated') === '1') return;
+        if (rootEl.querySelector('[data-single-page-statement="1"]')) return;
+        if (rootEl.querySelector('.html2pdf__page-break')) return;
+
+        const wrapWidth = rootEl.getBoundingClientRect().width || (isLandscape ? 1050 : 740);
+        const maxPageHeightPx = Math.round(wrapWidth * (isLandscape ? 0.59 : 1.24));
+        const maxRowsFirstPage = isLandscape ? 10 : 18;
+        const maxRowsNextPage = isLandscape ? 11 : 20;
+
+        const tables = Array.from(rootEl.querySelectorAll('table')).filter(tbl =>
+          tbl.tHead && tbl.tBodies && tbl.tBodies.length > 0 && tbl.tBodies[0].rows.length > 1
+        );
+        if (tables.length === 0) return;
+
+        const totalDocHeight = rootEl.getBoundingClientRect().height || 0;
+        const hasTallTable = tables.some(tbl => tbl.tBodies[0].rows.length > maxRowsFirstPage);
+        if (totalDocHeight <= maxPageHeightPx && !hasTallTable) {
+          rootEl.setAttribute('data-paginated', '1');
+          return;
+        }
+
+        const mainWrap = rootEl.querySelector('.pdf-report-wrap') || rootEl.firstElementChild;
+        const reportHeaderEl = rootEl.querySelector('.pdf-report-header') || (mainWrap ? mainWrap.firstElementChild : null);
+        const headerHeight = reportHeaderEl && !reportHeaderEl.matches('table')
+          ? (reportHeaderEl.getBoundingClientRect().height || 75)
+          : 40;
+
+        for (const tbl of tables) {
+          const thead = tbl.tHead;
+          const tbody = tbl.tBodies[0];
+          const tfoot = tbl.tFoot;
+          const allRows = Array.from(tbody.rows);
+          if (allRows.length <= 1) continue;
+
+          const theadHeight = thead.getBoundingClientRect().height || 38;
+          const tfootHeight = tfoot ? (tfoot.getBoundingClientRect().height || 38) : 0;
+          const tblRect = tbl.getBoundingClientRect();
+          const wrapRect = (mainWrap || rootEl).getBoundingClientRect();
+
+          const offsetBeforeTable = Math.max(headerHeight + 16, Math.min(maxPageHeightPx * 0.45, tblRect.top - wrapRect.top));
+          const rowHeights = allRows.map(r => Math.max(26, r.getBoundingClientRect().height || 36));
+
+          const chunks = [];
+          let currentChunk = [];
+          let usedHeight = offsetBeforeTable + theadHeight + 16;
+          let isFirstChunk = true;
+
+          for (let i = 0; i < allRows.length; i++) {
+            const rH = rowHeights[i];
+            const isLastRow = (i === allRows.length - 1);
+            const extraLastHeight = isLastRow ? (tfootHeight + 45) : 0;
+            const rowLimit = isFirstChunk ? maxRowsFirstPage : maxRowsNextPage;
+
+            if (currentChunk.length > 0 && ((usedHeight + rH + extraLastHeight > maxPageHeightPx) || currentChunk.length >= rowLimit)) {
+              chunks.push(currentChunk);
+              currentChunk = [];
+              isFirstChunk = false;
+              usedHeight = Math.min(headerHeight, 75) + theadHeight + 24;
+            }
+            currentChunk.push(allRows[i]);
+            usedHeight += rH;
+          }
+          if (currentChunk.length > 0) {
+            chunks.push(currentChunk);
+          }
+
+          if (chunks.length <= 1) continue;
+
+          const frag = document.createDocumentFragment();
+          const prevTitleHeading = tbl.previousElementSibling;
+          const sectionHeadingText = (prevTitleHeading && /^H[2345]$/i.test(prevTitleHeading.tagName))
+            ? prevTitleHeading.textContent.trim()
+            : '';
+
+          chunks.forEach((chunkRows, cIdx) => {
+            if (cIdx > 0) {
+              const brk = document.createElement('div');
+              brk.className = 'html2pdf__page-break';
+              brk.style.cssText = 'page-break-before:always;break-before:page;height:0;margin:0;padding:0;';
+              frag.appendChild(brk);
+
+              const contHeader = document.createElement('div');
+              contHeader.style.cssText = 'display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #0f172a;padding:6px 0 6px;margin:4px 0 8px;font-size:12px;font-weight:800;color:#0f172a;direction:rtl;';
+              const docTitleText = (typeof _currentDocTitle !== 'undefined' && _currentDocTitle)
+                ? _currentDocTitle
+                : (document.title || 'تقرير مصنع العاصمة للصناعات المتخصصة');
+              contHeader.innerHTML = `
+                <div>🏭 مصنع العاصمة للصناعات المتخصصة — <span style="color:#0f766e;">${sectionHeadingText || docTitleText}</span></div>
+                <div style="background:#e2e8f0;border:1px solid #0f172a;padding:2px 10px;border-radius:5px;font-weight:900;">
+                  صفحة ${cIdx + 1} من ${chunks.length}
+                </div>
+              `;
+              frag.appendChild(contHeader);
+            }
+
+            const newTbl = tbl.cloneNode(false);
+            newTbl.appendChild(thead.cloneNode(true));
+            const newTbody = document.createElement('tbody');
+            chunkRows.forEach(r => newTbody.appendChild(r));
+            newTbl.appendChild(newTbody);
+            if (tfoot && cIdx === chunks.length - 1) {
+              newTbl.appendChild(tfoot.cloneNode(true));
+            }
+            frag.appendChild(newTbl);
+          });
+
+          if (tbl.parentNode) {
+            tbl.parentNode.replaceChild(frag, tbl);
+          }
+        }
+
+        rootEl.setAttribute('data-paginated', '1');
+      } catch (_) {}
+    }
+
     function downloadDirectPdfFile() {
       const container = document.getElementById('standalone-print-body');
       if (!container || !container.innerHTML.trim()) return;
+      paginateTablesForPrintAndPdf(container, Boolean(window._isLandscapeDoc));
       normalizeDomForHtml2CanvasArabic(container);
       if (typeof window.html2pdf !== 'function') {
         triggerBrowserPrintNow();
@@ -441,6 +638,7 @@
 
       const bodyEl = document.getElementById('standalone-print-body');
       bodyEl.innerHTML = finalHtml;
+      paginateTablesForPrintAndPdf(bodyEl, Boolean(landscape));
       normalizeDomForHtml2CanvasArabic(bodyEl);
       void bodyEl.offsetHeight;
 

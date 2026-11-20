@@ -59,7 +59,7 @@ let quickCalc = {
   sheetsPerPallet: 400,
   palletsCount: 1,
   pricePerM3: 22000,
-  woodenPalletUnitPrice: 0
+  woodenPalletUnitPrice: 500
 };
 
 function getWoodenPalletUnitPrice(clientObj = null, recordObj = null) {
@@ -69,7 +69,41 @@ function getWoodenPalletUnitPrice(clientObj = null, recordObj = null) {
   if (clientObj && clientObj.palletUnitPrice !== undefined && clientObj.palletUnitPrice !== null && clientObj.palletUnitPrice !== '' && Number(clientObj.palletUnitPrice) > 0) {
     return Number(clientObj.palletUnitPrice);
   }
-  return Number(state?.catalog?.woodenPalletUnitPrice || quickCalc.woodenPalletUnitPrice || 0);
+  return Number(state?.catalog?.woodenPalletUnitPrice || quickCalc.woodenPalletUnitPrice || 500) || 500;
+}
+
+function getNextUniqueOrderNumber(sObj = state) {
+  const s = sObj || state;
+  let maxNum = 100;
+  for (const o of (s?.productionOrders || [])) {
+    const m = String(o?.orderNumber || '').match(/(\d+)$/);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n >= 100 && n < 90000 && n > maxNum) maxNum = n;
+    }
+  }
+  for (const tx of (s?.financialTransactions || [])) {
+    const m = String(tx?.voucherNo || '').match(/ORD-\d+-(\d+)$/);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n >= 100 && n < 90000 && n > maxNum) maxNum = n;
+    }
+  }
+  return `ORD-2026-${maxNum + 1}`;
+}
+
+function getNextUniquePartnerCode(prefix = 'CL', sObj = state) {
+  const s = sObj || state;
+  let maxNum = 100;
+  const re = new RegExp(`^${prefix}-(\\d+)$`, 'i');
+  for (const p of (s?.partners || [])) {
+    const m = String(p?.code || '').trim().match(re);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n >= 100 && n < 90000 && n > maxNum) maxNum = n;
+    }
+  }
+  return `${prefix}-${maxNum + 1}`;
 }
 
 // Utility functions
@@ -992,6 +1026,126 @@ function normalizeState(s) {
 
   s.factoryInfo.bankAccountsText = sanitizeBankAccountsText(s.factoryInfo.bankAccountsText);
 
+  if (s.catalog) {
+    if (!Number(s.catalog.woodenPalletUnitPrice) || Number(s.catalog.woodenPalletUnitPrice) <= 0) {
+      s.catalog.woodenPalletUnitPrice = 500;
+    }
+  }
+  for (const pt of (s.partners || [])) {
+    if (!pt) continue;
+    if (!Number(pt.palletUnitPrice) || Number(pt.palletUnitPrice) <= 0) {
+      pt.palletUnitPrice = 500;
+    }
+    // Fix duplicate +31+31 pallet addition on مصنع الفنيه (CL-101) and set محمد نفاد (CL-104) to 12 pallets
+    if (pt.id === 'pt-mwg51zbd-ajlh' || pt.code === 'CL-101') {
+      if (pt.finalNetPallets === undefined) {
+        pt.finalNetPallets = 31;
+        pt.openingPalletsDelivered = 31;
+        pt.openingPalletsReceived = 0;
+        pt.palletAccountFinalized = true;
+      }
+    } else if (pt.id === 'pt-mwncuwe6-unmn' || pt.code === 'CL-104') {
+      if (pt.finalNetPallets === undefined) {
+        pt.finalNetPallets = 12;
+        pt.openingPalletsDelivered = 12;
+        pt.openingPalletsReceived = 0;
+        pt.palletAccountFinalized = true;
+      }
+    } else if (pt.finalNetPallets === undefined) {
+      const pMoves = (s.palletMovements || []).filter(
+        pm => pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim()))
+      );
+      const delSum = Number(pt.openingPalletsDelivered || 0) + pMoves.reduce((acc, pm) => acc + Number(pm.deliveredCount || 0), 0);
+      const recSum = Number(pt.openingPalletsReceived || 0) + pMoves.reduce((acc, pm) => acc + Number(pm.receivedCount || 0), 0);
+      pt.finalNetPallets = Math.max(0, delSum - recSum);
+      pt.openingPalletsDelivered = pt.finalNetPallets;
+      pt.openingPalletsReceived = 0;
+      pt.palletAccountFinalized = true;
+    }
+  }
+  for (const pm of (s.palletMovements || [])) {
+    if (!pm) continue;
+    const pPrice = Number(pm.palletUnitPrice) > 0 ? Number(pm.palletUnitPrice) : 500;
+    pm.palletUnitPrice = pPrice;
+    pm.totalDeliveredValue = +(Number(pm.deliveredCount || 0) * pPrice).toFixed(2);
+    pm.totalReceivedValue = +(Number(pm.receivedCount || 0) * pPrice).toFixed(2);
+  }
+
+  // Fix duplicate order number collision on محمد نفاد (ord-mwnd26kc-s2ki) & deduplicate / purge orphaned sales_invoices
+  const activeOrdersById = new Map();
+  for (const ord of (s.productionOrders || [])) {
+    if (!ord) continue;
+    if (ord.id === 'ord-mwnd26kc-s2ki' && ord.orderNumber === 'ORD-2026-108') {
+      ord.orderNumber = 'ORD-2026-109';
+    }
+    activeOrdersById.set(ord.id, ord);
+  }
+
+  if (Array.isArray(s.financialTransactions)) {
+    const delTxSet = new Set(Array.isArray(s.deletedIds) ? s.deletedIds : []);
+    const seenInvoiceOrderIds = new Set();
+    const cleanedTxs = [];
+    for (const tx of s.financialTransactions) {
+      if (!tx || delTxSet.has(tx.id)) continue;
+      if (tx.id === 'fin-mwnd26ke-6eyq') {
+        tx.voucherNo = 'INV-ORD-2026-109';
+        tx.orderId = 'ord-mwnd26kc-s2ki';
+        tx.paidAmount = 0;
+        tx.remainingAmount = Number(tx.totalAmount || 330000);
+      }
+      if (tx.id === 'fin-mwnd3k1b-q62v') {
+        tx.orderId = 'ord-mwnd26kc-s2ki';
+      }
+      if (tx.type === 'sales_invoice') {
+        if (tx.orderId && !activeOrdersById.has(tx.orderId)) {
+          delTxSet.add(tx.id);
+          continue;
+        }
+        if (!tx.orderId) {
+          const matchedOrd = (s.productionOrders || []).find(o =>
+            o && `INV-${o.orderNumber}` === tx.voucherNo &&
+            ((o.clientId && tx.partnerId === o.clientId) || (o.clientName && tx.partnerName && o.clientName.trim() === tx.partnerName.trim()))
+          );
+          if (matchedOrd) {
+            tx.orderId = matchedOrd.id;
+          } else {
+            delTxSet.add(tx.id);
+            continue;
+          }
+        }
+        if (tx.orderId) {
+          if (seenInvoiceOrderIds.has(tx.orderId)) {
+            delTxSet.add(tx.id);
+            continue;
+          }
+          seenInvoiceOrderIds.add(tx.orderId);
+        }
+      }
+      cleanedTxs.push(tx);
+    }
+
+    // Prevent double-counting when both sales_invoice.paidAmount > 0 AND a standalone client_payment exists for the same amount on the same order/day
+    for (const inv of cleanedTxs) {
+      if (inv.type === 'sales_invoice' && Number(inv.paidAmount || 0) > 0) {
+        const dupReceipt = cleanedTxs.find(r =>
+          r.id !== inv.id &&
+          (r.type === 'client_payment' || r.type === 'receipt') &&
+          ((inv.partnerId && r.partnerId === inv.partnerId) || (!inv.partnerId && r.partnerName === inv.partnerName)) &&
+          (r.orderId === inv.orderId || r.date === inv.date) &&
+          Math.abs(Number(r.paidAmount || r.totalAmount || 0) - Number(inv.paidAmount || 0)) < 0.01
+        );
+        if (dupReceipt) {
+          if (!dupReceipt.orderId && inv.orderId) dupReceipt.orderId = inv.orderId;
+          inv.paidAmount = 0;
+          inv.remainingAmount = Number(inv.totalAmount || 0);
+        }
+      }
+    }
+
+    s.financialTransactions = cleanedTxs;
+    s.deletedIds = Array.from(delTxSet);
+  }
+
   for (const tx of (s.financialTransactions || [])) {
     if (!tx) continue;
     if (typeof isPalletDepositTransaction === 'function' && isPalletDepositTransaction(tx)) {
@@ -1007,19 +1161,22 @@ function normalizeState(s) {
   for (const ord of (s.productionOrders || [])) {
     if (!ord) continue;
     ord.bankAccountsText = sanitizeBankAccountsText(ord.bankAccountsText);
-    if (!ord.manualDebtOverride) {
-      const clientObj = (s.partners || []).find(p => p.id === ord.clientId || (p.name && ord.clientName && p.name.trim() === ord.clientName.trim()));
-      if (clientObj) {
-        const livePrevBal = computeClientLivePreviousBalance(clientObj, ord.id, ord.orderNumber, s);
-        const pCnt = Math.max(0, Number(ord.oldPalletsCount || 0));
-        const pPrice = Math.max(0, Number(ord.palletDepositUnitPrice || 500));
-        const retDeduct = Math.max(0, Number(ord.returnedPalletsDeduction || 0));
-        ord.oldVeneerDebt = livePrevBal;
-        ord.previousDebtAmount = +(livePrevBal + (pCnt * pPrice)).toFixed(2);
-        ord.previousDebtLabel = buildPreviousDebtStatementText(livePrevBal, pCnt, pPrice, clientObj, s);
-        ord.totalRequiredAmount = +(Number(ord.netTotalAmount ?? ord.subtotalAmount ?? 0) + ord.previousDebtAmount - retDeduct).toFixed(2);
-        ord.totalRequiredInWords = numberToArabicTafqeet(Math.max(0, ord.totalRequiredAmount));
-      }
+    // Completely separate pallets from veneer order statements
+    ord.oldPalletsCount = 0;
+    ord.oldPalletsDepositAmount = 0;
+    ord.returnedPalletsCount = 0;
+    ord.returnedPalletsDeduction = 0;
+    ord.returnedPalletsLabel = '';
+    const clientObj = (s.partners || []).find(p => p.id === ord.clientId || (p.name && ord.clientName && p.name.trim() === ord.clientName.trim()));
+    if (!ord.manualDebtOverride && clientObj) {
+      const livePrevBal = computeClientLivePreviousBalance(clientObj, ord.id, ord.orderNumber, s);
+      const paidTowardOrd = computeOrderPaidAmount(ord, clientObj, s);
+      ord.oldVeneerDebt = livePrevBal;
+      ord.previousDebtAmount = +livePrevBal.toFixed(2);
+      ord.previousDebtLabel = buildPreviousDebtStatementText(livePrevBal);
+      ord.paidTowardOrderAmount = paidTowardOrd;
+      ord.totalRequiredAmount = +(Number(ord.netTotalAmount ?? ord.subtotalAmount ?? 0) + ord.previousDebtAmount - paidTowardOrd).toFixed(2);
+      ord.totalRequiredInWords = numberToArabicTafqeet(Math.max(0, ord.totalRequiredAmount));
     }
   }
 
@@ -2480,7 +2637,7 @@ function computeClientLivePalletDepositInfo(clientObj, stateRef = null) {
     return { palletDepositPaid: 0, palletDepositRefunded: 0, netPalletDepositPaid: 0, palletsCountAtClient: 0, palletUnitPrice: 500 };
   }
   const txs = (sObj.financialTransactions || []).filter(tx =>
-    ((tx.partnerId && tx.partnerId === clientObj.id) || (tx.partnerName && tx.partnerName.trim() === clientObj.name.trim())) &&
+    ((tx.partnerId && tx.partnerId === clientObj.id) || (!tx.partnerId && tx.partnerName && tx.partnerName.trim() === clientObj.name.trim())) &&
     isPalletDepositTransaction(tx)
   );
   let paid = Number(clientObj.openingPalletDepositPaid || 0);
@@ -2493,12 +2650,17 @@ function computeClientLivePalletDepositInfo(clientObj, stateRef = null) {
       paid += amt;
     }
   }
-  const palletMoves = (sObj.palletMovements || []).filter(
-    pm => (pm.clientId && pm.clientId === clientObj.id) || (pm.clientName && pm.clientName.trim() === clientObj.name.trim())
-  );
-  const palletsDelivered = Number(clientObj.openingPalletsDelivered || 0) + palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0), 0);
-  const palletsReceived = Number(clientObj.openingPalletsReceived || 0) + palletMoves.reduce((s, pm) => s + Number(pm.receivedCount || 0), 0);
-  const palletsCountAtClient = Math.max(0, palletsDelivered - palletsReceived);
+  let palletsCountAtClient = 0;
+  if (clientObj.palletAccountFinalized || clientObj.finalNetPallets !== undefined) {
+    palletsCountAtClient = Math.max(0, Number(clientObj.finalNetPallets ?? (Number(clientObj.openingPalletsDelivered || 0) - Number(clientObj.openingPalletsReceived || 0))));
+  } else {
+    const palletMoves = (sObj.palletMovements || []).filter(
+      pm => (pm.clientId && pm.clientId === clientObj.id) || (!pm.clientId && pm.clientName && pm.clientName.trim() === clientObj.name.trim())
+    );
+    const palletsDelivered = Number(clientObj.openingPalletsDelivered || 0) + palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0), 0);
+    const palletsReceived = Number(clientObj.openingPalletsReceived || 0) + palletMoves.reduce((s, pm) => s + Number(pm.receivedCount || 0), 0);
+    palletsCountAtClient = Math.max(0, palletsDelivered - palletsReceived);
+  }
   const palletUnitPrice = Number(clientObj.palletUnitPrice || sObj.catalog?.woodenPalletUnitPrice || 500) || 500;
   return {
     palletDepositPaid: +paid.toFixed(2),
@@ -2509,92 +2671,154 @@ function computeClientLivePalletDepositInfo(clientObj, stateRef = null) {
   };
 }
 
+function computeOrderPaidAmount(ord, clientObj = null, stateRef = null) {
+  const sObj = stateRef || state;
+  if (!ord || !sObj) return 0;
+  const pt = clientObj || (sObj.partners || []).find(p =>
+    (ord.clientId && p.id === ord.clientId) ||
+    (!ord.clientId && p.name && ord.clientName && p.name.trim() === ord.clientName.trim())
+  );
+
+  const matchClient = (tx) => {
+    if (!tx) return false;
+    if (pt && tx.partnerId && tx.partnerId === pt.id) return true;
+    if (ord.clientId && tx.partnerId && tx.partnerId === ord.clientId) return true;
+    const pName = (pt?.name || ord.clientName || '').trim();
+    return Boolean(pName && !tx.partnerId && tx.partnerName && tx.partnerName.trim() === pName);
+  };
+
+  // 1) Direct payment on the order's sales_invoice or financialSettlement
+  const linkedInv = (sObj.financialTransactions || []).find(tx =>
+    tx && tx.type === 'sales_invoice' &&
+    matchClient(tx) &&
+    ((ord.id && tx.orderId === ord.id) || (!tx.orderId && ord.orderNumber && tx.voucherNo === `INV-${ord.orderNumber}`))
+  );
+  const invPaid = Number(linkedInv?.paidAmount ?? ord.financialSettlement?.paidAmount ?? 0);
+
+  // 2) Check standalone client_payment / receipt vouchers linked to this order
+  // or paid by a client with 0 opening balance & 0 prior orders on/after this order's date
+  const priorOrdersCount = (sObj.productionOrders || []).filter(o => {
+    if (!o || o.id === ord.id) return false;
+    const sameCl = (pt && o.clientId && o.clientId === pt.id) ||
+      (!o.clientId && o.clientName && (pt?.name || ord.clientName) && o.clientName.trim() === (pt?.name || ord.clientName).trim());
+    if (!sameCl) return false;
+    const dO = String(o.date || o.createdAt || '');
+    const dCur = String(ord.date || ord.createdAt || '');
+    return dO < dCur || (dO === dCur && String(o.orderNumber || '').localeCompare(String(ord.orderNumber || '')) < 0);
+  }).length;
+
+  const openDebit = pt ? Number(pt.openingDebit ?? (Number(pt.balance || 0) > 0 ? Number(pt.balance) : 0)) : 0;
+  const openCredit = pt ? Number(pt.openingCredit ?? (Number(pt.balance || 0) < 0 ? Math.abs(Number(pt.balance)) : 0)) : 0;
+  const hasNoPriorAccountActivity = (openDebit === 0 && openCredit === 0 && priorOrdersCount === 0);
+
+  const linkedReceipts = (sObj.financialTransactions || []).filter(tx => {
+    if (!matchClient(tx)) return false;
+    if (tx.type !== 'client_payment' && tx.type !== 'receipt') return false;
+    if (typeof isPalletDepositTransaction === 'function' && isPalletDepositTransaction(tx)) return false;
+    if (ord.id && tx.orderId === ord.id) return true;
+    if (ord.orderNumber && (tx.description || '').includes(ord.orderNumber)) return true;
+    if (hasNoPriorAccountActivity && String(tx.date || '') >= String(ord.date || ord.createdAt || '')) return true;
+    return false;
+  });
+
+  const receiptsSum = linkedReceipts.reduce((s, tx) => s + Number(tx.paidAmount || tx.totalAmount || 0), 0);
+
+  if (invPaid > 0 && receiptsSum > 0 && Math.abs(invPaid - receiptsSum) < 0.01) {
+    return +invPaid.toFixed(2);
+  }
+  return +(invPaid + receiptsSum).toFixed(2);
+}
+
 function computeClientLivePreviousBalance(clientObj, currentOrderId = null, currentOrderNumber = null, stateRef = null) {
   const sObj = stateRef || state;
   if (!clientObj || !sObj) return 0;
 
-  const txs = (sObj.financialTransactions || []).filter(tx => {
-    const matchClient = (tx.partnerId && tx.partnerId === clientObj.id) || (tx.partnerName && tx.partnerName.trim() === clientObj.name.trim());
-    if (!matchClient) return false;
-    if (currentOrderId && tx.orderId === currentOrderId) return false;
-    if (currentOrderNumber && tx.voucherNo === `INV-${currentOrderNumber}`) return false;
-    return true;
+  const matchClient = (tx) => {
+    if (!tx) return false;
+    if (tx.partnerId && tx.partnerId === clientObj.id) return true;
+    return Boolean(!tx.partnerId && tx.partnerName && clientObj.name && tx.partnerName.trim() === clientObj.name.trim());
+  };
+
+  const clientOrders = (sObj.productionOrders || []).filter(
+    o => o && ((o.clientId && o.clientId === clientObj.id) || (!o.clientId && o.clientName && clientObj.name && o.clientName.trim() === clientObj.name.trim()))
+  ).slice().sort((a, b) => {
+    const dA = String(a.date || a.createdAt || '');
+    const dB = String(b.date || b.createdAt || '');
+    if (dA !== dB) return dA.localeCompare(dB);
+    return String(a.orderNumber || '').localeCompare(String(b.orderNumber || ''));
   });
+
+  const curOrdIdx = (currentOrderId || currentOrderNumber)
+    ? clientOrders.findIndex(o => (currentOrderId && o.id === currentOrderId) || (!currentOrderId && currentOrderNumber && o.orderNumber === currentOrderNumber))
+    : -1;
+  const curOrd = curOrdIdx >= 0 ? clientOrders[curOrdIdx] : null;
+  const curOrdDate = curOrd ? String(curOrd.date || curOrd.createdAt || '9999-99-99') : '9999-99-99';
+
+  const priorOrders = curOrdIdx >= 0 ? clientOrders.slice(0, curOrdIdx) : clientOrders;
+  const priorOrderIds = new Set(priorOrders.map(o => o.id).filter(Boolean));
+  const priorOrderInvVouchers = new Set(priorOrders.map(o => `INV-${o.orderNumber}`));
+  const nonPriorOrderIds = new Set(
+    (curOrdIdx >= 0 ? clientOrders.slice(curOrdIdx) : []).map(o => o.id).filter(Boolean)
+  );
+  const nonPriorOrderNums = (curOrdIdx >= 0 ? clientOrders.slice(curOrdIdx) : []).map(o => o.orderNumber).filter(Boolean);
 
   const openingDebit = Number(clientObj.openingDebit ?? (Number(clientObj.balance || 0) > 0 ? Number(clientObj.balance) : 0));
   const openingCredit = Number(clientObj.openingCredit ?? (Number(clientObj.balance || 0) < 0 ? Math.abs(Number(clientObj.balance)) : 0));
+  const hasNoPriorAccountActivity = (openingDebit === 0 && openingCredit === 0 && priorOrders.length === 0);
 
   let otherInvoicesTotal = 0;
   let allPaymentsTotal = 0;
-  for (const tx of txs) {
-    if (tx.type === 'sales_invoice' || tx.type === 'pallet_deposit_charge') {
+
+  for (const tx of (sObj.financialTransactions || [])) {
+    if (!matchClient(tx)) continue;
+    // Exclude pallet deposit transactions from veneer previous balance (pallet deposits are tracked in their own account)
+    if (typeof isPalletDepositTransaction === 'function' && isPalletDepositTransaction(tx)) continue;
+
+    if (tx.type === 'sales_invoice') {
+      if (currentOrderId && tx.orderId === currentOrderId) continue;
+      if (currentOrderNumber && !tx.orderId && tx.voucherNo === `INV-${currentOrderNumber}`) continue;
+      if (curOrdIdx >= 0) {
+        const isPrior = (tx.orderId && priorOrderIds.has(tx.orderId)) || (!tx.orderId && priorOrderInvVouchers.has(tx.voucherNo));
+        if (!isPrior) continue;
+      }
       otherInvoicesTotal += Number(tx.totalAmount || 0);
       allPaymentsTotal += Number(tx.paidAmount || 0);
-    } else if (tx.type === 'pallet_deposit_refund') {
-      allPaymentsTotal -= Number(tx.paidAmount || tx.totalAmount || 0);
-    } else if (tx.type === 'client_payment' || tx.type === 'receipt' || tx.type === 'pallet_deposit_payment') {
-      allPaymentsTotal += Number(tx.paidAmount || tx.totalAmount || 0);
-    } else if (tx.type === 'client_credit') {
-      allPaymentsTotal += Number(tx.totalAmount || 0);
-    }
-  }
-
-  // If the current order itself had a partial payment recorded on its own invoice, include that payment too
-  if (currentOrderId || currentOrderNumber) {
-    const curInv = (sObj.financialTransactions || []).find(tx =>
-      (currentOrderId && tx.orderId === currentOrderId) ||
-      (currentOrderNumber && tx.voucherNo === `INV-${currentOrderNumber}`)
-    );
-    if (curInv && Number(curInv.paidAmount || 0) > 0) {
-      allPaymentsTotal += Number(curInv.paidAmount || 0);
+    } else if (tx.type === 'client_payment' || tx.type === 'receipt' || tx.type === 'client_credit') {
+      if (currentOrderId && tx.orderId === currentOrderId) continue;
+      if (tx.orderId && nonPriorOrderIds.has(tx.orderId)) continue;
+      if (nonPriorOrderNums.some(num => (tx.description || '').includes(num))) continue;
+      if (curOrdIdx >= 0) {
+        const txDate = String(tx.date || '');
+        if (txDate > curOrdDate) continue;
+        if (hasNoPriorAccountActivity && txDate >= curOrdDate) continue;
+      }
+      const amt = tx.type === 'client_credit'
+        ? Number(tx.totalAmount || 0)
+        : Number(tx.paidAmount || tx.totalAmount || 0);
+      allPaymentsTotal += amt;
     }
   }
 
   const totalDebit = +(openingDebit + otherInvoicesTotal).toFixed(2);
   const totalCredit = +(openingCredit + allPaymentsTotal).toFixed(2);
   // Positive => client owes previous debt (عليه مديونية سابقة)
-  // Negative => client paid off previous debt and has credit / pallet deposit balance (له مبلغ تأمين بالتات أو رصيد دائن)
+  // Negative => client paid off previous debt and has credit balance (له رصيد دائن يُخصم من الطلبية)
   return +(totalDebit - totalCredit).toFixed(2);
 }
 
-function buildPreviousDebtStatementText(veneerBalance, palletsCount, palletPrice, clientObj = null, stateRef = null) {
-  const vBal = Number(veneerBalance || 0);
-  const pCnt = Math.max(0, Math.round(Number(palletsCount || 0)));
-  const pPrice = Math.max(0, Number(palletPrice || 500));
-  const pDeposit = +(pCnt * pPrice).toFixed(2);
-  const totalSigned = +(vBal + pDeposit).toFixed(2);
-
-  if (totalSigned < 0) {
-    const absCredit = Math.abs(totalSigned);
-    const pdInfo = clientObj ? computeClientLivePalletDepositInfo(clientObj, stateRef) : null;
-    if (pdInfo && pdInfo.netPalletDepositPaid > 0 && Math.abs(pdInfo.netPalletDepositPaid - absCredit) < 1) {
-      const cnt = pdInfo.palletsCountAtClient || (pPrice > 0 ? Math.round(absCredit / pPrice) : 0);
-      return cnt > 0
-        ? `حساب تأمين البالتات - رصيد تأمين عدد ${cnt} بالتة مسدد للعميل`
-        : 'حساب تأمين البالتات - رصيد تأمين بالتات مسدد للعميل';
-    }
+function buildPreviousDebtStatementText(veneerBalance) {
+  const vBal = +Number(veneerBalance || 0).toFixed(2);
+  if (vBal < 0) {
     return 'رصيد سابق لصالح العميل - له مبلغ مسدد يُخصم من الطلبية';
   }
-  if (totalSigned === 0) {
+  if (vBal === 0) {
     return 'المديونية السابقة مسددة بالكامل';
-  }
-  if (pCnt > 0 && vBal > 0) {
-    return `قيمة مديونية سابقة : ${fmtEnNum(vBal, 0)} جنيه توريد قشرة + ${fmtEnNum(pDeposit, 0)} جنيه حساب تأمين عدد ${pCnt} بالتة`;
-  }
-  if (pCnt > 0 && vBal === 0) {
-    return `حساب تأمين البالتات - قيمة تأمين عدد ${pCnt} بالتة سابقة`;
   }
   return 'قيمة مديونية سابقة على العميل';
 }
 
-function buildReturnedPalletsStatementText(returnedCount, oldPalletsCount, palletPrice) {
-  const retCnt = Math.max(0, Math.round(Number(returnedCount || 0)));
-  if (retCnt <= 0) return '';
-  const oldCnt = Math.max(retCnt, Math.round(Number(oldPalletsCount || retCnt)));
-  const pPrice = Math.max(0, Number(palletPrice || 500));
-  const remCnt = Math.max(0, oldCnt - retCnt);
-  const remVal = +(remCnt * pPrice).toFixed(2);
-  return `تم رد عدد ${retCnt} طبلية من مديونية ${oldCnt} طبلية ويبقى مديونية عدد ${remCnt} طبلية بقيمة ${fmtEnNum(remVal, 0)} جنيه`;
+function buildReturnedPalletsStatementText() {
+  return '';
 }
 
 function openFactoryStampModal() {
@@ -4371,12 +4595,20 @@ function renderFinishedVeneerWarehouse() {
           <button class="btn btn-sm btn-primary" onclick="printVeneerQuantitiesMatrixPdf()">
             🖨️ طباعة جدول الكميات PDF
           </button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsApp(printVeneerQuantitiesMatrixPdf)">
+            ${getWhatsAppSvgIconHtml(16)}
+            <span>إرسال واتساب PDF</span>
+          </button>
           ${canSeeFinancialPrices() ? `
             <button class="btn btn-sm btn-accent" onclick="printVeneerPricesMatrixPdf()">
               🖨️ طباعة جدول الأسعار PDF
             </button>
             <button class="btn btn-sm btn-success" onclick="printBothMatricesPdf()">
               🖨️ طباعة الكميات + الأسعار PDF
+            </button>
+            <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsApp(printBothMatricesPdf)">
+              ${getWhatsAppSvgIconHtml(16)}
+              <span>إرسال الكميات والأسعار واتساب PDF</span>
             </button>
           ` : ''}
           <button class="btn btn-sm ${veneerViewMode === 'matrix' ? 'btn-primary' : 'btn-outline'}" onclick="veneerViewMode='matrix'; render();">
@@ -5525,6 +5757,10 @@ function renderProductionLogTableSection() {
           <button class="btn btn-sm btn-accent" style="font-weight:800;" onclick="printProductionLogReportPdf()">
             🖨️ طباعة جدول الإنتاج (${data.periodLabel}) PDF
           </button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsApp(printProductionLogReportPdf)">
+            ${getWhatsAppSvgIconHtml(16)}
+            <span>إرسال واتساب PDF</span>
+          </button>
         </div>
       </div>
 
@@ -6086,22 +6322,22 @@ function handleOrderModalClientSearch(val) {
 }
 
 function computeClientMetrics(pt) {
-  if (!pt) return { orders: [], txs: [], palletMoves: [], checks: [], pendingChecks: [], pendingChecksAmount: 0, collectedChecks: [], collectedChecksAmount: 0, palletDepositTxs: [], palletDepositPaid: 0, palletDepositRefunded: 0, netPalletDepositPaid: 0, unpaidPalletDeposit: 0, refundablePalletDeposit: 0, veneerTotalDebit: 0, veneerTotalCredit: 0, veneerNetDebt: 0, totalInvoiced: 0, totalPaid: 0, netDebt: 0, palletsDelivered: 0, palletsReceived: 0, netPalletsAtClient: 0, palletUnitPrice: 0, palletsDeliveredValue: 0, palletsReceivedValue: 0, netPalletsValue: 0 };
+  if (!pt) return { orders: [], txs: [], palletMoves: [], checks: [], pendingChecks: [], pendingChecksAmount: 0, collectedChecks: [], collectedChecksAmount: 0, palletDepositTxs: [], palletDepositPaid: 0, palletDepositRefunded: 0, netPalletDepositPaid: 0, unpaidPalletDeposit: 0, refundablePalletDeposit: 0, veneerTotalDebit: 0, veneerTotalCredit: 0, veneerNetDebt: 0, totalInvoiced: 0, totalPaid: 0, netDebt: 0, palletsDelivered: 0, palletsReceived: 0, netPalletsAtClient: 0, palletUnitPrice: 500, palletsDeliveredValue: 0, palletsReceivedValue: 0, netPalletsValue: 0 };
 
   const orders = (state.productionOrders || []).filter(
-    o => (o.clientId && o.clientId === pt.id) || (o.clientName && o.clientName.trim() === pt.name.trim())
+    o => (o.clientId && o.clientId === pt.id) || (!o.clientId && o.clientName && pt.name && o.clientName.trim() === pt.name.trim())
   );
 
   const txs = (state.financialTransactions || []).filter(
-    tx => (tx.partnerId && tx.partnerId === pt.id) || (tx.partnerName && tx.partnerName.trim() === pt.name.trim())
+    tx => (tx.partnerId && tx.partnerId === pt.id) || (!tx.partnerId && tx.partnerName && pt.name && tx.partnerName.trim() === pt.name.trim())
   );
 
   const palletMoves = (state.palletMovements || []).filter(
-    pm => (pm.clientId && pm.clientId === pt.id) || (pm.clientName && pm.clientName.trim() === pt.name.trim())
+    pm => (pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim())
   );
 
   const checks = (state.checksUnderCollection || []).filter(
-    chk => (chk.clientId && chk.clientId === pt.id) || (chk.clientName && chk.clientName.trim() === pt.name.trim())
+    chk => (chk.clientId && chk.clientId === pt.id) || (!chk.clientId && chk.clientName && pt.name && chk.clientName.trim() === pt.name.trim())
   );
   const pendingChecks = checks.filter(c => (c.status || 'under_collection') === 'under_collection');
   const pendingChecksAmount = +pendingChecks.reduce((s, c) => s + Number(c.amount || 0), 0).toFixed(2);
@@ -6126,13 +6362,10 @@ function computeClientMetrics(pt) {
       const pAmt = Number(tx.paidAmount || tx.totalAmount || 0);
       if (tx.type === 'pallet_deposit_refund') {
         palletDepositRefunded += pAmt;
-        paymentsTotal -= pAmt;
       } else if (tx.type === 'pallet_deposit_charge') {
-        invoicesTotal += Number(tx.totalAmount || 0);
-        paymentsTotal += Number(tx.paidAmount || 0);
+        palletDepositPaid += Number(tx.paidAmount || 0);
       } else {
         palletDepositPaid += pAmt;
-        paymentsTotal += pAmt;
       }
       continue;
     }
@@ -6164,30 +6397,48 @@ function computeClientMetrics(pt) {
   const veneerNetDebt = +(veneerTotalDebit - veneerTotalCredit).toFixed(2);
 
   const palletUnitPrice = getWoodenPalletUnitPrice(pt);
-  const palletsDelivered = Number(pt.openingPalletsDelivered || 0) + palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0), 0);
-  const palletsReceived = Number(pt.openingPalletsReceived || 0) + palletMoves.reduce((s, pm) => s + Number(pm.receivedCount || 0), 0);
-  const netPalletsAtClient = palletsDelivered - palletsReceived;
+  let palletsDelivered = 0;
+  let palletsReceived = 0;
+  let netPalletsAtClient = 0;
+  let palletsDeliveredValue = 0;
+  let palletsReceivedValue = 0;
+  let netPalletsValue = 0;
 
-  const palletsDeliveredValue = +(
-    Number(pt.openingPalletsDelivered || 0) * palletUnitPrice +
-    palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0) * getWoodenPalletUnitPrice(pt, pm), 0)
-  ).toFixed(2);
-  const palletsReceivedValue = +(
-    Number(pt.openingPalletsReceived || 0) * palletUnitPrice +
-    palletMoves.reduce((s, pm) => s + Number(pm.receivedCount || 0) * getWoodenPalletUnitPrice(pt, pm), 0)
-  ).toFixed(2);
-  const netPalletsValue = +(palletsDeliveredValue - palletsReceivedValue).toFixed(2);
+  if (pt.palletAccountFinalized || pt.finalNetPallets !== undefined) {
+    const finalNet = Math.max(0, Number(pt.finalNetPallets ?? (Number(pt.openingPalletsDelivered || 0) - Number(pt.openingPalletsReceived || 0))));
+    palletsDelivered = finalNet;
+    palletsReceived = 0;
+    netPalletsAtClient = finalNet;
+    palletsDeliveredValue = +(finalNet * palletUnitPrice).toFixed(2);
+    palletsReceivedValue = 0;
+    netPalletsValue = palletsDeliveredValue;
+  } else {
+    palletsDelivered = Number(pt.openingPalletsDelivered || 0) + palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0), 0);
+    palletsReceived = Number(pt.openingPalletsReceived || 0) + palletMoves.reduce((s, pm) => s + Number(pm.receivedCount || 0), 0);
+    netPalletsAtClient = palletsDelivered - palletsReceived;
+    palletsDeliveredValue = +(
+      Number(pt.openingPalletsDelivered || 0) * palletUnitPrice +
+      palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0) * getWoodenPalletUnitPrice(pt, pm), 0)
+    ).toFixed(2);
+    palletsReceivedValue = +(
+      Number(pt.openingPalletsReceived || 0) * palletUnitPrice +
+      palletMoves.reduce((s, pm) => s + Number(pm.receivedCount || 0) * getWoodenPalletUnitPrice(pt, pm), 0)
+    ).toFixed(2);
+    netPalletsValue = +(palletsDeliveredValue - palletsReceivedValue).toFixed(2);
+  }
 
   palletDepositPaid = +palletDepositPaid.toFixed(2);
   palletDepositRefunded = +palletDepositRefunded.toFixed(2);
   const netPalletDepositPaid = +(palletDepositPaid - palletDepositRefunded).toFixed(2);
   const unpaidPalletDeposit = Math.max(0, +(netPalletsValue - netPalletDepositPaid).toFixed(2));
   const refundablePalletDeposit = Math.max(0, +(netPalletDepositPaid - netPalletsValue).toFixed(2));
+  const veneerTxs = txs.filter(tx => !isPalletDepositTransaction(tx));
 
   return {
     orders,
-    txs,
-    palletMoves,
+    txs: veneerTxs,
+    allTxs: txs,
+    palletMoves: (pt.palletAccountFinalized || pt.finalNetPallets !== undefined) ? [] : palletMoves,
     checks,
     pendingChecks,
     pendingChecksAmount,
@@ -6795,6 +7046,7 @@ function renderAccounting() {
           <button class="btn btn-outline" style="border-color:#d97706;color:#b45309;font-weight:800;" onclick="openSetDefaultPalletPriceModal()">🪵 تحديد قيمة البالتة (${fmtMoney(defaultPalletPrice)})</button>
           <button class="btn btn-outline" onclick="openNewFinancialTxModal()">💵 تسجيل سند مالي عام بالخزينة</button>
           <button class="btn btn-outline" onclick="printAllClientsAccountingReportPdf()">🖨️ طباعة كشف حسابات جميع العملاء PDF</button>
+          <button class="btn" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsApp(printAllClientsAccountingReportPdf)">${getWhatsAppSvgIconHtml(18)}<span>إرسال واتساب PDF</span></button>
         </div>
       </div>
 
@@ -6929,6 +7181,10 @@ function renderAccounting() {
                       </button>
                       <button class="btn btn-sm btn-outline" onclick="printClientFullStatement('${pt.id}')">
                         🖨️ طباعة
+                      </button>
+                      <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(() => printClientFullStatement('${pt.id}'), '${pt.phone || ''}', '${pt.name || ''}')" title="تحويل كشف حساب العميل إلى PDF وإرساله عبر الواتساب">
+                        ${getWhatsAppSvgIconHtml(15)}
+                        <span>واتساب PDF</span>
                       </button>
                       ${isFullAdmin(currentUser) ? `
                         <button class="btn btn-sm" style="background:#0f766e;color:#fff;font-weight:800;" onclick="openNewClientOrderPrepModal('${pt.id}', true)" title="تنفيذ طلبية قديمة للعميل بعد الرصيد الافتتاحي (مع سؤال الخروج من المخزن أم لا)">📜 طلبية قديمة</button>
@@ -7311,32 +7567,38 @@ function renderReports() {
     <!-- On-Demand Daily / Weekly / Monthly Production Log Table -->
     ${renderProductionLogTableSection()}
 
-    <!-- Central PDF Print Hub for All Factory Reports -->
+    <!-- Central PDF Print & WhatsApp Share Hub for All Factory Reports -->
     <div class="card" style="border:2px solid var(--primary);background:linear-gradient(135deg, rgba(15,118,110,0.06), rgba(217,119,6,0.06));">
       <div class="card-header">
         <div>
-          <div class="card-title">🖨️ مركز طباعة وتصدير جميع التقارير والجداول بصيغة PDF</div>
-          <small style="color:var(--text-muted);">اضغط على أي تقرير لفتحه في وضع الطباعة الرسمي أو حفظه كملف PDF مباشرة</small>
+          <div class="card-title">🖨️📲 مركز طباعة وتصدير وإرسال جميع التقارير والجداول بصيغة PDF وعبر الواتساب لجميع المستخدمين</div>
+          <small style="color:var(--text-muted);">اضغط على أي تقرير لفتحه في وضع الطباعة الرسمي أو تحميله كملف PDF أو إرساله عبر الواتساب لجميع المستخدمين (بدون تداخل حروف أو أرقام)</small>
         </div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;">
         <button class="btn btn-success" style="font-weight:800;" onclick="printProductionLogReportPdf()">🖨️ جدول الإنتاج (يومي / أسبوعي / شهري) PDF</button>
+        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printProductionLogReportPdf)">📲 إرسال جدول الإنتاج PDF واتساب</button>
         <button class="btn btn-primary" onclick="printVeneerQuantitiesMatrixPdf()">🖨️ جدول كميات القشرة PDF</button>
+        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printVeneerQuantitiesMatrixPdf)">📲 إرسال جدول الكميات PDF واتساب</button>
         ${canSeeFinancialPrices() ? `
           <button class="btn btn-accent" onclick="printVeneerPricesMatrixPdf()">🖨️ جدول الأسعار PDF</button>
           <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="printBothMatricesPdf()">🖨️ جدول الكميات + الأسعار معاً PDF</button>
+          <button class="btn" style="background:#15803d;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printBothMatricesPdf)">📲 إرسال الكميات + الأسعار PDF واتساب</button>
         ` : ''}
         <button class="btn btn-outline" onclick="printPalletsInventoryPdf()">🖨️ سجل البالتات بالمخزن PDF</button>
         <button class="btn btn-outline" onclick="printSalesReturnsReportPdf()">🖨️ سجل مرتجعات المبيعات PDF</button>
         <button class="btn btn-outline" onclick="printRawMaterialsReportPdf()">🖨️ جرد مخزن الخامات PDF</button>
         <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="printLogContainersAndSerialsReportPdf()">🖨️ بيان حاويات وسيريالات الجذوع PDF</button>
+        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printLogContainersAndSerialsReportPdf)">📲 إرسال بيان الجذوع PDF واتساب</button>
         <button class="btn btn-outline" onclick="printScrapReportPdf()">🖨️ جرد مخزن الهالك PDF</button>
         <button class="btn btn-outline" onclick="printSparePartsReportPdf()">🖨️ جرد قطع الغيار PDF</button>
         <button class="btn btn-outline" onclick="printWarehouseMovementsReportPdf()">🖨️ سجل حركات المخازن PDF</button>
+        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printWarehouseMovementsReportPdf)">📲 إرسال حركات المخازن PDF واتساب</button>
         <button class="btn btn-outline" onclick="printAllProductionOrdersReportPdf()">🖨️ سجل أوامر التجهيز PDF</button>
         <button class="btn btn-outline" onclick="printAllApprovalsDispatchReportPdf()">🖨️ سجل أذون الصرف والسيارات PDF</button>
         ${canSeeFinancialPrices() ? `
           <button class="btn btn-outline" onclick="printAllClientsAccountingReportPdf()">🖨️ كشف حسابات جميع العملاء PDF</button>
+          <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printAllClientsAccountingReportPdf)">📲 إرسال حسابات جميع العملاء PDF واتساب</button>
           <button class="btn btn-outline" onclick="printAllFinancialTransactionsReportPdf()">🖨️ سجل الفواتير والتحصيلات PDF</button>
           <button class="btn btn-outline" onclick="printAllPalletMovementsReportPdf()">🖨️ سجل حركة البالتات مع العملاء PDF</button>
         ` : ''}
@@ -8295,7 +8557,7 @@ function openNewDispatchRequestModal() {
 
 function openNewClientOrderPrepModal(preselectedClientId = '', isOldOrderMode = false) {
   const modalRoot = document.getElementById('modal-root');
-  const nextNo = `ORD-2026-${101 + (state.productionOrders?.length || 0)}`;
+  const nextNo = getNextUniqueOrderNumber();
   const clients = (state.partners || []).filter(pt => pt.type !== 'supplier');
   const defaultClient = clients.find(c => c.id === preselectedClientId) || clients[0] || null;
   const isExec = isFullAdmin(currentUser);
@@ -8391,16 +8653,8 @@ function openNewClientOrderPrepModal(preselectedClientId = '', isOldOrderMode = 
                   <input id="ord-client-open-credit" type="number" step="0.5" min="0" class="form-control" value="${defOpenCredit}" oninput="onDraftOpeningBalanceEdit()" style="font-weight:900;border-color:var(--success);" />
                 </div>
                 <div class="form-group" style="margin:0;">
-                  <label style="font-size:0.78rem;font-weight:700;">🪵 بالتات افتتاحية مسلمة / مستلمة</label>
-                  <div style="display:flex;gap:4px;align-items:center;">
-                    <input id="ord-client-open-pdel" type="number" min="0" class="form-control" value="${defOpenPDel}" placeholder="مسلم" title="بالتات افتتاحية مسلمة للعميل" style="font-weight:800;" />
-                    <span>/</span>
-                    <input id="ord-client-open-prec" type="number" min="0" class="form-control" value="${defOpenPRec}" placeholder="مستلم" title="بالتات افتتاحية مستلمة من العميل" style="font-weight:800;" />
-                  </div>
-                </div>
-                <div class="form-group" style="margin:0;">
-                  <label style="color:var(--primary);font-weight:800;font-size:0.78rem;">🔗 الرصيد التراكمي قبل هذه الطلبية</label>
-                  <input id="ord-chain-prev-balance-preview" type="text" class="form-control" value="${fmtMoney(defaultVeneerDebt)}" readonly style="font-weight:900;background:var(--bg-elevated);color:var(--primary);" title="الرصيد الافتتاحي + صافي الطلبيات السابقة - الدفعات المسددة" />
+                  <label style="color:var(--primary);font-weight:800;font-size:0.78rem;">🔗 الرصيد التراكمي لحساب القشرة قبل هذه الطلبية</label>
+                  <input id="ord-chain-prev-balance-preview" type="text" class="form-control" value="${fmtMoney(defaultVeneerDebt)}" readonly style="font-weight:900;background:var(--bg-elevated);color:var(--primary);" title="الرصيد الافتتاحي لحساب القشرة + صافي الطلبيات السابقة - الدفعات المسددة" />
                 </div>
               </div>
 
@@ -8460,37 +8714,22 @@ function openNewClientOrderPrepModal(preselectedClientId = '', isOldOrderMode = 
             </div>
 
             <div class="form-group">
-              <label style="color:var(--danger);font-weight:800;">📒 الرصيد السابق للعميل (مديونية عليه [+] أو له مبلغ مسدد [-])</label>
-              <input id="ord-old-veneer-debt" type="number" step="0.5" class="form-control" value="${defaultVeneerDebt}" oninput="recalcDraftOrderTotals('veneer')" style="font-weight:800;border-color:var(--danger);" title="موجب = مديونية سابقة على العميل | سالب = رصيد سابق لصالح العميل يُخصم من الطلبية" />
+              <label style="color:var(--danger);font-weight:800;">📒 الرصيد السابق لحساب القشرة للعميل (مديونية عليه [+] أو له مبلغ مسدد [-])</label>
+              <input id="ord-old-veneer-debt" type="number" step="0.5" class="form-control" value="${defaultVeneerDebt}" oninput="recalcDraftOrderTotals('veneer')" style="font-weight:800;border-color:var(--danger);" title="موجب = مديونية قشرة سابقة على العميل | سالب = رصيد سابق لصالح العميل يُخصم من الطلبية" />
+              <input id="ord-old-pallets-cnt" type="hidden" value="0" />
+              <input id="ord-pallet-unit-price" type="hidden" value="500" />
+              <input id="ord-ret-pallets-cnt" type="hidden" value="0" />
+              <input id="ord-ret-pallets-label" type="hidden" value="" />
             </div>
 
             <div class="form-group">
-              <label style="color:#b45309;font-weight:800;">🪵 تأمين البالتات السابقة (اختياري: العدد × قيمة البالتة)</label>
-              <div style="display:flex;gap:5px;align-items:center;">
-                <input id="ord-old-pallets-cnt" type="number" min="0" class="form-control" value="${defaultOldPalletsCnt}" oninput="recalcDraftOrderTotals('pallets')" placeholder="عدد البالتات" title="عدد البالتات المسلمة سابقاً" style="font-weight:800;" />
-                <span style="font-weight:800;">×</span>
-                <input id="ord-pallet-unit-price" type="number" step="10" min="0" class="form-control" value="${defaultPalletPrice}" oninput="recalcDraftOrderTotals('pallets')" placeholder="سعر البالتة" title="قيمة تأمين البالتة الواحدة (ج.م)" style="font-weight:800;max-width:95px;" />
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label style="color:var(--danger);font-weight:800;">💰 صافي الرصيد السابق (موجب = عليه / سالب = له)</label>
+              <label style="color:var(--danger);font-weight:800;">💰 صافي الرصيد السابق لحساب القشرة (موجب = عليه / سالب = له)</label>
               <input id="ord-old-debt" type="number" step="0.5" class="form-control" value="${defaultOldDebt}" oninput="recalcDraftOrderTotals('total_debt')" style="font-weight:800;border-color:var(--danger);" />
-            </div>
-
-            <div class="form-group">
-              <label style="color:var(--success);font-weight:800;">🔄 عدد الطبلية / البالتات المرتجعة (يُخصم من المديونية)</label>
-              <input id="ord-ret-pallets-cnt" type="number" min="0" class="form-control" value="${defaultRetPalletsCnt}" oninput="recalcDraftOrderTotals('pallets')" style="font-weight:800;border-color:var(--success);" />
             </div>
 
             <div class="form-group" style="grid-column: 1 / -1;">
               <label style="font-weight:800;color:#991b1b;">📝 نص سطر المديونية السابقة في جدول البيان (يتحدث تلقائياً ويمكنك تعديله):</label>
               <input id="ord-old-debt-label" class="form-control" value="${defaultOldDebtLabel}" oninput="this.dataset.manual='1'" style="font-weight:700;" />
-            </div>
-
-            <div class="form-group" style="grid-column: 1 / -1;">
-              <label style="font-weight:800;color:#15803d;">📝 نص سطر رد الطبلية / البالتات في جدول البيان (يظهر عند وجود بالتات مرتجعة):</label>
-              <input id="ord-ret-pallets-label" class="form-control" value="${defaultRetPalletsLabel}" oninput="this.dataset.manual='1'" placeholder="مثال: تم رد عدد (60) طبليه من مديونية (87) طبليه ويبقي مديونية بعدد (27) طبلية بقيمة 13,500جنيه" style="font-weight:700;" />
             </div>
 
             <div class="form-group">
@@ -9146,7 +9385,7 @@ function submitNewClientOrderPrep(e, andPrintPdf = false, explicitExitMode = '')
 
   let clientObj = collected.clientObj;
   if (!clientObj) {
-    const nextCode = `CL-${101 + (state.partners?.length || 0)}`;
+    const nextCode = getNextUniquePartnerCode('CL');
     const newOpenDebit = createdByExec ? Math.max(0, Number(document.getElementById('ord-client-open-debit')?.value || 0)) : 0;
     const newOpenCredit = createdByExec ? Math.max(0, Number(document.getElementById('ord-client-open-credit')?.value || 0)) : 0;
     const newOpenPDel = createdByExec ? Math.max(0, Number(document.getElementById('ord-client-open-pdel')?.value || 0)) : 0;
@@ -9440,10 +9679,7 @@ function openClientOrderStatementModal(orderId) {
 
         <form onsubmit="saveClientOrderStatementChanges(event, '${ord.id}')">
           ${isExec ? (() => {
-            const linkedInvStmt = (state.financialTransactions || []).find(tx =>
-              tx.type === 'sales_invoice' && (tx.orderId === ord.id || ((tx.partnerId === ord.clientId || tx.partnerName === ord.clientName) && tx.voucherNo === `INV-${ord.orderNumber}`))
-            );
-            const curPaidOnStmt = Number(linkedInvStmt?.paidAmount ?? ord.financialSettlement?.paidAmount ?? 0);
+            const curPaidOnStmt = computeOrderPaidAmount(ord, clientObj);
             return `
             <div class="form-grid" style="margin-bottom:12px;background:var(--bg-elevated);padding:10px 14px;border-radius:10px;border:1.5px solid #0f766e;">
               <div class="form-group">
@@ -9462,8 +9698,8 @@ function openClientOrderStatementModal(orderId) {
                 </select>
               </div>
               <div class="form-group">
-                <label style="color:var(--success);font-weight:900;">💵 المسدد على هذه الطلبية (ج.م)</label>
-                <input id="stmt-paid-amount" type="number" step="0.5" min="0" class="form-control" value="${curPaidOnStmt}" data-old-paid="${curPaidOnStmt}" style="font-weight:900;border-color:var(--success);color:var(--success);" />
+                <label style="color:var(--success);font-weight:900;">💵 دفعة مسددة تحت حساب الطلبية (ج.م)</label>
+                <input id="stmt-paid-amount" type="number" step="0.5" min="0" class="form-control" value="${curPaidOnStmt}" data-old-paid="${curPaidOnStmt}" oninput="recalcStatementModalLive('${ord.id}')" style="font-weight:900;border-color:var(--success);color:var(--success);" />
               </div>
             </div>
             `;
@@ -9567,58 +9803,23 @@ function openClientOrderStatementModal(orderId) {
               <input id="stmt-disc-val" type="number" step="0.5" min="0" class="form-control" value="${ord.discountValue || 0}" oninput="recalcStatementModalLive('${ord.id}')" />
             </div>
 
-            ${cm && (cm.netPalletsAtClient > 0 || cm.netPalletDepositPaid > 0) ? `
-            <div style="grid-column: 1 / -1;background:rgba(124,58,237,0.08);border:1.5px solid #7c3aed;border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-              <div style="font-size:0.82rem;">
-                🛡️ <strong style="color:#6d28d9;">حساب تأمين البالتات للعميل (${ord.clientName}):</strong>
-                طرفه <strong>${cm.netPalletsAtClient} بالتة</strong> بقيمة <strong>${fmtMoney(cm.netPalletsValue)}</strong> |
-                المسدد في حساب تأمين البالتات: <strong style="color:#6d28d9;">${fmtMoney(cm.netPalletDepositPaid)}</strong>
-              </div>
-              <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                ${cm.netPalletDepositPaid > 0 ? `
-                  <button type="button" class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;font-size:0.72rem;" onclick="applyStmtPalletDepositMode('${ord.id}', 'deduct_paid')">
-                    🛡️ خصم تأمين البالتات المسدد للعميل (-${fmtMoney(cm.netPalletDepositPaid)})
-                  </button>
-                ` : ''}
-                <button type="button" class="btn btn-sm btn-outline" style="border-color:#7c3aed;color:#6d28d9;font-weight:800;font-size:0.72rem;" onclick="applyStmtPalletDepositMode('${ord.id}', 'separate_zero')">
-                  📒 فصل تأمين البالتات في حسابه المستقل (بدون خصم من البيان)
-                </button>
-              </div>
-            </div>
-            ` : ''}
-
             <div class="form-group">
-              <label style="color:var(--danger);font-weight:800;">📒 الرصيد السابق للعميل (مديونية عليه [+] أو له تأمين بالتات مسدد [-])</label>
-              <input id="stmt-old-veneer-debt" type="number" step="0.5" class="form-control" value="${defaultVeneerDebt}" oninput="this.dataset.manual='1'; recalcStatementModalLive('${ord.id}', null, 'veneer')" style="font-weight:800;border-color:var(--danger);" title="موجب = مديونية سابقة على العميل | سالب = رصيد حساب تأمين البالتات أو مبلغ مسدد لصالح العميل" />
+              <label style="color:var(--danger);font-weight:800;">📒 الرصيد السابق لحساب القشرة للعميل (مديونية عليه [+] أو له مبلغ مسدد [-])</label>
+              <input id="stmt-old-veneer-debt" type="number" step="0.5" class="form-control" value="${defaultVeneerDebt}" oninput="this.dataset.manual='1'; recalcStatementModalLive('${ord.id}', null, 'veneer')" style="font-weight:800;border-color:var(--danger);" title="موجب = مديونية قشرة سابقة على العميل | سالب = مبلغ مسدد لصالح العميل" />
+              <input id="stmt-old-pallets-cnt" type="hidden" value="0" />
+              <input id="stmt-pallet-unit-price" type="hidden" value="500" />
+              <input id="stmt-ret-pallets-cnt" type="hidden" value="0" />
+              <input id="stmt-ret-pallets-label" type="hidden" value="" />
             </div>
 
             <div class="form-group">
-              <label style="color:#b45309;font-weight:800;">🪵 تأمين البالتات السابقة (اختياري: العدد × قيمة البالتة)</label>
-              <div style="display:flex;gap:5px;align-items:center;">
-                <input id="stmt-old-pallets-cnt" type="number" min="0" class="form-control" value="${defaultOldPalletsCnt}" oninput="this.dataset.manual='1'; recalcStatementModalLive('${ord.id}', null, 'pallets')" placeholder="عدد البالتات" title="عدد البالتات المسلمة سابقاً" style="font-weight:800;" />
-                <span style="font-weight:800;">×</span>
-                <input id="stmt-pallet-unit-price" type="number" step="10" min="0" class="form-control" value="${defaultPalletPrice}" oninput="recalcStatementModalLive('${ord.id}', null, 'pallets')" placeholder="سعر البالتة" title="قيمة تأمين البالتة الواحدة (ج.م)" style="font-weight:800;max-width:95px;" />
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label style="color:var(--danger);font-weight:800;">💰 صافي الرصيد السابق (موجب = عليه / سالب = له)</label>
+              <label style="color:var(--danger);font-weight:800;">💰 صافي الرصيد السابق لحساب القشرة (موجب = عليه / سالب = له)</label>
               <input id="stmt-old-debt" type="number" step="0.5" class="form-control" value="${defaultOldDebt}" oninput="this.dataset.manual='1'; recalcStatementModalLive('${ord.id}', null, 'total_debt')" style="font-weight:800;border-color:var(--danger);" />
-            </div>
-
-            <div class="form-group">
-              <label style="color:var(--success);font-weight:800;">🔄 عدد الطبلية / البالتات المرتجعة (يُخصم من المديونية)</label>
-              <input id="stmt-ret-pallets-cnt" type="number" min="0" class="form-control" value="${defaultRetPalletsCnt}" oninput="recalcStatementModalLive('${ord.id}', null, 'pallets')" style="font-weight:800;border-color:var(--success);" />
             </div>
 
             <div class="form-group" style="grid-column: 1 / -1;">
               <label style="font-weight:800;color:#991b1b;">📝 نص سطر المديونية السابقة في جدول البيان:</label>
               <input id="stmt-old-debt-label" class="form-control" value="${defaultOldDebtLabel}" oninput="this.dataset.manual='1'" style="font-weight:700;" />
-            </div>
-
-            <div class="form-group" style="grid-column: 1 / -1;">
-              <label style="font-weight:800;color:#15803d;">📝 نص سطر رد الطبلية / البالتات في جدول البيان:</label>
-              <input id="stmt-ret-pallets-label" class="form-control" value="${defaultRetPalletsLabel}" oninput="this.dataset.manual='1'" placeholder="مثال: تم رد عدد (60) طبليه من مديونية (87) طبليه ويبقي مديونية بعدد (27) طبلية بقيمة 13,500جنيه" style="font-weight:700;" />
             </div>
 
             <div class="form-group">
@@ -9674,6 +9875,10 @@ function openClientOrderStatementModal(orderId) {
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <button type="button" class="btn btn-accent" style="font-weight:800;" onclick="saveAndPrintClientOrderStatement('${ord.id}')">
                 🖨️ طباعة وتصدير بيان الطلبية PDF (رسمي باللوجو والختم)
+              </button>
+              <button type="button" class="btn" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsApp(() => saveAndPrintClientOrderStatement('${ord.id}'), '${clientObj?.phone || ord.clientPhone || ''}', '${ord.clientName || ''}')">
+                ${getWhatsAppSvgIconHtml(18)}
+                <span>إرسال واتساب PDF</span>
               </button>
               ${ord.carDispatchVoucher ? `
                 <button type="button" class="btn btn-success" onclick="printVehicleDispatchVoucher('${ord.id}')">
@@ -9815,7 +10020,9 @@ function recalcStatementModalLive(orderId, changedRowIdx = null, triggerSource =
     lblRetEl.value = buildReturnedPalletsStatementText(returnedPalletsCount, oldPalletsCount, palletUnitPrice);
   }
 
-  const totalReq = +(net + oldDebt - returnedPalletsDeduction).toFixed(2);
+  const paidInputEl = document.getElementById('stmt-paid-amount');
+  const paidTowardOrder = paidInputEl ? Math.max(0, Number(paidInputEl.value || 0)) : computeOrderPaidAmount(ord, clientObj);
+  const totalReq = +(net + oldDebt - returnedPalletsDeduction - paidTowardOrder).toFixed(2);
 
   const wordsEl = document.getElementById('stmt-amount-words');
   if (wordsEl) {
@@ -9830,8 +10037,9 @@ function recalcStatementModalLive(orderId, changedRowIdx = null, triggerSource =
         <div class="calc-preview-item"><span>إجمالي الطلبية</span><strong>${fmtMoney(subtotal)}</strong></div>
         ${discAmt > 0 ? `<div class="calc-preview-item"><span>الخصم (${fmtNum(discPct, 2)}%)</span><strong style="color:var(--danger);">-${fmtMoney(discAmt)}</strong></div>` : ''}
         <div class="calc-preview-item"><span>صافي الطلبية</span><strong style="color:var(--success);font-size:1.08rem;">${fmtMoney(net)}</strong></div>
-        <div class="calc-preview-item"><span>${oldDebt < 0 ? 'رصيد سابق لصالح العميل (له)' : 'المديونية السابقة على العميل'}</span><strong style="color:${oldDebt < 0 ? 'var(--success)' : oldDebt > 0 ? 'var(--danger)' : 'var(--text-muted)'};">${oldDebt < 0 ? '-' + fmtMoney(Math.abs(oldDebt)) : fmtMoney(oldDebt)}</strong></div>
+        ${oldDebt !== 0 ? `<div class="calc-preview-item"><span>${oldDebt < 0 ? 'رصيد سابق لصالح العميل (له)' : 'المديونية السابقة على العميل'}</span><strong style="color:${oldDebt < 0 ? 'var(--success)' : 'var(--danger)'};">${oldDebt < 0 ? '-' + fmtMoney(Math.abs(oldDebt)) : fmtMoney(oldDebt)}</strong></div>` : ''}
         ${returnedPalletsDeduction > 0 ? `<div class="calc-preview-item"><span>خصم رد عدد (${returnedPalletsCount}) طبلية</span><strong style="color:var(--success);">-${fmtMoney(returnedPalletsDeduction)}</strong></div>` : ''}
+        ${paidTowardOrder > 0 ? `<div class="calc-preview-item"><span>دفعة مسددة تحت حساب الطلبية</span><strong style="color:var(--success);">-${fmtMoney(paidTowardOrder)}</strong></div>` : ''}
         <div class="calc-preview-item" style="background:rgba(15,118,110,0.12);border:1.5px solid var(--primary);border-radius:8px;padding:6px 10px;">
           <span style="font-weight:800;color:var(--primary);">💎 إجمالي المبلغ المستحق</span>
           <strong style="color:var(--primary);font-size:1.15rem;">${fmtMoney(totalReq)}</strong>
@@ -10083,20 +10291,57 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
   if (isExec && stmtPaidInput) {
     const oldStmtPaid = Number(stmtPaidInput.dataset.oldPaid || 0);
     const newStmtPaid = Math.max(0, Number(stmtPaidInput.value || 0));
-    if (Math.abs(newStmtPaid - oldStmtPaid) > 0.001 || ord.financialSettlement) {
-      ord.financialSettlement = ord.financialSettlement || { date: ord.date || todayStr(), paymentMethod: 'نقدي بالخزينة', approvedBy: currentUser.name };
-      ord.financialSettlement.netTotal = net;
-      ord.financialSettlement.paidAmount = newStmtPaid;
-      ord.financialSettlement.remainingDebt = Math.max(0, +(net - newStmtPaid).toFixed(2));
+    ord.paidTowardOrderAmount = newStmtPaid;
+    ord.totalRequiredAmount = +(net + oldDebt - returnedPalletsDeduction - newStmtPaid).toFixed(2);
+    ord.totalRequiredInWords = numberToArabicTafqeet(Math.max(0, ord.totalRequiredAmount));
+
+    if (Math.abs(newStmtPaid - oldStmtPaid) > 0.001) {
+      // Check if payment is stored as a standalone client_payment linked to this order
+      const linkedReceipt = (state.financialTransactions || []).find(tx =>
+        (tx.type === 'client_payment' || tx.type === 'receipt') &&
+        tx.orderId === ord.id
+      );
       const linkedInvStmt = (state.financialTransactions || []).find(tx =>
         tx.type === 'sales_invoice' && (tx.orderId === ord.id || ((tx.partnerId === ord.clientId || tx.partnerName === ord.clientName) && (tx.voucherNo === `INV-${oldOrderNumber}` || tx.voucherNo === `INV-${ord.orderNumber}`)))
       );
-      if (linkedInvStmt) {
-        linkedInvStmt.paidAmount = newStmtPaid;
+      if (linkedReceipt) {
+        linkedReceipt.paidAmount = newStmtPaid;
+        linkedReceipt.totalAmount = newStmtPaid;
+        linkedReceipt.updatedAt = now;
+        if (linkedInvStmt) {
+          linkedInvStmt.paidAmount = 0;
+          linkedInvStmt.remainingAmount = net;
+        }
+        if (ord.financialSettlement) {
+          ord.financialSettlement.netTotal = net;
+          ord.financialSettlement.paidAmount = 0;
+          ord.financialSettlement.remainingDebt = Math.max(0, +(net - newStmtPaid).toFixed(2));
+        }
+      } else {
+        ord.financialSettlement = ord.financialSettlement || { date: ord.date || todayStr(), paymentMethod: 'نقدي بالخزينة', approvedBy: currentUser.name };
+        ord.financialSettlement.netTotal = net;
+        ord.financialSettlement.paidAmount = newStmtPaid;
+        ord.financialSettlement.remainingDebt = Math.max(0, +(net - newStmtPaid).toFixed(2));
+        if (linkedInvStmt) {
+          linkedInvStmt.paidAmount = newStmtPaid;
+          linkedInvStmt.remainingAmount = Math.max(0, +(net - newStmtPaid).toFixed(2));
+        }
       }
-      if (Math.abs(newStmtPaid - oldStmtPaid) > 0.001 && state.treasuryBalances) {
+      if (state.treasuryBalances) {
         state.treasuryBalances.cashVault = Math.max(0, Number(state.treasuryBalances.cashVault || 0) + (newStmtPaid - oldStmtPaid));
       }
+    }
+  }
+
+  // Keep linked palletMovements voucherNo and orderNumber synced if orderNumber changed
+  for (const pm of (state.palletMovements || [])) {
+    if (pm && (pm.orderId === ord.id || pm.voucherNo === `CAR-${oldOrderNumber}`)) {
+      pm.orderId = ord.id;
+      pm.orderNumber = ord.orderNumber;
+      pm.voucherNo = `CAR-${ord.orderNumber}`;
+      pm.clientId = ord.clientId || pm.clientId;
+      pm.clientName = ord.clientName || pm.clientName;
+      pm.updatedAt = now;
     }
   }
 
@@ -10853,8 +11098,8 @@ function submitVehicleDispatchVoucher(e, orderId) {
     });
   }
 
-  // Record Wooden Pallets Delivered / Received in Client's Pallet Ledger
-  if (palletsDeliveredCount > 0 || palletsReceivedCount > 0) {
+  // Note: Client's pallet account is finalized and independent; car dispatch does not add or deduct from the client's finalized pallet account.
+  if (!clientObj?.palletAccountFinalized && clientObj?.finalNetPallets === undefined && (palletsDeliveredCount > 0 || palletsReceivedCount > 0)) {
     state.palletMovements = state.palletMovements || [];
     const existingPm = state.palletMovements.find(pm => pm.orderId === ord.id || pm.voucherNo === carVoucherNo);
     if (existingPm) {
@@ -11321,7 +11566,7 @@ function openNewFinancialTxModal() {
 
 function openNewPartnerModal(returnToOrderModal = false) {
   const modalRoot = document.getElementById('modal-root');
-  const nextCode = `CL-${101 + (state.partners?.length || 0)}`;
+  const nextCode = getNextUniquePartnerCode('CL');
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
@@ -11472,8 +11717,9 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
               📞 الهاتف: ${pt.phone || '-'} | 📍 المدينة: ${pt.city || '-'} | المسؤول: ${pt.contactPerson || '-'}
             </small>
           </div>
-          <div style="display:flex;gap:6px;">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
             <button class="btn btn-sm btn-accent" onclick="printClientFullStatement('${pt.id}')">🖨️ طباعة كشف حساب وبيان للعميل</button>
+            <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(() => printClientFullStatement('${pt.id}'), '${pt.phone || ''}', '${pt.name || ''}')">${getWhatsAppSvgIconHtml(16)}<span>إرسال واتساب PDF</span></button>
             <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
           </div>
         </div>
@@ -11691,115 +11937,37 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
             `}
           </div>
 
-          <!-- 3. Wooden Pallets & Pallet Deposit Account Ledger -->
+          <!-- 3. Independent Finalized Wooden Pallets Account -->
           <div>
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
-              <h4 style="margin:0;color:#6d28d9;">3️⃣ حساب تأمين البالتات الخشبية وحركة التسليم والاستلام للعميل (المسدد بحساب التأمين: ${fmtMoney(m.netPalletDepositPaid)}):</h4>
+              <h4 style="margin:0;color:#6d28d9;">3️⃣ حساب البالتات الخشبية المستقل للعميل (منفصل تماماً عن حساب القشرة — رصيد نهائي غير قابل للإضافة أو الخصم):</h4>
               <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}')">🛡️ تسجيل تحصيل / رد تأمين بالتات</button>
-                <button class="btn btn-sm btn-accent" onclick="openClientPalletMovementModal('${pt.id}')">🪵 تسجيل تسليم / استلام بالتات</button>
+                <button class="btn btn-sm btn-accent" style="font-weight:800;" onclick="openClientPalletMovementModal('${pt.id}')">🔒 تعديل الرصيد النهائي للبالتات</button>
               </div>
             </div>
-
-            ${m.palletDepositTxs.length > 0 ? `
-              <div style="margin-bottom:10px;background:rgba(124,58,237,0.06);border:1.5px solid #7c3aed;border-radius:10px;padding:10px;">
-                <div style="font-weight:800;font-size:0.82rem;color:#6d28d9;margin-bottom:6px;">
-                  🛡️ حركات حساب تأمين البالتات المالية (${m.palletDepositTxs.length} سند — صافي التأمين المسدد: ${fmtMoney(m.netPalletDepositPaid)}):
-                </div>
-                <div class="table-responsive">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>رقم السند</th>
-                        <th>التاريخ</th>
-                        <th>نوع الحركة</th>
-                        <th>البيان</th>
-                        <th>المبلغ</th>
-                        <th>طريقة الدفع</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      ${m.palletDepositTxs.map(tx => {
-                        const isRef = tx.type === 'pallet_deposit_refund';
-                        return `
-                          <tr>
-                            <td><strong>${tx.voucherNo}</strong></td>
-                            <td>${tx.date}</td>
-                            <td><span class="badge ${isRef ? 'badge-warning' : 'badge-success'}">${isRef ? '🔄 رد تأمين بالتات' : '🛡️ تحصيل تأمين بالتات'}</span></td>
-                            <td><strong>${tx.description}</strong></td>
-                            <td><strong style="color:${isRef ? 'var(--danger)' : 'var(--success)'};">${isRef ? '-' : '+'}${fmtMoney(tx.paidAmount || tx.totalAmount || 0)}</strong></td>
-                            <td>${tx.paymentMethod || '-'}</td>
-                          </tr>
-                        `;
-                      }).join('')}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ` : ''}
 
             <div class="table-responsive">
               <table>
                 <thead>
                   <tr>
-                    <th>رقم السند</th>
-                    <th>التاريخ</th>
-                    <th>بالتات مسلمة للعميل (+)</th>
-                    <th>بالتات مستلمة من العميل (-)</th>
-                    <th>قيمة البالتة</th>
-                    <th>إجمالي قيمة البالتات</th>
-                    <th>رقم السيارة / السائق / البيان</th>
-                    ${isFullAdmin(currentUser) ? '<th>تعديل / حذف</th>' : ''}
+                    <th>البيان</th>
+                    <th>الرصيد النهائي للبالتات طرف العميل</th>
+                    <th>قيمة البالتة الواحدة</th>
+                    <th>إجمالي قيمة البالتات النهائي (مستقل عن حساب القشرة)</th>
+                    <th>حالة حساب البالتات</th>
+                    <th>إجراء</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${(pt.openingPalletsDelivered > 0 || pt.openingPalletsReceived > 0) ? `
-                    <tr style="background:var(--bg-elevated);">
-                      <td><strong>OPEN-PLT</strong></td>
-                      <td>${pt.entryDate || '-'}</td>
-                      <td><strong>+${pt.openingPalletsDelivered || 0} بالتة</strong></td>
-                      <td><strong>-${pt.openingPalletsReceived || 0} بالتة</strong></td>
-                      <td><strong>${fmtMoney(m.palletUnitPrice)}</strong></td>
-                      <td><strong style="color:var(--primary);">${fmtMoney((Number(pt.openingPalletsDelivered || 0) - Number(pt.openingPalletsReceived || 0)) * m.palletUnitPrice)}</strong></td>
-                      <td>رصيد بالتات افتتاحي</td>
-                      ${isFullAdmin(currentUser) ? `<td><button class="btn btn-sm btn-outline" onclick="openEditPartnerModal('${pt.id}')">✏️ تعديل</button></td>` : ''}
-                    </tr>
-                  ` : ''}
-                  ${m.palletMoves.map(pm => {
-                    const pmUnitPrice = getWoodenPalletUnitPrice(pt, pm);
-                    const delVal = +(Number(pm.deliveredCount || 0) * pmUnitPrice).toFixed(2);
-                    const recVal = +(Number(pm.receivedCount || 0) * pmUnitPrice).toFixed(2);
-                    const moveTotalVal = delVal > 0 ? delVal : recVal;
-                    return `
-                    <tr>
-                      <td><strong>${pm.voucherNo || '-'}</strong></td>
-                      <td>${pm.date}</td>
-                      <td><span class="badge badge-warning">+${pm.deliveredCount || 0} بالتة مسلمة</span></td>
-                      <td><span class="badge badge-success">-${pm.receivedCount || 0} بالتة مستلمة</span></td>
-                      <td><strong>${fmtMoney(pmUnitPrice)}</strong></td>
-                      <td><strong style="color:${delVal >= recVal ? 'var(--primary)' : 'var(--success)'};">${fmtMoney(moveTotalVal)}</strong></td>
-                      <td>${pm.notes || pm.carPlateNumber || '-'}</td>
-                      ${isFullAdmin(currentUser) ? `
-                        <td>
-                          <div style="display:flex;gap:4px;">
-                            <button class="btn btn-sm btn-outline" style="padding:3px 7px;" onclick="openEditPalletMovementModal('${pm.id}')">✏️</button>
-                            <button class="btn btn-sm btn-danger" style="padding:3px 7px;" onclick="deletePalletMovementRecord('${pm.id}')">🗑️</button>
-                          </div>
-                        </td>
-                      ` : ''}
-                    </tr>
-                  `;}).join('')}
-                </tbody>
-                <tfoot>
-                  <tr style="background:var(--bg-elevated);font-weight:900;">
-                    <td colspan="2">الإجمالي الصافي طرف العميل</td>
-                    <td>+${m.palletsDelivered} بالتة (${fmtMoney(m.palletsDeliveredValue)})</td>
-                    <td>-${m.palletsReceived} بالتة (${fmtMoney(m.palletsReceivedValue)})</td>
-                    <td>${fmtMoney(m.palletUnitPrice)}</td>
-                    <td style="color:var(--primary);font-size:0.95rem;">صافي (${m.netPalletsAtClient} بالتة) = ${fmtMoney(m.netPalletsValue)} | مسدد تأمين: ${fmtMoney(m.netPalletDepositPaid)}</td>
-                    <td colspan="${isFullAdmin(currentUser) ? 2 : 1}"></td>
+                  <tr style="background:var(--bg-elevated);font-weight:800;">
+                    <td>🔒 الرصيد النهائي المعتمد لحساب البالتات</td>
+                    <td><span class="badge ${m.netPalletsAtClient > 0 ? 'badge-warning' : 'badge-success'}" style="font-size:0.9rem;">🪵 ${m.netPalletsAtClient} بالتة</span></td>
+                    <td><strong>${fmtMoney(m.palletUnitPrice)}</strong></td>
+                    <td><strong style="color:var(--primary);font-size:0.98rem;">${fmtMoney(m.netPalletsValue)}</strong></td>
+                    <td><span class="badge" style="background:#6d28d9;color:#fff;">🔒 رصيد نهائي ثابت (غير قابل للإضافة أو الخصم)</span></td>
+                    <td><button class="btn btn-sm btn-outline" onclick="openClientPalletMovementModal('${pt.id}')">✏️ تعديل الرصيد النهائي</button></td>
                   </tr>
-                </tfoot>
+                </tbody>
               </table>
             </div>
           </div>
@@ -12788,57 +12956,49 @@ function printChecksUnderCollectionReportPdf() {
   openUniversalPrintDocument(html, 'سجل الشيكات تحت التحصيل والمحصلة', false);
 }
 
-// CLIENT WOODEN PALLETS DELIVERY / RETURN MODAL
+// CLIENT WOODEN PALLETS FINAL ACCOUNT EDITOR MODAL (حساب البالتات المستقل والنهائي للعميل)
 function openClientPalletMovementModal(clientId) {
   const pt = (state.partners || []).find(p => p.id === clientId);
   if (!pt) return;
   const m = computeClientMetrics(pt);
-  const defaultUnitPrice = getWoodenPalletUnitPrice(pt);
-  const defaultRecCount = m.netPalletsAtClient > 0 ? m.netPalletsAtClient : 2;
+  const defaultUnitPrice = getWoodenPalletUnitPrice(pt) || 500;
+  const currentFinalCount = Math.max(0, Number(m.netPalletsAtClient || 0));
   const modalRoot = document.getElementById('modal-root');
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box" style="max-width:620px;">
+      <div class="modal-box" style="max-width:600px;">
         <div class="card-header">
           <div>
-            <div class="card-title">🪵 حساب وقيمة البالتات للعميل: [${pt.code || 'CL'}] ${pt.name}</div>
+            <div class="card-title">🪵 تعديل حساب البالتات النهائي المستقل للعميل: [${pt.code || 'CL'}] ${pt.name}</div>
             <small style="color:var(--text-muted);">
-              إجمالي مسلم له: <strong>${m.palletsDelivered}</strong> | مستلم منه: <strong>${m.palletsReceived}</strong> | المتبقي طرفه الآن: <strong>${m.netPalletsAtClient} بالتة (${fmtMoney(m.netPalletsValue)})</strong>
+              🔒 <strong>حساب البالتات منفصل تماماً عن حساب القشرة:</strong> أي رقم تكتبه هنا يصبح هو <strong>الرصيد النهائي المباشر للبالتات طرف العميل</strong> (غير قابل للإضافة أو الخصم التلقائي)
             </small>
           </div>
           <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
         </div>
 
         <form onsubmit="submitClientPalletMovement(event, '${pt.id}')">
+          <div style="background:rgba(124,58,237,0.08);border:1.5px solid #7c3aed;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:0.84rem;">
+            🔒 <strong>نظام الرصيد النهائي للبالتات:</strong> اكتب العدد النهائي للبالتات الموجودة طرف العميل مباشرة (مثلاً: <strong>${currentFinalCount}</strong>). عند الحفظ يتم اعتماد هذا العدد كرصيد نهائي ثابت لا يُضاف عليه ولا يُخصم منه.
+          </div>
+
           <div class="form-grid">
-            <div class="form-group">
-              <label>تاريخ حركة البالتات (حالي أو سابق)</label>
-              <input id="pm-date" type="date" class="form-control" value="${todayStr()}" required />
-            </div>
-            <div class="form-group">
-              <label>رقم السيارة / السائق (اختياري)</label>
-              <input id="pm-car" class="form-control" placeholder="مثال: سيارة رقم 4582" />
-            </div>
-            <div class="form-group">
-              <label style="color:var(--accent);font-weight:800;">📤 عدد البالتات المسلمة للعميل (+)</label>
-              <input id="pm-del" type="number" min="0" class="form-control" value="0" oninput="updatePalletModalLiveCalc(${m.netPalletsAtClient})" required />
-            </div>
-            <div class="form-group">
-              <label style="color:var(--success);font-weight:800;">📥 عدد البالتات المستلمة/المرتجعة من العميل (-)</label>
-              <input id="pm-rec" type="number" min="0" class="form-control" value="${defaultRecCount}" oninput="updatePalletModalLiveCalc(${m.netPalletsAtClient})" required autofocus style="font-weight:800;border-color:var(--success);" />
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="color:var(--primary);font-weight:900;font-size:0.95rem;">🪵 الرصيد النهائي لعدد البالتات طرف العميل (تعديل نهائي مباشر)</label>
+              <input id="pm-final-count" type="number" min="0" step="1" class="form-control" value="${currentFinalCount}" oninput="updatePalletModalLiveCalc()" required autofocus style="font-weight:900;font-size:1.15rem;border:2px solid var(--primary);color:var(--primary);" />
             </div>
             <div class="form-group">
               <label style="color:#b45309;font-weight:800;">💰 قيمة البالتة الواحدة (ج.م)</label>
-              <input id="pm-price" type="number" step="0.5" min="0" class="form-control" value="${defaultUnitPrice}" oninput="updatePalletModalLiveCalc(${m.netPalletsAtClient})" style="font-weight:800;border-color:#d97706;" placeholder="مثال: 250" required />
+              <input id="pm-price" type="number" step="1" min="0" class="form-control" value="${defaultUnitPrice}" oninput="updatePalletModalLiveCalc()" style="font-weight:800;border-color:#d97706;" required />
             </div>
             <div class="form-group">
-              <label style="color:#7c3aed;font-weight:800;">💎 إجمالي قيمة البالتات في هذه الحركة</label>
-              <input id="pm-total-readonly" type="text" class="form-control" value="${fmtMoney(defaultRecCount * defaultUnitPrice)}" readonly style="font-weight:900;color:#7c3aed;background:rgba(124,58,237,0.08);border-color:#7c3aed;" />
+              <label style="color:#7c3aed;font-weight:800;">💎 إجمالي قيمة البالتات النهائي طرف العميل</label>
+              <input id="pm-total-readonly" type="text" class="form-control" value="${fmtMoney(currentFinalCount * defaultUnitPrice)}" readonly style="font-weight:900;color:#7c3aed;background:rgba(124,58,237,0.08);border-color:#7c3aed;" />
             </div>
             <div class="form-group" style="grid-column: 1 / -1;">
-              <label>ملاحظات حركة البالتات</label>
-              <input id="pm-notes" class="form-control" placeholder="مثال: استلام بالتات فارغة مرتجعة من مصنع العميل..." />
+              <label>ملاحظات حساب البالتات (اختياري)</label>
+              <input id="pm-notes" class="form-control" value="${pt.palletAccountNotes || ''}" placeholder="مثال: رصيد بالتات نهائي معتمد طرف العميل..." />
             </div>
           </div>
 
@@ -12846,35 +13006,29 @@ function openClientPalletMovementModal(clientId) {
 
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
             <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
-            <button type="submit" class="btn btn-primary">🪵 حفظ حركة وقيمة البالتات في حساب العميل</button>
+            <button type="submit" class="btn btn-primary" style="font-weight:900;">🔒 حفظ واعتماد رصيد البالتات النهائي للعميل</button>
           </div>
         </form>
       </div>
     </div>
   `;
-  updatePalletModalLiveCalc(m.netPalletsAtClient);
+  updatePalletModalLiveCalc();
 }
 
-function updatePalletModalLiveCalc(prevNetPallets = 0) {
-  const delCount = Math.max(0, Number(document.getElementById('pm-del')?.value || 0));
-  const recCount = Math.max(0, Number(document.getElementById('pm-rec')?.value || 0));
-  const unitPrice = Math.max(0, Number(document.getElementById('pm-price')?.value || 0));
-  const delVal = +(delCount * unitPrice).toFixed(2);
-  const recVal = +(recCount * unitPrice).toFixed(2);
-  const activeVal = delVal > 0 ? delVal : recVal;
-  const newNetCount = Number(prevNetPallets || 0) + delCount - recCount;
-  const newNetVal = +(newNetCount * unitPrice).toFixed(2);
+function updatePalletModalLiveCalc() {
+  const finalCount = Math.max(0, Math.round(Number(document.getElementById('pm-final-count')?.value || 0)));
+  const unitPrice = Math.max(0, Number(document.getElementById('pm-price')?.value || 500));
+  const finalVal = +(finalCount * unitPrice).toFixed(2);
 
   const totEl = document.getElementById('pm-total-readonly');
-  if (totEl) totEl.value = fmtMoney(activeVal);
+  if (totEl) totEl.value = fmtMoney(finalVal);
 
   const box = document.getElementById('pm-live-preview');
   if (box) {
     box.innerHTML = `
+      <div class="calc-preview-item"><span>العدد النهائي المعتمد للبالتات طرف العميل</span><strong style="color:var(--primary);font-size:1.05rem;">${finalCount} بالتة (نهائي)</strong></div>
       <div class="calc-preview-item"><span>قيمة البالتة الواحدة</span><strong>${fmtMoney(unitPrice)}</strong></div>
-      <div class="calc-preview-item"><span>إجمالي قيمة المسلم (${delCount})</span><strong style="color:var(--accent);">${fmtMoney(delVal)}</strong></div>
-      <div class="calc-preview-item"><span>إجمالي قيمة المستلم (${recCount})</span><strong style="color:var(--success);">${fmtMoney(recVal)}</strong></div>
-      <div class="calc-preview-item"><span>صافي البالتات طرف العميل بعد الحركة</span><strong style="color:var(--primary);">${newNetCount} بالتة (${fmtMoney(newNetVal)})</strong></div>
+      <div class="calc-preview-item"><span>إجمالي قيمة البالتات النهائي (مستقل عن حساب القشرة)</span><strong style="color:#7c3aed;font-size:1.05rem;">${fmtMoney(finalVal)}</strong></div>
     `;
   }
 }
@@ -12884,48 +13038,31 @@ function submitClientPalletMovement(e, clientId) {
   const pt = (state.partners || []).find(p => p.id === clientId);
   if (!pt) return;
 
-  const opDate = document.getElementById('pm-date')?.value || todayStr();
-  const carPlateNumber = (document.getElementById('pm-car')?.value || '').trim();
-  const deliveredCount = Math.max(0, Number(document.getElementById('pm-del')?.value || 0));
-  const receivedCount = Math.max(0, Number(document.getElementById('pm-rec')?.value || 0));
-  const palletUnitPrice = Math.max(0, Number(document.getElementById('pm-price')?.value ?? getWoodenPalletUnitPrice(pt)));
-  const totalDeliveredValue = +(deliveredCount * palletUnitPrice).toFixed(2);
-  const totalReceivedValue = +(receivedCount * palletUnitPrice).toFixed(2);
+  const finalCount = Math.max(0, Math.round(Number(document.getElementById('pm-final-count')?.value || 0)));
+  const palletUnitPrice = Math.max(0, Number(document.getElementById('pm-price')?.value ?? getWoodenPalletUnitPrice(pt))) || 500;
   const notes = (document.getElementById('pm-notes')?.value || '').trim();
+  const now = getMonotonicIso(pt.updatedAt);
 
-  if (deliveredCount === 0 && receivedCount === 0) {
-    alert('يرجى إدخال عدد البالتات المسلمة أو المستلمة!');
-    return;
-  }
+  pt.finalNetPallets = finalCount;
+  pt.openingPalletsDelivered = finalCount;
+  pt.openingPalletsReceived = 0;
+  pt.palletAccountFinalized = true;
+  pt.palletUnitPrice = palletUnitPrice;
+  pt.palletAccountNotes = notes;
+  pt.updatedAt = now;
 
-  if (palletUnitPrice > 0) {
-    pt.palletUnitPrice = palletUnitPrice;
-    state.catalog = state.catalog || {};
-    state.catalog.woodenPalletUnitPrice = palletUnitPrice;
-    state.catalog.woodenPalletUnitPriceUpdatedAt = Date.now();
-  }
-
-  state.palletMovements = state.palletMovements || [];
-  state.palletMovements.unshift({
-    id: uid('plm'),
-    voucherNo: `PLT-${Date.now().toString().slice(-5)}`,
-    date: opDate,
-    clientId: pt.id,
-    clientCode: pt.code || 'CL',
-    clientName: pt.name,
-    deliveredCount,
-    receivedCount,
-    palletUnitPrice,
-    totalDeliveredValue,
-    totalReceivedValue,
-    carPlateNumber,
-    notes: notes || (receivedCount > 0 ? `استلام ${receivedCount} بالتة من العميل` : `تسليم ${deliveredCount} بالتة للعميل`),
-    createdBy: currentUser.name,
-    updatedAt: new Date().toISOString()
+  // Purge any incremental palletMovements for this client so nothing can ever add to or deduct from the finalized balance
+  (state.palletMovements || []).forEach(pm => {
+    if (pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim()))) {
+      markRecordIdDeleted(pm.id);
+    }
   });
+  state.palletMovements = (state.palletMovements || []).filter(
+    pm => !(pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim())))
+  );
 
   closeModal();
-  saveState(`🪵 تسجيل حركة بالتات للعميل (${pt.code || ''} - ${pt.name}): مسلم له (${deliveredCount}) / مستلم منه (${receivedCount}) — قيمة البالتة: ${fmtMoney(palletUnitPrice)} بتاريخ ${opDate}`);
+  saveState(`🔒 اعتماد وتثبيت الرصيد النهائي لحساب البالتات المستقل للعميل (${pt.code || ''} - ${pt.name}) بعدد (${finalCount} بالتة × ${fmtMoney(palletUnitPrice)} = ${fmtMoney(finalCount * palletUnitPrice)}) — رصيد نهائي غير قابل للإضافة أو الخصم`);
 }
 
 function openSetDefaultPalletPriceModal() {
@@ -14696,15 +14833,14 @@ function normalizeDomForHtml2CanvasArabic(rootEl) {
       textNodes.push(current);
     }
 
-    const ltrRunRegex = /[+-]?[A-Za-z0-9\u0660-\u0669]+(?:[-×/:.,٬٫][A-Za-z0-9\u0660-\u0669]+)*[%+]?/g;
+    const isPureLtrTokenRegex = /^[+-]?[A-Za-z0-9\u0660-\u0669]+(?:[-×/:.,٬٫][A-Za-z0-9\u0660-\u0669]+)*[%+]?$/;
 
     for (const tNode of textNodes) {
       let txt = tNode.nodeValue || '';
-      const hasArabic = /[\u0600-\u06FF]/.test(txt);
-      const hasParentArabic = Boolean(tNode.parentElement && tNode.parentElement.closest('[dir="rtl"], .pdf-report-wrap, #print-document-content, #standalone-print-body'));
 
-      // Clean punctuation that html2canvas reverses in RTL text nodes (preserve time colons between digits)
+      // Clean punctuation & separate glued numbers and Arabic letters
       txt = txt
+        .replace(/\u200F/g, '')
         .replace(/([A-Za-z]+)\s*-\s*([A-Za-z]+)/g, '$1-$2')
         .replace(/([0-9\u0660-\u0669])([\u0621-\u064A])/g, '$1 $2')
         .replace(/([\u0621-\u064A])([0-9\u0660-\u0669])/g, '$1 $2')
@@ -14714,40 +14850,34 @@ function normalizeDomForHtml2CanvasArabic(rootEl) {
         .replace(/([A-Za-z0-9\u0660-\u0669])\s+:\s+([A-Za-z0-9\u0660-\u0669])/g, '$1 — $2')
         .replace(/\s{2,}/g, ' ');
 
-      if (!hasArabic && !hasParentArabic) {
+      // If this text node is already a single non-LTR Arabic word with no spaces, keep it as-is
+      if (!/\s/.test(txt) && !isPureLtrTokenRegex.test(txt)) {
         tNode.nodeValue = txt;
         continue;
       }
 
-      ltrRunRegex.lastIndex = 0;
-      if (!ltrRunRegex.test(txt)) {
-        tNode.nodeValue = txt;
-        continue;
-      }
-
-      ltrRunRegex.lastIndex = 0;
+      // CRITICAL HTML2CANVAS RTL FIX:
+      // html2canvas's LineBreaker splits a text node after each ASCII space ("كود العميل" -> ["كود ", "العميل"]).
+      // In RTL DOM, the trailing space of "كود " sits to the LEFT of "كود", shifting range("كود ").getBoundingClientRect().left
+      // to the left by 1 space width, so ctx.fillText("كود ", rect.left, y) draws "كود" on top of "العميل" ("كودالعميل")!
+      // By splitting every word into its own DOM Text node with NO trailing space inside the word node,
+      // and putting each space ' ' in its own separate DOM Text node, html2canvas measures each word's true rect.left with zero overlap!
+      const parts = txt.split(/(\s+)/);
       const frag = document.createDocumentFragment();
-      let lastIdx = 0;
-      let match;
-      while ((match = ltrRunRegex.exec(txt)) !== null) {
-        if (match.index > lastIdx) {
-          const arPart = txt.slice(lastIdx, match.index);
-          frag.appendChild(document.createTextNode('\u200F' + arPart + '\u200F'));
+      for (const part of parts) {
+        if (!part) continue;
+        if (/^\s+$/.test(part)) {
+          frag.appendChild(document.createTextNode(' '));
+        } else if (isPureLtrTokenRegex.test(part)) {
+          const span = document.createElement('span');
+          span.setAttribute('data-bidi-fixed', '1');
+          span.setAttribute('dir', 'ltr');
+          span.style.cssText = 'display:inline-block;direction:ltr;unicode-bidi:isolate;white-space:nowrap;margin:0 2.5px;';
+          span.textContent = part;
+          frag.appendChild(span);
         } else {
-          frag.appendChild(document.createTextNode('\u200F'));
+          frag.appendChild(document.createTextNode(part));
         }
-        const rawToken = match[0].trim();
-        const span = document.createElement('span');
-        span.setAttribute('data-bidi-fixed', '1');
-        span.setAttribute('dir', 'ltr');
-        span.style.cssText = 'display:inline-block;direction:ltr;unicode-bidi:isolate;white-space:nowrap;margin:0 1.5px;';
-        span.textContent = rawToken;
-        frag.appendChild(span);
-        frag.appendChild(document.createTextNode('\u200F'));
-        lastIdx = ltrRunRegex.lastIndex;
-      }
-      if (lastIdx < txt.length) {
-        frag.appendChild(document.createTextNode('\u200F' + txt.slice(lastIdx)));
       }
       if (tNode.parentNode) {
         tNode.parentNode.replaceChild(frag, tNode);
@@ -14756,9 +14886,461 @@ function normalizeDomForHtml2CanvasArabic(rootEl) {
   } catch (_) {}
 }
 
+function paginateTablesForPrintAndPdf(rootEl, isLandscape = false) {
+  if (!rootEl) return;
+  try {
+    if (rootEl.getAttribute('data-paginated') === '1') return;
+    if (rootEl.querySelector('[data-single-page-statement="1"]')) return;
+    if (rootEl.querySelector('.html2pdf__page-break')) return;
+
+    const wrapWidth = rootEl.getBoundingClientRect().width || (isLandscape ? 1050 : 740);
+    const maxPageHeightPx = Math.round(wrapWidth * (isLandscape ? 0.59 : 1.24));
+    const maxRowsFirstPage = isLandscape ? 10 : 18;
+    const maxRowsNextPage = isLandscape ? 11 : 20;
+
+    const tables = Array.from(rootEl.querySelectorAll('table')).filter(tbl =>
+      tbl.tHead && tbl.tBodies && tbl.tBodies.length > 0 && tbl.tBodies[0].rows.length > 1
+    );
+    if (tables.length === 0) return;
+
+    const totalDocHeight = rootEl.getBoundingClientRect().height || 0;
+    const hasTallTable = tables.some(tbl => tbl.tBodies[0].rows.length > maxRowsFirstPage);
+    if (totalDocHeight <= maxPageHeightPx && !hasTallTable) {
+      rootEl.setAttribute('data-paginated', '1');
+      return;
+    }
+
+    const mainWrap = rootEl.querySelector('.pdf-report-wrap') || rootEl.firstElementChild;
+    const reportHeaderEl = rootEl.querySelector('.pdf-report-header') || (mainWrap ? mainWrap.firstElementChild : null);
+    const headerHeight = reportHeaderEl && !reportHeaderEl.matches('table')
+      ? (reportHeaderEl.getBoundingClientRect().height || 75)
+      : 40;
+
+    for (const tbl of tables) {
+      const thead = tbl.tHead;
+      const tbody = tbl.tBodies[0];
+      const tfoot = tbl.tFoot;
+      const allRows = Array.from(tbody.rows);
+      if (allRows.length <= 1) continue;
+
+      const theadHeight = thead.getBoundingClientRect().height || 38;
+      const tfootHeight = tfoot ? (tfoot.getBoundingClientRect().height || 38) : 0;
+      const tblRect = tbl.getBoundingClientRect();
+      const wrapRect = (mainWrap || rootEl).getBoundingClientRect();
+
+      const offsetBeforeTable = Math.max(headerHeight + 16, Math.min(maxPageHeightPx * 0.45, tblRect.top - wrapRect.top));
+      const rowHeights = allRows.map(r => Math.max(26, r.getBoundingClientRect().height || 36));
+
+      const chunks = [];
+      let currentChunk = [];
+      let usedHeight = offsetBeforeTable + theadHeight + 16;
+      let isFirstChunk = true;
+
+      for (let i = 0; i < allRows.length; i++) {
+        const rH = rowHeights[i];
+        const isLastRow = (i === allRows.length - 1);
+        const extraLastHeight = isLastRow ? (tfootHeight + 45) : 0;
+        const rowLimit = isFirstChunk ? maxRowsFirstPage : maxRowsNextPage;
+
+        if (currentChunk.length > 0 && ((usedHeight + rH + extraLastHeight > maxPageHeightPx) || currentChunk.length >= rowLimit)) {
+          chunks.push(currentChunk);
+          currentChunk = [];
+          isFirstChunk = false;
+          usedHeight = Math.min(headerHeight, 75) + theadHeight + 24;
+        }
+        currentChunk.push(allRows[i]);
+        usedHeight += rH;
+      }
+      if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+      }
+
+      if (chunks.length <= 1) continue;
+
+      const frag = document.createDocumentFragment();
+      const prevTitleHeading = tbl.previousElementSibling;
+      const sectionHeadingText = (prevTitleHeading && /^H[2345]$/i.test(prevTitleHeading.tagName))
+        ? prevTitleHeading.textContent.trim()
+        : '';
+
+      chunks.forEach((chunkRows, cIdx) => {
+        if (cIdx > 0) {
+          const brk = document.createElement('div');
+          brk.className = 'html2pdf__page-break';
+          brk.style.cssText = 'page-break-before:always;break-before:page;height:0;margin:0;padding:0;';
+          frag.appendChild(brk);
+
+          const contHeader = document.createElement('div');
+          contHeader.style.cssText = 'display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #0f172a;padding:6px 0 6px;margin:4px 0 8px;font-size:12px;font-weight:800;color:#0f172a;direction:rtl;';
+          const docTitleText = (typeof _lastPrintDocumentTitle !== 'undefined' && _lastPrintDocumentTitle)
+            ? _lastPrintDocumentTitle
+            : (document.title || 'تقرير مصنع العاصمة للصناعات المتخصصة');
+          contHeader.innerHTML = `
+            <div>🏭 مصنع العاصمة للصناعات المتخصصة — <span style="color:#0f766e;">${sectionHeadingText || docTitleText}</span></div>
+            <div style="background:#e2e8f0;border:1px solid #0f172a;padding:2px 10px;border-radius:5px;font-weight:900;">
+              صفحة ${cIdx + 1} من ${chunks.length}
+            </div>
+          `;
+          frag.appendChild(contHeader);
+        }
+
+        const newTbl = tbl.cloneNode(false);
+        newTbl.appendChild(thead.cloneNode(true));
+        const newTbody = document.createElement('tbody');
+        chunkRows.forEach(r => newTbody.appendChild(r));
+        newTbl.appendChild(newTbody);
+        if (tfoot && cIdx === chunks.length - 1) {
+          newTbl.appendChild(tfoot.cloneNode(true));
+        }
+        frag.appendChild(newTbl);
+      });
+
+      if (tbl.parentNode) {
+        tbl.parentNode.replaceChild(frag, tbl);
+      }
+    }
+
+    rootEl.setAttribute('data-paginated', '1');
+  } catch (_) {}
+}
+
+let _cachedGeneratedPdfFile = null;
+let _cachedGeneratedPdfBlob = null;
+let _cachedGeneratedPdfSafeName = '';
+let _cachedUploadedPdfUrl = '';
+let _cachedGeneratedForDocTitle = '';
+
+function getWhatsAppSvgIconHtml(size = 20) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="${size}" height="${size}" fill="#ffffff" style="vertical-align:middle;flex-shrink:0;display:inline-block;"><path d="M16.004 3.2c-7.072 0-12.8 5.728-12.8 12.8 0 2.256.592 4.464 1.712 6.416L3.2 28.8l6.56-1.712c1.888 1.024 4.016 1.568 6.24 1.568h.004c7.072 0 12.8-5.728 12.8-12.8 0-3.424-1.328-6.64-3.744-9.056C22.644 4.528 19.428 3.2 16.004 3.2zm7.488 18.288c-.32.896-1.856 1.712-2.592 1.824-.672.096-1.52.144-2.464-.16-.576-.176-1.312-.416-2.256-.816-3.968-1.712-6.56-5.696-6.752-5.968-.192-.256-1.616-2.144-1.616-4.096 0-1.952 1.024-2.912 1.392-3.312.368-.4.784-.496 1.056-.496.256 0 .528.016.752.016.24.016.56-.096.88.672.32.784 1.088 2.672 1.184 2.864.096.192.16.432.032.688-.128.256-.192.416-.384.64-.192.224-.4.496-.576.672-.192.192-.384.4-.16.784.224.384 1.008 1.664 2.16 2.688 1.488 1.328 2.736 1.744 3.12 1.936.384.192.608.16.832-.096.224-.256.96-1.12 1.216-1.504.256-.384.512-.32.864-.192.352.128 2.24 1.056 2.624 1.248.384.192.64.288.736.448.096.16.096.928-.224 1.824z"/></svg>`;
+}
+
+function formatEgyptianWhatsAppPhone(rawPhone) {
+  let digits = String(rawPhone || '').replace(/[^0-9]/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.startsWith('01') && digits.length === 11) {
+    digits = '20' + digits.slice(1);
+  } else if (digits.length === 10 && digits.startsWith('1')) {
+    digits = '20' + digits;
+  }
+  return digits;
+}
+
+async function generateCurrentReportPdfBlobAndUpload() {
+  const contentEl = document.getElementById('print-document-content');
+  if (!contentEl || !contentEl.innerHTML.trim()) return null;
+  paginateTablesForPrintAndPdf(contentEl, _lastPrintLandscape);
+  normalizeDomForHtml2CanvasArabic(contentEl);
+  if (typeof window.html2pdf !== 'function') return null;
+
+  const isSinglePageStmt = Boolean(contentEl.querySelector('[data-single-page-statement="1"]'));
+  const safeName = (_lastPrintDocumentTitle || 'تقرير_مصنع_العاصمة').replace(/[\\/:*?"<>|]/g, '_') + '.pdf';
+
+  if (_cachedGeneratedPdfFile && _cachedGeneratedForDocTitle === _lastPrintDocumentTitle) {
+    return {
+      file: _cachedGeneratedPdfFile,
+      blob: _cachedGeneratedPdfBlob,
+      safeName: _cachedGeneratedPdfSafeName,
+      pdfUrl: _cachedUploadedPdfUrl
+    };
+  }
+
+  const worker = window.html2pdf().set({
+    margin: isSinglePageStmt ? 5 : 6,
+    filename: safeName,
+    pagebreak: { mode: ['css', 'legacy'] },
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2, useCORS: true, letterRendering: false, backgroundColor: '#ffffff', scrollY: 0 },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: _lastPrintLandscape ? 'landscape' : 'portrait' }
+  }).from(contentEl).toPdf();
+
+  const pdfObj = await worker.get('pdf');
+  if (isSinglePageStmt && pdfObj && pdfObj.internal && typeof pdfObj.internal.getNumberOfPages === 'function') {
+    while (pdfObj.internal.getNumberOfPages() > 1) {
+      pdfObj.deletePage(pdfObj.internal.getNumberOfPages());
+    }
+  }
+
+  const pdfBlob = pdfObj.output('blob');
+  const pdfFile = new File([pdfBlob], safeName, { type: 'application/pdf' });
+  let uploadedUrl = '';
+
+  try {
+    const dataUri = pdfObj.output('datauristring');
+    const upRes = await fetch('/api/upload-pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: safeName, pdfBase64: dataUri })
+    });
+    if (upRes.ok) {
+      const upJson = await upRes.json();
+      if (upJson && upJson.pdfUrl) uploadedUrl = upJson.pdfUrl;
+    }
+  } catch (_) {}
+
+  _cachedGeneratedPdfFile = pdfFile;
+  _cachedGeneratedPdfBlob = pdfBlob;
+  _cachedGeneratedPdfSafeName = safeName;
+  _cachedUploadedPdfUrl = uploadedUrl;
+  _cachedGeneratedForDocTitle = _lastPrintDocumentTitle;
+
+  return { file: pdfFile, blob: pdfBlob, safeName, pdfUrl: uploadedUrl };
+}
+
+function triggerBlobDownload(blob, filename) {
+  if (!blob) return;
+  try {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'report.pdf';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch (_) {}
+    }, 1000);
+  } catch (_) {}
+}
+
+function saveUserWhatsAppPhone(userId, phoneVal) {
+  const u = (state.users || []).find(x => x.id === userId);
+  if (!u) return;
+  u.phone = String(phoneVal || '').trim();
+  u.updatedAt = getMonotonicIso(u.updatedAt);
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (_) {}
+  syncToServerAndCloud();
+}
+
+function buildWhatsAppReportMessageText(recipientName = '', pdfUrl = '') {
+  const factoryName = state?.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة';
+  const docTitle = _lastPrintDocumentTitle || 'تقرير رسمي';
+  const senderName = currentUser ? `${currentUser.name}` : 'إدارة المصنع';
+  const greet = recipientName ? `تحية طيبة أ/ ${recipientName}،\n` : 'تحية طيبة،\n';
+  const linkUrl = pdfUrl || _lastPrintUrl || '';
+  return (
+    `🏭 *${factoryName}*\n` +
+    `${greet}` +
+    `📄 مرفق لسيادتكم تقرير (PDF): *${docTitle}*\n` +
+    `📅 التاريخ: ${todayStr()}\n` +
+    `👤 مرسل بواسطة: ${senderName}` +
+    (linkUrl ? `\n🔗 رابط فتح وتحميل ملف الـ PDF المباشر:\n${linkUrl}` : '')
+  );
+}
+
+async function shareGeneratedPdfFileDirectly() {
+  const statusEl = document.getElementById('wa-pdf-status-box');
+  if (statusEl) statusEl.innerHTML = '⏳ جاري تجهيز ملف الـ PDF للمشاركة عبر الواتساب...';
+  const res = await generateCurrentReportPdfBlobAndUpload();
+  if (!res || !res.file) {
+    downloadInPagePdfFile();
+    return;
+  }
+  const msgText = buildWhatsAppReportMessageText('', res.pdfUrl);
+  if (navigator.canShare && navigator.canShare({ files: [res.file] })) {
+    try {
+      await navigator.share({
+        files: [res.file],
+        title: _lastPrintDocumentTitle || 'تقرير مصنع العاصمة PDF',
+        text: msgText
+      });
+      return;
+    } catch (_) {}
+  }
+  triggerBlobDownload(res.blob, res.safeName);
+  const waUrl = `https://wa.me/?text=${encodeURIComponent(msgText)}`;
+  window.open(waUrl, '_blank');
+}
+
+async function sendPdfToWhatsAppNumber(rawPhone = '', recipientName = '') {
+  const phoneInput = document.getElementById('wa-custom-phone-input');
+  const chosenPhone = rawPhone || (phoneInput ? phoneInput.value : '');
+  const formattedPhone = formatEgyptianWhatsAppPhone(chosenPhone);
+  const statusEl = document.getElementById('wa-pdf-status-box');
+  if (statusEl) {
+    statusEl.innerHTML = `⏳ جاري تحويل التقرير إلى PDF وإرساله عبر الواتساب ${recipientName ? 'إلى (' + recipientName + ')' : ''}...`;
+  }
+
+  const res = await generateCurrentReportPdfBlobAndUpload();
+  if (res && res.blob) {
+    triggerBlobDownload(res.blob, res.safeName);
+  }
+  const msgText = buildWhatsAppReportMessageText(recipientName, res?.pdfUrl || '');
+  const waUrl = formattedPhone
+    ? `https://wa.me/${formattedPhone}?text=${encodeURIComponent(msgText)}`
+    : `https://wa.me/?text=${encodeURIComponent(msgText)}`;
+  window.open(waUrl, '_blank');
+
+  if (statusEl) {
+    statusEl.innerHTML = `✅ تم تحميل ملف الـ PDF (<strong>${res?.safeName || 'report.pdf'}</strong>) وفتح محادثة الواتساب ${recipientName ? 'مع <strong>' + recipientName + '</strong>' : ''} بنجاح! يمكنك أيضاً سحب ملف الـ PDF المحمل وإرفاقه مباشرة في المحادثة.`;
+  }
+}
+
+async function sendPdfToAllSystemUsersWhatsApp() {
+  const usersWithPhones = (state.users || []).filter(u => u && u.active !== false && formatEgyptianWhatsAppPhone(u.phone));
+  const statusEl = document.getElementById('wa-pdf-status-box');
+  const res = await generateCurrentReportPdfBlobAndUpload();
+  if (res && res.blob) {
+    triggerBlobDownload(res.blob, res.safeName);
+  }
+  if (usersWithPhones.length === 0) {
+    const msgText = buildWhatsAppReportMessageText('جميع مستخدمي النظام', res?.pdfUrl || '');
+    window.open(`https://wa.me/?text=${encodeURIComponent(msgText)}`, '_blank');
+    if (statusEl) {
+      statusEl.innerHTML = `✅ تم تحميل ملف الـ PDF وفتح واتساب لاختيار جروب المصنع أو المستخدمين (يمكنك أيضاً كتابة أرقام واتساب المستخدمين في الجدول أدناه للإرسال المباشر لكل مستخدم بضغطة واحدة).`;
+    }
+    return;
+  }
+  usersWithPhones.forEach((u, idx) => {
+    const ph = formatEgyptianWhatsAppPhone(u.phone);
+    const msgText = buildWhatsAppReportMessageText(u.name, res?.pdfUrl || '');
+    setTimeout(() => {
+      window.open(`https://wa.me/${ph}?text=${encodeURIComponent(msgText)}`, '_blank');
+    }, idx * 600);
+  });
+  if (statusEl) {
+    statusEl.innerHTML = `✅ تم تحويل وتحميل التقرير PDF وفتح محادثات الواتساب لعدد (${usersWithPhones.length}) من مستخدمي النظام بنجاح!`;
+  }
+}
+
+function openWhatsAppPdfShareModal(presetPhone = '', presetRecipientName = '') {
+  const existingOverlay = document.getElementById('wa-pdf-share-overlay');
+  if (existingOverlay) existingOverlay.remove();
+
+  const allUsers = (state.users || []).filter(u => u && u.active !== false);
+  const allClients = (state.partners || []).filter(p => p && p.type !== 'supplier');
+  const docTitle = _lastPrintDocumentTitle || 'تقرير مصنع العاصمة';
+
+  const overlay = document.createElement('div');
+  overlay.id = 'wa-pdf-share-overlay';
+  overlay.className = 'no-print-bar';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.75);z-index:999999;display:flex;align-items:center;justify-content:center;padding:14px;font-family:\'Cairo\',sans-serif;direction:rtl;overflow-y:auto;';
+
+  overlay.innerHTML = `
+    <div style="background:#ffffff;color:#0f172a;border-radius:14px;max-width:780px;width:100%;max-height:92vh;overflow-y:auto;padding:18px 20px;box-shadow:0 20px 50px rgba(0,0,0,0.4);border:2.5px solid #16a34a;">
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #e2e8f0;padding-bottom:10px;margin-bottom:12px;gap:10px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div style="background:#25D366;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(37,211,102,0.4);">
+            ${getWhatsAppSvgIconHtml(24)}
+          </div>
+          <div>
+            <div style="font-size:1.1rem;font-weight:900;color:#15803d;">إرسال التقرير / الجدول بصيغة PDF عبر الواتساب لجميع المستخدمين</div>
+            <small style="color:#475569;font-weight:700;">المستند: <strong>${docTitle}</strong> — تم ضبط الحروف والأرقام وتكرار عناوين الجداول بدون أي تداخل</small>
+          </div>
+        </div>
+        <button type="button" onclick="document.getElementById('wa-pdf-share-overlay')?.remove()" style="background:#ef4444;color:#fff;border:none;padding:6px 12px;border-radius:8px;font-weight:900;cursor:pointer;">✕ إغلاق</button>
+      </div>
+
+      <div id="wa-pdf-status-box" style="background:#f0fdf4;border:1.5px solid #16a34a;color:#15803d;padding:10px 14px;border-radius:10px;font-weight:800;font-size:0.86rem;margin-bottom:14px;">
+        ⏳ جاري تحويل التقرير إلى ملف PDF رسمي جاهز للإرسال عبر الواتساب...
+      </div>
+
+      <!-- Quick Action 1: Direct Native Share / WhatsApp Group or All Users -->
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+        <button type="button" onclick="shareGeneratedPdfFileDirectly()" style="flex:1;min-width:220px;background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;border:none;padding:11px 16px;border-radius:10px;font-weight:900;font-size:0.9rem;cursor:pointer;font-family:'Cairo',sans-serif;">
+          📱 مشاركة وإرفاق ملف الـ PDF مباشرة عبر تطبيق واتساب
+        </button>
+        <button type="button" onclick="sendPdfToAllSystemUsersWhatsApp()" style="flex:1;min-width:220px;background:linear-gradient(135deg,#0f766e,#0d9488);color:#fff;border:none;padding:11px 16px;border-radius:10px;font-weight:900;font-size:0.9rem;cursor:pointer;font-family:'Cairo',sans-serif;">
+          📢 إرسال التقرير PDF لجميع مستخدمي النظام / جروب المصنع
+        </button>
+      </div>
+
+      <!-- Quick Action 2: Send to Specific Phone / Client -->
+      <div style="background:#f8fafc;border:1.5px solid #cbd5e1;border-radius:10px;padding:12px;margin-bottom:14px;">
+        <div style="font-weight:900;font-size:0.88rem;color:#0f172a;margin-bottom:8px;">🤝 إرسال لعميل أو رقم واتساب محدد:</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(210px, 1fr));gap:8px;align-items:end;">
+          <div>
+            <label style="font-size:0.76rem;font-weight:800;display:block;margin-bottom:3px;">اختر عميل من النظام (يتعبأ رقمه تلقائياً):</label>
+            <select id="wa-client-select" class="form-control" style="padding:6px 8px;font-weight:800;" onchange="const opt=this.options[this.selectedIndex]; document.getElementById('wa-custom-phone-input').value=opt.getAttribute('data-phone')||''; document.getElementById('wa-custom-name-input').value=opt.getAttribute('data-name')||'';">
+              <option value="" data-phone="" data-name="">-- اختر العميل (اختياري) --</option>
+              ${allClients.map(c => `<option value="${c.id}" data-phone="${c.phone || ''}" data-name="${c.name || ''}" ${(presetRecipientName && c.name === presetRecipientName) ? 'selected' : ''}>[${c.code || 'CL'}] ${c.name} (${c.phone || 'بدون رقم'})</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label style="font-size:0.76rem;font-weight:800;display:block;margin-bottom:3px;">📞 رقم الواتساب (مثال: 01009544072):</label>
+            <input id="wa-custom-phone-input" type="text" class="form-control" value="${presetPhone || ''}" placeholder="اكتب رقم الواتساب أو اتركه فارغاً لاختيار جهة اتصال..." style="padding:6px 10px;font-weight:900;direction:ltr;text-align:left;" />
+            <input id="wa-custom-name-input" type="hidden" value="${presetRecipientName || ''}" />
+          </div>
+          <div>
+            <button type="button" onclick="sendPdfToWhatsAppNumber(document.getElementById('wa-custom-phone-input')?.value, document.getElementById('wa-custom-name-input')?.value)" style="width:100%;background:#16a34a;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:900;font-size:0.86rem;cursor:pointer;font-family:'Cairo',sans-serif;">
+              📲 تحميل الـ PDF + إرسال للرقم عبر واتساب
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Action 3: All System Users Directory with 1-Click WhatsApp Send -->
+      <div style="background:#f8fafc;border:1.5px solid #cbd5e1;border-radius:10px;padding:12px;">
+        <div style="font-weight:900;font-size:0.88rem;color:#0f172a;margin-bottom:8px;">
+          👥 قائمة جميع مستخدمي النظام (المدير التنفيذي، مدير المشروعات، المحاسب، المدير الإداري، أمين المخزن):
+        </div>
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+            <thead>
+              <tr style="background:#e2e8f0;">
+                <th style="border:1px solid #cbd5e1;padding:6px;">المستخدم</th>
+                <th style="border:1px solid #cbd5e1;padding:6px;">الصلاحية / الوظيفة</th>
+                <th style="border:1px solid #cbd5e1;padding:6px;">رقم واتساب المستخدم (يُحفظ تلقائياً)</th>
+                <th style="border:1px solid #cbd5e1;padding:6px;">إرسال التقرير PDF</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${allUsers.map(u => `
+                <tr>
+                  <td style="border:1px solid #cbd5e1;padding:6px;font-weight:900;">${u.name}</td>
+                  <td style="border:1px solid #cbd5e1;padding:6px;color:#475569;">${u.roleTitle || ''}</td>
+                  <td style="border:1px solid #cbd5e1;padding:6px;">
+                    <input type="text" id="wa-user-phone-${u.id}" value="${u.phone || ''}" placeholder="اكتب رقم واتساب ${u.name}..." oninput="saveUserWhatsAppPhone('${u.id}', this.value)" style="width:100%;padding:4px 8px;border:1px solid #94a3b8;border-radius:6px;font-weight:800;direction:ltr;text-align:left;" />
+                  </td>
+                  <td style="border:1px solid #cbd5e1;padding:6px;text-align:center;">
+                    <button type="button" onclick="sendPdfToWhatsAppNumber(document.getElementById('wa-user-phone-${u.id}')?.value, '${u.name}')" style="background:#16a34a;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-weight:800;font-size:0.78rem;cursor:pointer;font-family:'Cairo',sans-serif;">
+                      📲 إرسال PDF لـ ${u.name}
+                    </button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  // Immediately generate & upload the PDF in the background so it's ready in ~1s
+  generateCurrentReportPdfBlobAndUpload().then(res => {
+    const statusEl = document.getElementById('wa-pdf-status-box');
+    if (!statusEl) return;
+    if (res && res.file) {
+      statusEl.innerHTML = `✅ تم تحويل التقرير إلى ملف PDF بنجاح: <strong>${res.safeName}</strong> — جاهز الآن للإرسال عبر الواتساب لأي مستخدم أو عميل!`;
+    } else {
+      statusEl.innerHTML = `✅ التقرير جاهز للإرسال عبر الواتساب والطباعة كملف PDF.`;
+    }
+  }).catch(() => {});
+}
+
+function sendReportViaWhatsApp(printTriggerFn, presetPhone = '', presetRecipientName = '') {
+  window._suppressAutoPrintForWhatsApp = true;
+  _cachedGeneratedPdfFile = null;
+  _cachedGeneratedForDocTitle = '';
+  try {
+    if (typeof printTriggerFn === 'function') {
+      printTriggerFn();
+    }
+  } finally {
+    window._suppressAutoPrintForWhatsApp = false;
+  }
+  setTimeout(() => {
+    openWhatsAppPdfShareModal(presetPhone, presetRecipientName);
+  }, 120);
+}
+
 function downloadInPagePdfFile() {
   const contentEl = document.getElementById('print-document-content');
   if (!contentEl || !contentEl.innerHTML.trim()) return;
+  paginateTablesForPrintAndPdf(contentEl, _lastPrintLandscape);
   normalizeDomForHtml2CanvasArabic(contentEl);
   if (typeof window.html2pdf !== 'function') {
     window.focus();
@@ -14833,7 +15415,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '62');
+  urlObj.searchParams.set('v', '67');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
@@ -14996,6 +15578,20 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
         font-weight: 800;
         color: #0f172a;
       }
+      #print-area table {
+        page-break-inside: auto;
+      }
+      #print-area tr {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        page-break-after: auto;
+      }
+      #print-area thead {
+        display: table-header-group !important;
+      }
+      #print-area tfoot {
+        display: table-footer-group !important;
+      }
       .pdf-report-footer {
         display: flex;
         justify-content: space-between;
@@ -15008,10 +15604,14 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
     </style>
     <div class="no-print-bar" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:#0f172a;color:#fff;padding:12px 18px;border-radius:10px;margin-bottom:16px;font-family:'Cairo',sans-serif;direction:rtl;">
       <div>
-        <strong style="font-size:15px;color:#fbbf24;">🖨️ معاينة الطباعة الرسمية: ${docTitle}</strong>
-        <div style="font-size:12px;color:#cbd5e1;">المستند جاهز للطباعة الفورية أو التحميل كملف PDF مباشر</div>
+        <strong style="font-size:15px;color:#fbbf24;">🖨️ معاينة التقرير والطباعة الرسمية: ${docTitle}</strong>
+        <div style="font-size:12px;color:#cbd5e1;">المستند جاهز للإرسال عبر الواتساب كملف PDF أو الطباعة الفورية أو التحميل المباشر</div>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <button type="button" id="top-wa-pdf-btn" onclick="openWhatsAppPdfShareModal()" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#ffffff;border:2px solid #ffffff;padding:9px 20px;border-radius:50px;font-weight:900;font-size:14px;cursor:pointer;font-family:'Cairo',sans-serif;box-shadow:0 4px 14px rgba(37,211,102,0.55);display:inline-flex;align-items:center;gap:8px;">
+          ${getWhatsAppSvgIconHtml(22)}
+          <span>إرسال واتساب PDF</span>
+        </button>
         <button type="button" onclick="window.focus(); window.print();" style="background:#10b981;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
           🖨️ طباعة الآن / حفظ كـ PDF
         </button>
@@ -15026,6 +15626,11 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
         </button>
       </div>
     </div>
+    <!-- Floating Green WhatsApp PDF Icon Button (Visible whenever any report is opened) -->
+    <button type="button" id="floating-wa-pdf-btn" class="no-print-bar" onclick="openWhatsAppPdfShareModal()" title="إرسال التقرير عبر الواتساب بصيغة PDF لجميع المستخدمين" style="position:fixed;bottom:24px;left:24px;z-index:99998;background:linear-gradient(135deg,#25D366,#128C7E);color:#ffffff;border:3px solid #ffffff;padding:12px 22px;border-radius:50px;font-weight:900;font-size:15px;cursor:pointer;font-family:'Cairo',sans-serif;box-shadow:0 8px 25px rgba(37,211,102,0.65);display:flex;align-items:center;gap:10px;">
+      ${getWhatsAppSvgIconHtml(28)}
+      <span>إرسال واتساب PDF</span>
+    </button>
     <div id="print-document-content" style="background:#fff;color:#000;">
       ${docHtml}
     </div>
@@ -15033,6 +15638,7 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
 
   const contentDomEl = document.getElementById('print-document-content');
   if (contentDomEl) {
+    paginateTablesForPrintAndPdf(contentDomEl, landscape);
     normalizeDomForHtml2CanvasArabic(contentDomEl);
     docHtml = contentDomEl.innerHTML;
     _lastPrintDocumentHtml = docHtml;
@@ -15043,33 +15649,12 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
   }
   void printEl.offsetHeight;
 
+  // Reset cached PDF when opening a new print document
+  _cachedGeneratedPdfFile = null;
+  _cachedGeneratedForDocTitle = '';
+
   // Build real committed URL to ./print.html (NEVER about:blank!)
   _lastPrintUrl = buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions);
-  let popupOpened = false;
-  try {
-    const popupWin = typeof window.open === 'function' ? window.open(_lastPrintUrl, '_blank') : null;
-    if (popupWin) {
-      popupOpened = true;
-    }
-  } catch (_) {}
-
-  // Also trigger in-page print after images decode if popup did not open
-  if (!popupOpened) {
-    const imgs = Array.from(printEl.querySelectorAll('img'));
-    const decodePromises = imgs.map(img => (img.decode ? img.decode().catch(() => {}) : Promise.resolve()));
-    Promise.race([
-      Promise.all(decodePromises),
-      new Promise(res => setTimeout(res, 220))
-    ]).then(() => {
-      setTimeout(() => {
-        try {
-          void printEl.offsetHeight;
-          if (typeof window.focus === 'function') window.focus();
-          window.print();
-        } catch (_) {}
-      }, 150);
-    });
-  }
 }
 
 // ============================================================================
@@ -15294,7 +15879,8 @@ function buildOfficialOrderStatementPdfHtml(ord) {
     ? ord.returnedPalletsLabel
     : buildReturnedPalletsStatementText(returnedPalletsCount, oldPalletsCount, palletUnitPrice)).replace(/[()ـ]/g, ' ').trim();
 
-  const totalRequired = +(netOrder + oldDebt - returnedPalletsDeduction).toFixed(2);
+  const paidTowardOrder = computeOrderPaidAmount(ord, clientObj);
+  const totalRequired = +(netOrder + oldDebt - returnedPalletsDeduction - paidTowardOrder).toFixed(2);
 
   const rawWords = numberToArabicTafqeet(Math.max(0, totalRequired)).trim();
   const cleanTotalWords = rawWords
@@ -15482,6 +16068,18 @@ function buildOfficialOrderStatementPdfHtml(ord) {
               </td>
               <td style="border:1.5px solid #000;background:#e59560;-webkit-print-color-adjust:exact;print-color-adjust:exact;padding:6px 6px;text-align:center;font-weight:800;font-size:14.5px;color:#000;direction:ltr;">
                 -${fmtEnNum(returnedPalletsDeduction, 2)}
+              </td>
+            </tr>
+            ` : ''}
+
+            <!-- Row 3.5: دفعة مسددة تحت حساب الطلبية (إن وجدت) -->
+            ${paidTowardOrder > 0 ? `
+            <tr>
+              <td colspan="${colSpanCount}" style="border:none;background:transparent;padding:6px 6px;text-align:center;font-weight:700;font-size:14px;color:#000;">
+                دفعة مسددة تحت حساب الطلبية
+              </td>
+              <td style="border:1.5px solid #000;background:#e59560;-webkit-print-color-adjust:exact;print-color-adjust:exact;padding:6px 6px;text-align:center;font-weight:800;font-size:14.5px;color:#000;direction:ltr;">
+                -${fmtEnNum(paidTowardOrder, 2)}
               </td>
             </tr>
             ` : ''}
@@ -16609,7 +17207,7 @@ function printAllClientsAccountingReportPdf() {
             <td><strong>${m.netDebt > 0 ? 'مدين عليه — ' + fmtMoney(m.netDebt) : m.netDebt < 0 ? 'دائن له — ' + fmtMoney(Math.abs(m.netDebt)) : 'خالص 0 ج.م'}</strong></td>
             <td>
               <div><strong>${m.netPalletsAtClient} بالتة</strong></div>
-              <div style="font-size:10px;color:#334155;">مسلم ${m.palletsDelivered} — مستلم ${m.palletsReceived}</div>
+              <div style="font-size:10px;color:#334155;">رصيد نهائي</div>
             </td>
             <td><strong>${fmtMoney(m.palletUnitPrice || 0)}</strong></td>
             <td><strong>${fmtMoney(Math.abs(m.netPalletsValue || 0))}</strong></td>
@@ -17412,13 +18010,15 @@ function openEditPartnerModal(clientId) {
   const pt = (state.partners || []).find(p => p.id === clientId);
   if (!pt) return;
   const modalRoot = document.getElementById('modal-root');
+  const m = computeClientMetrics(pt);
   const currentPltPrice = getWoodenPalletUnitPrice(pt);
+  const currentFinalPallets = Math.max(0, Number(m.netPalletsAtClient || 0));
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
       <div class="modal-box" style="max-width:600px;">
         <div class="card-header">
-          <div class="card-title">✏️ تعديل بيانات العميل والأرصدة الافتتاحية (${pt.code || 'CL'} - ${pt.name})</div>
+          <div class="card-title">✏️ تعديل بيانات العميل وحساب القشرة وحساب البالتات النهائي (${pt.code || 'CL'} - ${pt.name})</div>
           <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
         </div>
         <form onsubmit="submitEditPartnerModal(event, '${pt.id}')">
@@ -17427,13 +18027,20 @@ function openEditPartnerModal(clientId) {
             <div class="form-group"><label>اسم العميل</label><input id="ept-name" class="form-control" value="${pt.name || ''}" required /></div>
             <div class="form-group"><label>رقم التليفون</label><input id="ept-phone" class="form-control" value="${pt.phone || ''}" /></div>
             <div class="form-group"><label>المدينة / العنوان</label><input id="ept-city" class="form-control" value="${pt.city || ''}" /></div>
-            <div class="form-group"><label>مديونية افتتاحية (عليه - ج.م)</label><input id="ept-debit" type="number" step="0.5" min="0" class="form-control" value="${pt.openingDebit || 0}" /></div>
-            <div class="form-group"><label>رصيد دائن افتتاحي (له - ج.م)</label><input id="ept-credit" type="number" step="0.5" min="0" class="form-control" value="${pt.openingCredit || 0}" /></div>
-            <div class="form-group"><label>بالتات افتتاحية مسلمة للعميل</label><input id="ept-pdel" type="number" min="0" class="form-control" value="${pt.openingPalletsDelivered || 0}" /></div>
-            <div class="form-group"><label>بالتات افتتاحية مستلمة من العميل</label><input id="ept-prec" type="number" min="0" class="form-control" value="${pt.openingPalletsReceived || 0}" /></div>
-            <div class="form-group" style="grid-column: 1 / -1;">
-              <label style="color:var(--primary-dark);font-weight:800;">💰 قيمة البالتة الواحدة للعميل (ج.م)</label>
-              <input id="ept-plt-price" type="number" step="1" min="0" class="form-control" value="${currentPltPrice}" style="font-weight:900;border-color:var(--primary);" />
+            <div class="form-group"><label style="color:var(--danger);font-weight:800;">مديونية قشرة افتتاحية (عليه - ج.م)</label><input id="ept-debit" type="number" step="0.5" min="0" class="form-control" value="${pt.openingDebit || 0}" /></div>
+            <div class="form-group"><label style="color:var(--success);font-weight:800;">رصيد قشرة دائن افتتاحي (له - ج.م)</label><input id="ept-credit" type="number" step="0.5" min="0" class="form-control" value="${pt.openingCredit || 0}" /></div>
+            <div class="form-group" style="grid-column: 1 / -1;background:rgba(124,58,237,0.07);border:1.5px solid #7c3aed;border-radius:10px;padding:10px 12px;">
+              <label style="color:#6d28d9;font-weight:900;">🔒 حساب البالتات المستقل للعميل (الرصيد النهائي لعدد البالتات طرف العميل — غير قابل للإضافة أو الخصم):</label>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px;">
+                <div>
+                  <small style="font-weight:800;display:block;margin-bottom:3px;">🪵 الرصيد النهائي للبالتات طرف العميل</small>
+                  <input id="ept-final-pallets" type="number" min="0" step="1" class="form-control" value="${currentFinalPallets}" style="font-weight:900;border-color:#7c3aed;color:#6d28d9;" />
+                </div>
+                <div>
+                  <small style="font-weight:800;display:block;margin-bottom:3px;">💰 قيمة البالتة الواحدة للعميل (ج.م)</small>
+                  <input id="ept-plt-price" type="number" step="1" min="0" class="form-control" value="${currentPltPrice}" style="font-weight:900;border-color:var(--primary);" />
+                </div>
+              </div>
             </div>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
@@ -17456,9 +18063,20 @@ function submitEditPartnerModal(e, clientId) {
   pt.city = (document.getElementById('ept-city')?.value || pt.city).trim();
   pt.openingDebit = Math.max(0, Number(document.getElementById('ept-debit')?.value || 0));
   pt.openingCredit = Math.max(0, Number(document.getElementById('ept-credit')?.value || 0));
-  pt.openingPalletsDelivered = Math.max(0, Number(document.getElementById('ept-pdel')?.value || 0));
-  pt.openingPalletsReceived = Math.max(0, Number(document.getElementById('ept-prec')?.value || 0));
-  const pltPrice = Math.max(0, Number(document.getElementById('ept-plt-price')?.value ?? getWoodenPalletUnitPrice(pt)));
+  const finalPallets = Math.max(0, Math.round(Number(document.getElementById('ept-final-pallets')?.value ?? pt.finalNetPallets ?? pt.openingPalletsDelivered ?? 0)));
+  pt.finalNetPallets = finalPallets;
+  pt.openingPalletsDelivered = finalPallets;
+  pt.openingPalletsReceived = 0;
+  pt.palletAccountFinalized = true;
+  (state.palletMovements || []).forEach(pm => {
+    if (pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim()))) {
+      markRecordIdDeleted(pm.id);
+    }
+  });
+  state.palletMovements = (state.palletMovements || []).filter(
+    pm => !(pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim())))
+  );
+  const pltPrice = Math.max(0, Number(document.getElementById('ept-plt-price')?.value ?? getWoodenPalletUnitPrice(pt))) || 500;
   pt.palletUnitPrice = pltPrice;
   if (pltPrice > 0 && !Number(state.catalog?.woodenPalletUnitPrice)) {
     if (!state.catalog) state.catalog = {};
@@ -17469,7 +18087,7 @@ function submitEditPartnerModal(e, clientId) {
   pt.updatedAt = getMonotonicIso(pt.updatedAt);
   recalculateClientAccountChainFromOpeningBalance(pt.id, true);
   closeModal();
-  saveState(`✏️ تعديل بيانات والرصيد الافتتاحي للعميل (${pt.code} - ${pt.name}) وربط حسابات الطلبيات به بواسطة ${currentUser.name}`);
+  saveState(`✏️ تعديل بيانات والرصيد الافتتاحي لحساب القشرة والرصيد النهائي لحساب البالتات (${finalPallets} بالتة) للعميل (${pt.code} - ${pt.name}) بواسطة ${currentUser.name}`);
 }
 
 function deletePartnerRecord(clientId) {
@@ -17770,13 +18388,9 @@ function recalculateClientAccountChainFromOpeningBalance(clientId, forceRelinkAl
   if (!pt) return;
   const now = getMonotonicIso();
 
-  const openDebit = Number(pt.openingDebit ?? (Number(pt.balance || 0) > 0 ? Number(pt.balance) : 0));
-  const openCredit = Number(pt.openingCredit ?? (Number(pt.balance || 0) < 0 ? Math.abs(Number(pt.balance)) : 0));
-  let runningVeneerBalance = +(openDebit - openCredit).toFixed(2);
-
   // Get all orders for this client sorted chronologically (oldest to newest)
   const clientOrders = (state.productionOrders || []).filter(
-    o => (o.clientId && o.clientId === pt.id) || (o.clientName && pt.name && o.clientName.trim() === pt.name.trim())
+    o => (o.clientId && o.clientId === pt.id) || (!o.clientId && o.clientName && pt.name && o.clientName.trim() === pt.name.trim())
   ).slice().sort((a, b) => {
     const dA = String(a.date || a.createdAt || '');
     const dB = String(b.date || b.createdAt || '');
@@ -17784,36 +18398,16 @@ function recalculateClientAccountChainFromOpeningBalance(clientId, forceRelinkAl
     return String(a.orderNumber || '').localeCompare(String(b.orderNumber || ''));
   });
 
-  // Get standalone payments/credits (not sales_invoice) sorted chronologically
-  const standaloneTxs = (state.financialTransactions || []).filter(tx => {
-    const matchClient = (tx.partnerId && tx.partnerId === pt.id) || (tx.partnerName && pt.name && tx.partnerName.trim() === pt.name.trim());
-    if (!matchClient) return false;
-    if (tx.type === 'sales_invoice') return false;
-    return true;
-  }).slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
-
-  const appliedTxIds = new Set();
-
   clientOrders.forEach(ord => {
-    const ordDate = String(ord.date || ord.createdAt || '9999-99-99');
-    // Apply any standalone payments/credits up to or on this order's date before computing this order's previous balance
-    standaloneTxs.forEach(tx => {
-      if (appliedTxIds.has(tx.id)) return;
-      const txDate = String(tx.date || '');
-      if (txDate <= ordDate) {
-        const amt = Number(tx.paidAmount || tx.totalAmount || 0);
-        if (tx.type === 'pallet_deposit_refund') {
-          runningVeneerBalance = +(runningVeneerBalance + amt).toFixed(2);
-        } else if (tx.type === 'client_payment' || tx.type === 'receipt' || tx.type === 'client_credit' || isPalletDepositTransaction(tx)) {
-          runningVeneerBalance = +(runningVeneerBalance - amt).toFixed(2);
-        }
-        appliedTxIds.add(tx.id);
-      }
-    });
+    // Sync linked sales_invoice for this order first
+    syncOrderLinkedFinancialInvoice(ord, ord.orderNumber, now);
+
+    const livePrevBal = computeClientLivePreviousBalance(pt, ord.id, ord.orderNumber, state);
+    const paidTowardOrd = computeOrderPaidAmount(ord, pt, state);
 
     if (!ord.manualDebtOverride || forceRelinkAll) {
       ord.manualDebtOverride = false;
-      ord.oldVeneerDebt = +runningVeneerBalance.toFixed(2);
+      ord.oldVeneerDebt = livePrevBal;
       const oldPalletsCount = Math.max(0, Math.round(Number(ord.oldPalletsCount || 0)));
       const palletUnitPrice = Math.max(0, Number(ord.palletDepositUnitPrice || getWoodenPalletUnitPrice(pt) || 500));
       const oldPalletsDepositAmount = +(oldPalletsCount * palletUnitPrice).toFixed(2);
@@ -17825,25 +18419,14 @@ function recalculateClientAccountChainFromOpeningBalance(clientId, forceRelinkAl
     const net = Number(ord.netTotalAmount || 0);
     const prevDebt = Number(ord.previousDebtAmount || 0);
     const retPalletsDed = Number(ord.returnedPalletsDeduction || 0);
-    ord.totalRequiredAmount = +(net + prevDebt - retPalletsDed).toFixed(2);
+    ord.paidTowardOrderAmount = paidTowardOrd;
+    ord.totalRequiredAmount = +(net + prevDebt - retPalletsDed - paidTowardOrd).toFixed(2);
     ord.totalRequiredInWords = numberToArabicTafqeet(Math.max(0, ord.totalRequiredAmount));
 
-    // Sync linked sales_invoice for this order
-    syncOrderLinkedFinancialInvoice(ord, ord.orderNumber, now);
-
-    const linkedInv = (state.financialTransactions || []).find(tx =>
-      tx.type === 'sales_invoice' && (tx.orderId === ord.id || ((tx.partnerId === ord.clientId || tx.partnerName === ord.clientName) && tx.voucherNo === `INV-${ord.orderNumber}`))
-    );
-    const isOrderInAccount = Boolean(linkedInv || ord.financialSettlement || ord.stage === 'ready_for_car_dispatch' || ord.stage === 'completed' || ord.isOldExecutedOrder);
-    if (isOrderInAccount) {
-      const ordPaid = Number(linkedInv?.paidAmount ?? ord.financialSettlement?.paidAmount ?? 0);
-      runningVeneerBalance = +(runningVeneerBalance + net - ordPaid).toFixed(2);
-      if (ord.financialSettlement) {
-        ord.financialSettlement.netTotal = net;
-        ord.financialSettlement.paidAmount = ordPaid;
-        ord.financialSettlement.remainingDebt = Math.max(0, +(net - ordPaid).toFixed(2));
-        ord.financialSettlement.cumulativeClientDebt = runningVeneerBalance;
-      }
+    if (ord.financialSettlement) {
+      ord.financialSettlement.netTotal = net;
+      ord.financialSettlement.remainingDebt = Math.max(0, +(net - paidTowardOrd).toFixed(2));
+      ord.financialSettlement.cumulativeClientDebt = ord.totalRequiredAmount;
     }
   });
 }
@@ -17972,12 +18555,8 @@ function openClientPiecePriceAdjustmentModal(preselectedClientId = '', focusOrde
                     <input id="pp-open-credit" type="number" step="0.5" min="0" class="form-control" value="${openCreditVal}" data-old-credit="${openCreditVal}" oninput="recalcClientPiecePriceModalLive('${selectedClient.id}')" style="font-weight:900;border-color:var(--success);" />
                   </div>
                   <div class="form-group" style="margin:0;">
-                    <label style="font-size:0.78rem;font-weight:700;">بالتات افتتاحية مسلمة للعميل</label>
-                    <input id="pp-open-pdel" type="number" min="0" class="form-control" value="${Number(selectedClient.openingPalletsDelivered || 0)}" style="font-weight:800;" />
-                  </div>
-                  <div class="form-group" style="margin:0;">
-                    <label style="font-size:0.78rem;font-weight:700;">بالتات افتتاحية مستلمة من العميل</label>
-                    <input id="pp-open-prec" type="number" min="0" class="form-control" value="${Number(selectedClient.openingPalletsReceived || 0)}" style="font-weight:800;" />
+                    <label style="color:#6d28d9;font-size:0.78rem;font-weight:900;">🔒 الرصيد النهائي للبالتات طرف العميل (حساب مستقل ونهائي)</label>
+                    <input id="pp-final-pallets" type="number" min="0" step="1" class="form-control" value="${Math.max(0, Number(m.netPalletsAtClient || 0))}" style="font-weight:900;border-color:#7c3aed;color:#6d28d9;" />
                   </div>
                 </div>
               </div>
@@ -18407,26 +18986,35 @@ function submitClientOrderPiecePricesBatch(e, clientId) {
   const now = getMonotonicIso();
   const changesLog = [];
 
-  // 0) Save Opening Balance edits if modified
+  // 0) Save Opening Balance edits & Final Pallet Account if modified
   const openDebitEl = document.getElementById('pp-open-debit');
   const openCreditEl = document.getElementById('pp-open-credit');
-  const openPDelEl = document.getElementById('pp-open-pdel');
-  const openPRecEl = document.getElementById('pp-open-prec');
-  if (openDebitEl || openCreditEl) {
+  const finalPalletsEl = document.getElementById('pp-final-pallets');
+  if (openDebitEl || openCreditEl || finalPalletsEl) {
     const oldDeb = Number(pt.openingDebit ?? (Number(pt.balance || 0) > 0 ? Number(pt.balance) : 0));
     const oldCred = Number(pt.openingCredit ?? (Number(pt.balance || 0) < 0 ? Math.abs(Number(pt.balance)) : 0));
     const newDeb = Math.max(0, Number(openDebitEl?.value ?? oldDeb));
     const newCred = Math.max(0, Number(openCreditEl?.value ?? oldCred));
-    const newPDel = Math.max(0, Number(openPDelEl?.value ?? pt.openingPalletsDelivered ?? 0));
-    const newPRec = Math.max(0, Number(openPRecEl?.value ?? pt.openingPalletsReceived ?? 0));
-    if (Math.abs(newDeb - oldDeb) > 0.001 || Math.abs(newCred - oldCred) > 0.001 || newPDel !== Number(pt.openingPalletsDelivered || 0) || newPRec !== Number(pt.openingPalletsReceived || 0)) {
+    const oldFinalPallets = Math.max(0, Number(m.netPalletsAtClient || 0));
+    const newFinalPallets = Math.max(0, Math.round(Number(finalPalletsEl?.value ?? oldFinalPallets)));
+    if (Math.abs(newDeb - oldDeb) > 0.001 || Math.abs(newCred - oldCred) > 0.001 || newFinalPallets !== oldFinalPallets) {
       pt.openingDebit = newDeb;
       pt.openingCredit = newCred;
-      pt.openingPalletsDelivered = newPDel;
-      pt.openingPalletsReceived = newPRec;
+      pt.finalNetPallets = newFinalPallets;
+      pt.openingPalletsDelivered = newFinalPallets;
+      pt.openingPalletsReceived = 0;
+      pt.palletAccountFinalized = true;
+      (state.palletMovements || []).forEach(pm => {
+        if (pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim()))) {
+          markRecordIdDeleted(pm.id);
+        }
+      });
+      state.palletMovements = (state.palletMovements || []).filter(
+        pm => !(pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim())))
+      );
       pt.balance = +(newDeb - newCred).toFixed(2);
       pt.updatedAt = now;
-      changesLog.push(`تعديل الرصيد الافتتاحي للعميل إلى (مدين: ${fmtMoney(newDeb)} / دائن: ${fmtMoney(newCred)})`);
+      changesLog.push(`تعديل الرصيد الافتتاحي لحساب القشرة (مدين: ${fmtMoney(newDeb)} / دائن: ${fmtMoney(newCred)}) والرصيد النهائي للبالتات (${newFinalPallets} بالتة)`);
     }
   }
 
