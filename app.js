@@ -15089,13 +15089,35 @@ async function generateCurrentReportPdfBlobAndUpload() {
     };
   }
 
-  const prevWidth = contentEl.style.width;
-  const prevMinWidth = contentEl.style.minWidth;
-  const prevMaxWidth = contentEl.style.maxWidth;
-  const targetA4Px = _lastPrintLandscape ? '1040px' : '740px';
+  const targetA4PxNum = _lastPrintLandscape ? 1040 : 740;
+  const targetA4Px = `${targetA4PxNum}px`;
+  const prevCssText = contentEl.style.cssText || '';
+  const prevDir = contentEl.getAttribute('dir');
+  const prevHtmlDir = document.documentElement ? document.documentElement.getAttribute('dir') : 'rtl';
+  const prevBodyDir = document.body ? document.body.getAttribute('dir') : 'rtl';
+
+  // Critical fix for mobile RTL html2canvas clipping:
+  // On mobile viewports (~360px), html2canvas crops elements wider than screen to the left in RTL mode!
+  // Temporarily setting documentElement/body dir="ltr" and contentEl dir="rtl" at left:0px ensures x=0 and full 1040px/740px width capture!
+  if (document.documentElement) document.documentElement.setAttribute('dir', 'ltr');
+  if (document.body) document.body.setAttribute('dir', 'ltr');
+  contentEl.setAttribute('dir', 'rtl');
   contentEl.style.width = targetA4Px;
   contentEl.style.minWidth = targetA4Px;
   contentEl.style.maxWidth = targetA4Px;
+  contentEl.style.margin = '0';
+  contentEl.style.boxSizing = 'border-box';
+
+  const restoreLayoutState = () => {
+    contentEl.style.cssText = prevCssText;
+    if (prevDir) contentEl.setAttribute('dir', prevDir);
+    else contentEl.removeAttribute('dir');
+    if (document.documentElement) document.documentElement.setAttribute('dir', prevHtmlDir || 'rtl');
+    if (document.body) {
+      if (prevBodyDir) document.body.setAttribute('dir', prevBodyDir);
+      else document.body.removeAttribute('dir');
+    }
+  };
 
   let pdfObj = null;
   try {
@@ -15111,16 +15133,16 @@ async function generateCurrentReportPdfBlobAndUpload() {
         backgroundColor: '#ffffff',
         scrollY: 0,
         scrollX: 0,
-        windowWidth: _lastPrintLandscape ? 1100 : 800
+        x: 0,
+        width: targetA4PxNum,
+        windowWidth: targetA4PxNum + 40
       },
       jsPDF: { unit: 'mm', format: 'a4', orientation: _lastPrintLandscape ? 'landscape' : 'portrait' }
     }).from(contentEl).toPdf();
 
     pdfObj = await worker.get('pdf');
   } finally {
-    contentEl.style.width = prevWidth;
-    contentEl.style.minWidth = prevMinWidth;
-    contentEl.style.maxWidth = prevMaxWidth;
+    restoreLayoutState();
   }
 
   if (expectedMaxPages > 0 && pdfObj && pdfObj.internal && typeof pdfObj.internal.getNumberOfPages === 'function') {
@@ -15428,18 +15450,31 @@ function downloadInPagePdfFile() {
   const expectedMaxPages = isSinglePageStmt ? 1 : (explicitBreaksCount > 0 ? (explicitBreaksCount + 1) : 0);
   const safeName = buildCleanAsciiPdfFileName(_lastPrintDocumentTitle || 'Report');
 
-  const prevWidth = contentEl.style.width;
-  const prevMinWidth = contentEl.style.minWidth;
-  const prevMaxWidth = contentEl.style.maxWidth;
-  const targetA4Px = _lastPrintLandscape ? '1040px' : '740px';
+  const targetA4PxNum = _lastPrintLandscape ? 1040 : 740;
+  const targetA4Px = `${targetA4PxNum}px`;
+  const prevCssText = contentEl.style.cssText || '';
+  const prevDir = contentEl.getAttribute('dir');
+  const prevHtmlDir = document.documentElement ? document.documentElement.getAttribute('dir') : 'rtl';
+  const prevBodyDir = document.body ? document.body.getAttribute('dir') : 'rtl';
+
+  if (document.documentElement) document.documentElement.setAttribute('dir', 'ltr');
+  if (document.body) document.body.setAttribute('dir', 'ltr');
+  contentEl.setAttribute('dir', 'rtl');
   contentEl.style.width = targetA4Px;
   contentEl.style.minWidth = targetA4Px;
   contentEl.style.maxWidth = targetA4Px;
+  contentEl.style.margin = '0';
+  contentEl.style.boxSizing = 'border-box';
 
   const restoreWidths = () => {
-    contentEl.style.width = prevWidth;
-    contentEl.style.minWidth = prevMinWidth;
-    contentEl.style.maxWidth = prevMaxWidth;
+    contentEl.style.cssText = prevCssText;
+    if (prevDir) contentEl.setAttribute('dir', prevDir);
+    else contentEl.removeAttribute('dir');
+    if (document.documentElement) document.documentElement.setAttribute('dir', prevHtmlDir || 'rtl');
+    if (document.body) {
+      if (prevBodyDir) document.body.setAttribute('dir', prevBodyDir);
+      else document.body.removeAttribute('dir');
+    }
   };
 
   const worker = window.html2pdf().set({
@@ -15454,7 +15489,9 @@ function downloadInPagePdfFile() {
       backgroundColor: '#ffffff',
       scrollY: 0,
       scrollX: 0,
-      windowWidth: _lastPrintLandscape ? 1100 : 800
+      x: 0,
+      width: targetA4PxNum,
+      windowWidth: targetA4PxNum + 40
     },
     jsPDF: { unit: 'mm', format: 'a4', orientation: _lastPrintLandscape ? 'landscape' : 'portrait' }
   }).from(contentEl).toPdf();
@@ -15527,7 +15564,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '69');
+  urlObj.searchParams.set('v', '70');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);

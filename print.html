@@ -432,13 +432,36 @@
       const expectedMaxPages = isSinglePageStmt ? 1 : (explicitBreaksCount > 0 ? (explicitBreaksCount + 1) : 0);
       const safeFile = buildCleanAsciiPdfFileName(_currentDocTitle || 'Report');
 
-      const prevWidth = container.style.width;
-      const prevMinWidth = container.style.minWidth;
-      const prevMaxWidth = container.style.maxWidth;
-      const targetA4Px = window._isLandscapeDoc ? '1040px' : '740px';
+      const targetA4PxNum = window._isLandscapeDoc ? 1040 : 740;
+      const targetA4Px = `${targetA4PxNum}px`;
+      const prevCssText = container.style.cssText || '';
+      const prevDir = container.getAttribute('dir');
+      const prevHtmlDir = document.documentElement ? document.documentElement.getAttribute('dir') : 'rtl';
+      const prevBodyDir = document.body ? document.body.getAttribute('dir') : 'rtl';
+
+      if (document.documentElement) document.documentElement.setAttribute('dir', 'ltr');
+      if (document.body) {
+        document.body.setAttribute('dir', 'ltr');
+        document.body.style.setProperty('direction', 'ltr', 'important');
+      }
+      container.setAttribute('dir', 'rtl');
       container.style.width = targetA4Px;
       container.style.minWidth = targetA4Px;
       container.style.maxWidth = targetA4Px;
+      container.style.margin = '0';
+      container.style.boxSizing = 'border-box';
+
+      const restoreWidths = () => {
+        container.style.cssText = prevCssText;
+        if (prevDir) container.setAttribute('dir', prevDir);
+        else container.removeAttribute('dir');
+        if (document.documentElement) document.documentElement.setAttribute('dir', prevHtmlDir || 'rtl');
+        if (document.body) {
+          if (prevBodyDir) document.body.setAttribute('dir', prevBodyDir);
+          else document.body.removeAttribute('dir');
+          document.body.style.setProperty('direction', 'rtl', 'important');
+        }
+      };
 
       try {
         if (typeof window.html2pdf === 'function') {
@@ -454,15 +477,15 @@
               backgroundColor: '#ffffff',
               scrollY: 0,
               scrollX: 0,
-              windowWidth: window._isLandscapeDoc ? 1100 : 800
+              x: 0,
+              width: targetA4PxNum,
+              windowWidth: targetA4PxNum + 40
             },
             jsPDF: { unit: 'mm', format: 'a4', orientation: window._isLandscapeDoc ? 'landscape' : 'portrait' }
           }).from(container).toPdf();
 
           const pdfObj = await worker.get('pdf');
-          container.style.width = prevWidth;
-          container.style.minWidth = prevMinWidth;
-          container.style.maxWidth = prevMaxWidth;
+          restoreWidths();
 
           if (expectedMaxPages > 0 && pdfObj && pdfObj.internal && typeof pdfObj.internal.getNumberOfPages === 'function') {
             while (pdfObj.internal.getNumberOfPages() > expectedMaxPages) {
@@ -521,9 +544,7 @@
           window.open(`https://wa.me/?text=${encodeURIComponent(msgText)}`, '_blank');
         }
       } catch (_) {
-        container.style.width = prevWidth;
-        container.style.minWidth = prevMinWidth;
-        container.style.maxWidth = prevMaxWidth;
+        restoreWidths();
       }
       if (btn) btn.innerHTML = oldTxt;
     }
@@ -645,17 +666,35 @@
       const expectedMaxPages = isSinglePageStmt ? 1 : (explicitBreaksCount > 0 ? (explicitBreaksCount + 1) : 0);
       const safeFile = buildCleanAsciiPdfFileName(_currentDocTitle || 'Report');
 
-      const prevWidth = container.style.width;
-      const prevMinWidth = container.style.minWidth;
-      const prevMaxWidth = container.style.maxWidth;
-      const targetA4Px = window._isLandscapeDoc ? '1040px' : '740px';
+      const targetA4PxNum = window._isLandscapeDoc ? 1040 : 740;
+      const targetA4Px = `${targetA4PxNum}px`;
+      const prevCssText = container.style.cssText || '';
+      const prevDir = container.getAttribute('dir');
+      const prevHtmlDir = document.documentElement ? document.documentElement.getAttribute('dir') : 'rtl';
+      const prevBodyDir = document.body ? document.body.getAttribute('dir') : 'rtl';
+
+      if (document.documentElement) document.documentElement.setAttribute('dir', 'ltr');
+      if (document.body) {
+        document.body.setAttribute('dir', 'ltr');
+        document.body.style.setProperty('direction', 'ltr', 'important');
+      }
+      container.setAttribute('dir', 'rtl');
       container.style.width = targetA4Px;
       container.style.minWidth = targetA4Px;
       container.style.maxWidth = targetA4Px;
+      container.style.margin = '0';
+      container.style.boxSizing = 'border-box';
+
       const restoreWidths = () => {
-        container.style.width = prevWidth;
-        container.style.minWidth = prevMinWidth;
-        container.style.maxWidth = prevMaxWidth;
+        container.style.cssText = prevCssText;
+        if (prevDir) container.setAttribute('dir', prevDir);
+        else container.removeAttribute('dir');
+        if (document.documentElement) document.documentElement.setAttribute('dir', prevHtmlDir || 'rtl');
+        if (document.body) {
+          if (prevBodyDir) document.body.setAttribute('dir', prevBodyDir);
+          else document.body.removeAttribute('dir');
+          document.body.style.setProperty('direction', 'rtl', 'important');
+        }
       };
 
       const worker = window.html2pdf().set({
@@ -670,7 +709,9 @@
           backgroundColor: '#ffffff',
           scrollY: 0,
           scrollX: 0,
-          windowWidth: window._isLandscapeDoc ? 1100 : 800
+          x: 0,
+          width: targetA4PxNum,
+          windowWidth: targetA4PxNum + 40
         },
         jsPDF: { unit: 'mm', format: 'a4', orientation: window._isLandscapeDoc ? 'landscape' : 'portrait' }
       }).from(container).toPdf();
