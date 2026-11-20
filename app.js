@@ -3210,6 +3210,9 @@ function render() {
             <button class="btn btn-sm btn-primary" onclick="openMobileInstallModal()" title="افتح بالكاميرا QR أو أرسل الرابط على واتساب أو ثبته بضغطة واحدة">
               📲 الموبايل (QR)
             </button>
+            <a href="./Al_Asimah_Factory_Full_System.xlsx" download="Al_Asimah_Factory_Full_System.xlsx" class="btn btn-sm" style="background:#15803d;color:#fff;font-weight:900;text-decoration:none;border:none;" title="تحميل شيت الإكسيل الموحد الكامل للمصنع شامل جميع الجداول والحسابات والدوال الحية">
+              📊 شيت الإكسيل الكامل (.xlsx)
+            </a>
             <span id="sync-status-pill" class="sync-pill ${isOnline ? '' : 'offline'}">
               ${isOnline ? '● متصل ومتزامن سحابياً' : '● وضع أوفلاين (حفظ محلي تلقائي)'}
             </span>
