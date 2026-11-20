@@ -15026,6 +15026,64 @@ function formatEgyptianWhatsAppPhone(rawPhone) {
   return digits;
 }
 
+function buildCleanAsciiPdfFileName(rawTitle = '') {
+  const t = String(rawTitle || '');
+  const dStr = todayStr();
+  const ordMatch = t.match(/ORD-\d+-\d+/i);
+  const clMatch = t.match(/CL-\d+/i);
+  const carMatch = t.match(/CAR-[A-Za-z0-9-]+/i);
+
+  let base = 'Al_Asimah_Factory_Report';
+  if (t.includes('إذن صرف سيارة') || carMatch) {
+    base = `Al_Asimah_Car_Dispatch_${ordMatch ? ordMatch[0].toUpperCase() : (carMatch ? carMatch[0].toUpperCase() : dStr)}`;
+  } else if (t.includes('بيان طلبية') || ordMatch) {
+    base = `Al_Asimah_Order_Statement_${ordMatch ? ordMatch[0].toUpperCase() : dStr}`;
+  } else if (t.includes('كشف حساب عميل') || clMatch) {
+    base = `Al_Asimah_Client_Statement_${clMatch ? clMatch[0].toUpperCase() : dStr}`;
+  } else if (t.includes('التقرير المالي الشامل') || t.includes('حسابات ومديونيات العملاء')) {
+    base = `Al_Asimah_Clients_Financial_Report_${dStr}`;
+  } else if (t.includes('جدول الكميات') && t.includes('الأسعار')) {
+    base = `Al_Asimah_Veneer_Quantities_And_Prices_${dStr}`;
+  } else if (t.includes('أرصدة كميات القشرة') || t.includes('جدول كميات القشرة')) {
+    base = `Al_Asimah_Veneer_Quantities_Report_${dStr}`;
+  } else if (t.includes('جدول أسعار القطعة') || t.includes('جدول الأسعار')) {
+    base = `Al_Asimah_Veneer_Prices_Report_${dStr}`;
+  } else if (t.includes('جدول الإنتاج') || t.includes('الإنتاج')) {
+    base = `Al_Asimah_Production_Report_${dStr}`;
+  } else if (t.includes('حاويات') || t.includes('سيريالات') || t.includes('جذوع')) {
+    base = `Al_Asimah_Logs_Containers_Report_${dStr}`;
+  } else if (t.includes('تأمين البالتات') || t.includes('حركة وقيم البالتات')) {
+    base = `Al_Asimah_Clients_Pallets_Report_${dStr}`;
+  } else if (t.includes('سجل البالتات المتاحة')) {
+    base = `Al_Asimah_Warehouse_Pallets_Report_${dStr}`;
+  } else if (t.includes('مرتجعات المبيعات')) {
+    base = `Al_Asimah_Sales_Returns_Report_${dStr}`;
+  } else if (t.includes('مخزن الخامات')) {
+    base = `Al_Asimah_Raw_Materials_Report_${dStr}`;
+  } else if (t.includes('مخزن الهالك')) {
+    base = `Al_Asimah_Scrap_Report_${dStr}`;
+  } else if (t.includes('قطع الغيار')) {
+    base = `Al_Asimah_Spare_Parts_Report_${dStr}`;
+  } else if (t.includes('حركات المخازن')) {
+    base = `Al_Asimah_Warehouse_Movements_${dStr}`;
+  } else if (t.includes('أوامر تجهيز')) {
+    base = `Al_Asimah_Production_Orders_${dStr}`;
+  } else if (t.includes('أذون الصرف المعتمدة')) {
+    base = `Al_Asimah_Approved_Dispatches_${dStr}`;
+  } else if (t.includes('الفواتير والتحصيلات')) {
+    base = `Al_Asimah_Financial_Transactions_${dStr}`;
+  } else if (t.includes('الشيكات')) {
+    base = `Al_Asimah_Checks_Report_${dStr}`;
+  } else if (t.includes('الجرد العام') || t.includes('الرقابة')) {
+    base = `Al_Asimah_General_Audit_Report_${dStr}`;
+  } else {
+    const asciiTokens = (t.match(/[A-Za-z0-9-]+/g) || []).join('_');
+    base = `Al_Asimah_Report_${asciiTokens ? asciiTokens + '_' : ''}${dStr}`;
+  }
+
+  return base.replace(/[^A-Za-z0-9_.-]/g, '_').replace(/_+/g, '_') + '.pdf';
+}
+
 async function generateCurrentReportPdfBlobAndUpload() {
   const contentEl = document.getElementById('print-document-content');
   if (!contentEl || !contentEl.innerHTML.trim()) return null;
@@ -15034,7 +15092,7 @@ async function generateCurrentReportPdfBlobAndUpload() {
   if (typeof window.html2pdf !== 'function') return null;
 
   const isSinglePageStmt = Boolean(contentEl.querySelector('[data-single-page-statement="1"]'));
-  const safeName = (_lastPrintDocumentTitle || 'تقرير_مصنع_العاصمة').replace(/[\\/:*?"<>|]/g, '_') + '.pdf';
+  const safeName = buildCleanAsciiPdfFileName(_lastPrintDocumentTitle || 'Report');
 
   if (_cachedGeneratedPdfFile && _cachedGeneratedForDocTitle === _lastPrintDocumentTitle) {
     return {
@@ -15059,6 +15117,14 @@ async function generateCurrentReportPdfBlobAndUpload() {
     while (pdfObj.internal.getNumberOfPages() > 1) {
       pdfObj.deletePage(pdfObj.internal.getNumberOfPages());
     }
+  }
+  if (pdfObj && typeof pdfObj.setProperties === 'function') {
+    pdfObj.setProperties({
+      title: safeName.replace(/\.pdf$/i, ''),
+      subject: 'Al Asimah Factory Official PDF Report',
+      author: 'Al Asimah Factory',
+      creator: 'Al Asimah Factory'
+    });
   }
 
   const pdfBlob = pdfObj.output('blob');
@@ -15142,7 +15208,7 @@ async function shareGeneratedPdfFileDirectly() {
     try {
       await navigator.share({
         files: [res.file],
-        title: _lastPrintDocumentTitle || 'تقرير مصنع العاصمة PDF',
+        title: res.safeName,
         text: msgText
       });
       return;
@@ -15348,7 +15414,7 @@ function downloadInPagePdfFile() {
     return;
   }
   const isSinglePageStmt = Boolean(contentEl.querySelector('[data-single-page-statement="1"]'));
-  const safeName = (_lastPrintDocumentTitle || 'مستند_مصنع_العاصمة').replace(/[\\/:*?"<>|]/g, '_') + '.pdf';
+  const safeName = buildCleanAsciiPdfFileName(_lastPrintDocumentTitle || 'Report');
   const worker = window.html2pdf().set({
     margin: isSinglePageStmt ? 5 : 6,
     filename: safeName,
@@ -15363,6 +15429,14 @@ function downloadInPagePdfFile() {
       while (pdf.internal.getNumberOfPages() > 1) {
         pdf.deletePage(pdf.internal.getNumberOfPages());
       }
+    }
+    if (pdf && typeof pdf.setProperties === 'function') {
+      pdf.setProperties({
+        title: safeName.replace(/\.pdf$/i, ''),
+        subject: 'Al Asimah Factory Official PDF Report',
+        author: 'Al Asimah Factory',
+        creator: 'Al Asimah Factory'
+      });
     }
   }).then(() => worker.save()).catch(() => {
     window.focus();
@@ -15415,7 +15489,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '67');
+  urlObj.searchParams.set('v', '68');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);

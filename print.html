@@ -381,17 +381,52 @@
       } catch (_) {}
     }
 
+    function buildCleanAsciiPdfFileName(rawTitle = '') {
+      const t = String(rawTitle || '');
+      const dStr = new Date().toISOString().slice(0, 10);
+      const ordMatch = t.match(/ORD-\d+-\d+/i);
+      const clMatch = t.match(/CL-\d+/i);
+      const carMatch = t.match(/CAR-[A-Za-z0-9-]+/i);
+
+      let base = 'Al_Asimah_Factory_Report';
+      if (t.includes('إذن صرف سيارة') || carMatch) {
+        base = `Al_Asimah_Car_Dispatch_${ordMatch ? ordMatch[0].toUpperCase() : (carMatch ? carMatch[0].toUpperCase() : dStr)}`;
+      } else if (t.includes('بيان طلبية') || ordMatch) {
+        base = `Al_Asimah_Order_Statement_${ordMatch ? ordMatch[0].toUpperCase() : dStr}`;
+      } else if (t.includes('كشف حساب عميل') || clMatch) {
+        base = `Al_Asimah_Client_Statement_${clMatch ? clMatch[0].toUpperCase() : dStr}`;
+      } else if (t.includes('التقرير المالي الشامل') || t.includes('حسابات ومديونيات العملاء')) {
+        base = `Al_Asimah_Clients_Financial_Report_${dStr}`;
+      } else if (t.includes('جدول الكميات') && t.includes('الأسعار')) {
+        base = `Al_Asimah_Veneer_Quantities_And_Prices_${dStr}`;
+      } else if (t.includes('أرصدة كميات القشرة') || t.includes('جدول كميات القشرة')) {
+        base = `Al_Asimah_Veneer_Quantities_Report_${dStr}`;
+      } else if (t.includes('جدول أسعار القطعة') || t.includes('جدول الأسعار')) {
+        base = `Al_Asimah_Veneer_Prices_Report_${dStr}`;
+      } else if (t.includes('جدول الإنتاج') || t.includes('الإنتاج')) {
+        base = `Al_Asimah_Production_Report_${dStr}`;
+      } else if (t.includes('حاويات') || t.includes('سيريالات') || t.includes('جذوع')) {
+        base = `Al_Asimah_Logs_Containers_Report_${dStr}`;
+      } else if (t.includes('تأمين البالتات') || t.includes('حركة وقيم البالتات')) {
+        base = `Al_Asimah_Clients_Pallets_Report_${dStr}`;
+      } else {
+        const asciiTokens = (t.match(/[A-Za-z0-9-]+/g) || []).join('_');
+        base = `Al_Asimah_Report_${asciiTokens ? asciiTokens + '_' : ''}${dStr}`;
+      }
+      return base.replace(/[^A-Za-z0-9_.-]/g, '_').replace(/_+/g, '_') + '.pdf';
+    }
+
     async function sendStandalonePdfViaWhatsApp() {
       const container = document.getElementById('standalone-print-body');
       if (!container || !container.innerHTML.trim()) return;
       paginateTablesForPrintAndPdf(container, Boolean(window._isLandscapeDoc));
       normalizeDomForHtml2CanvasArabic(container);
       const btn = document.getElementById('btn-wa-pdf');
-      const oldTxt = btn ? btn.innerText : '';
+      const oldTxt = btn ? btn.innerHTML : '';
       if (btn) btn.innerText = '⏳ جاري تحويل التقرير لـ PDF وإرساله للواتساب...';
 
       const isSinglePageStmt = Boolean(container.querySelector('[data-single-page-statement="1"]'));
-      const safeFile = (_currentDocTitle || 'تقرير_مصنع_العاصمة').replace(/[\\/:*?"<>|]/g, '_') + '.pdf';
+      const safeFile = buildCleanAsciiPdfFileName(_currentDocTitle || 'Report');
 
       try {
         if (typeof window.html2pdf === 'function') {
@@ -409,6 +444,14 @@
             while (pdfObj.internal.getNumberOfPages() > 1) {
               pdfObj.deletePage(pdfObj.internal.getNumberOfPages());
             }
+          }
+          if (pdfObj && typeof pdfObj.setProperties === 'function') {
+            pdfObj.setProperties({
+              title: safeFile.replace(/\.pdf$/i, ''),
+              subject: 'Al Asimah Factory Official PDF Report',
+              author: 'Al Asimah Factory',
+              creator: 'Al Asimah Factory'
+            });
           }
           const pdfBlob = pdfObj.output('blob');
           const pdfFile = new File([pdfBlob], safeFile, { type: 'application/pdf' });
@@ -435,10 +478,10 @@
             try {
               await navigator.share({
                 files: [pdfFile],
-                title: _currentDocTitle || 'تقرير مصنع العاصمة PDF',
+                title: safeFile,
                 text: msgText
               });
-              if (btn) btn.innerText = oldTxt;
+              if (btn) btn.innerHTML = oldTxt;
               return;
             } catch (_) {}
           }
@@ -454,7 +497,7 @@
           window.open(`https://wa.me/?text=${encodeURIComponent(msgText)}`, '_blank');
         }
       } catch (_) {}
-      if (btn) btn.innerText = oldTxt;
+      if (btn) btn.innerHTML = oldTxt;
     }
 
     function paginateTablesForPrintAndPdf(rootEl, isLandscape = false) {
@@ -588,7 +631,7 @@
       const oldText = btn ? btn.innerText : '';
       if (btn) btn.innerText = '⏳ جاري تجهيز الـ PDF...';
       const isSinglePageStmt = Boolean(container.querySelector('[data-single-page-statement="1"]'));
-      const safeFile = (_currentDocTitle || 'مستند_مصنع_العاصمة').replace(/[\\/:*?"<>|]/g, '_') + '.pdf';
+      const safeFile = buildCleanAsciiPdfFileName(_currentDocTitle || 'Report');
       const worker = window.html2pdf().set({
         margin: isSinglePageStmt ? 5 : 6,
         filename: safeFile,
@@ -603,6 +646,14 @@
           while (pdf.internal.getNumberOfPages() > 1) {
             pdf.deletePage(pdf.internal.getNumberOfPages());
           }
+        }
+        if (pdf && typeof pdf.setProperties === 'function') {
+          pdf.setProperties({
+            title: safeFile.replace(/\.pdf$/i, ''),
+            subject: 'Al Asimah Factory Official PDF Report',
+            author: 'Al Asimah Factory',
+            creator: 'Al Asimah Factory'
+          });
         }
       }).then(() => worker.save()).then(() => {
         if (btn) btn.innerText = oldText;
