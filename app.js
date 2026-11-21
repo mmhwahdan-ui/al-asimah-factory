@@ -15422,9 +15422,40 @@ let _cachedUploadedPdfUrl = '';
 let _cachedGeneratedForDocTitle = '';
 let _cachedGeneratedImageFile = null;
 let _cachedGeneratedImageBlob = null;
+let _cachedGeneratedImageDataUrl = '';
 let _cachedGeneratedImageSafeName = '';
 let _cachedGeneratedImageForDocTitle = '';
 let _waSharePreferredFormat = 'pdf';
+let _captureMutexPromise = Promise.resolve();
+
+function runExclusiveCaptureTask(taskFn) {
+  const next = _captureMutexPromise.then(() => taskFn()).catch((err) => {
+    console.warn('Capture task error:', err);
+    return null;
+  });
+  _captureMutexPromise = next.then(() => {}, () => {});
+  return next;
+}
+
+async function ensureHtml2CanvasLoaded() {
+  if (typeof window.html2canvas === 'function') return window.html2canvas;
+  return new Promise((resolve) => {
+    const existing = document.querySelector('script[data-h2c-direct="1"]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve(window.html2canvas || null), { once: true });
+      existing.addEventListener('error', () => resolve(null), { once: true });
+      setTimeout(() => resolve(window.html2canvas || null), 2500);
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+    s.async = true;
+    s.setAttribute('data-h2c-direct', '1');
+    s.onload = () => resolve(window.html2canvas || null);
+    s.onerror = () => resolve(null);
+    document.head.appendChild(s);
+  });
+}
 
 function getWhatsAppSvgIconHtml(size = 20) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="${size}" height="${size}" fill="#ffffff" style="vertical-align:middle;flex-shrink:0;display:inline-block;"><path d="M16.004 3.2c-7.072 0-12.8 5.728-12.8 12.8 0 2.256.592 4.464 1.712 6.416L3.2 28.8l6.56-1.712c1.888 1.024 4.016 1.568 6.24 1.568h.004c7.072 0 12.8-5.728 12.8-12.8 0-3.424-1.328-6.64-3.744-9.056C22.644 4.528 19.428 3.2 16.004 3.2zm7.488 18.288c-.32.896-1.856 1.712-2.592 1.824-.672.096-1.52.144-2.464-.16-.576-.176-1.312-.416-2.256-.816-3.968-1.712-6.56-5.696-6.752-5.968-.192-.256-1.616-2.144-1.616-4.096 0-1.952 1.024-2.912 1.392-3.312.368-.4.784-.496 1.056-.496.256 0 .528.016.752.016.24.016.56-.096.88.672.32.784 1.088 2.672 1.184 2.864.096.192.16.432.032.688-.128.256-.192.416-.384.64-.192.224-.4.496-.576.672-.192.192-.384.4-.16.784.224.384 1.008 1.664 2.16 2.688 1.488 1.328 2.736 1.744 3.12 1.936.384.192.608.16.832-.096.224-.256.96-1.12 1.216-1.504.256-.384.512-.32.864-.192.352.128 2.24 1.056 2.624 1.248.384.192.64.288.736.448.096.16.096.928-.224 1.824z"/></svg>`;
@@ -15513,13 +15544,16 @@ function prepareRtlElementForFullA4Capture(contentEl, isLandscape = false, extra
     htmlDir: document.documentElement ? document.documentElement.getAttribute('dir') : 'rtl',
     htmlDirStyle: document.documentElement ? document.documentElement.style.direction : '',
     bodyDir: document.body ? document.body.getAttribute('dir') : 'rtl',
-    bodyDirStyle: document.body ? document.body.style.direction : ''
+    bodyDirStyle: document.body ? document.body.style.direction : '',
+    bodyPadding: document.body ? document.body.style.padding : '',
+    bodyMargin: document.body ? document.body.style.margin : ''
   };
 
-  // Critical fix for mobile & desktop RTL html2canvas clipping:
-  // Any ancestor (#print-area, body, html) with padding or RTL direction shifts contentEl.getBoundingClientRect().left != 0,
-  // which causes html2canvas with x:0 to crop the left side of the table and leave white space on the right!
-  // Anchoring contentEl at position:fixed; left:0; top:0; inside an LTR root guarantees rect.left === 0 and 100% full width capture!
+  // Critical fix for mobile & desktop RTL html2pdf / html2canvas clipping:
+  // Do NOT set position:fixed on contentEl because html2pdf clones contentEl into .html2pdf__container,
+  // and a position:fixed child collapses .html2pdf__container to 0 height!
+  // Instead, setting html, body, and parentEl to direction:ltr with 0 margin/padding while keeping contentEl
+  // in normal flow (position:static) with direction:rtl ensures .html2pdf__container sits at left:0 (x=0) with full height!
   if (document.documentElement) {
     document.documentElement.setAttribute('dir', 'ltr');
     document.documentElement.style.setProperty('direction', 'ltr', 'important');
@@ -15527,6 +15561,8 @@ function prepareRtlElementForFullA4Capture(contentEl, isLandscape = false, extra
   if (document.body) {
     document.body.setAttribute('dir', 'ltr');
     document.body.style.setProperty('direction', 'ltr', 'important');
+    document.body.style.setProperty('padding', '0px', 'important');
+    document.body.style.setProperty('margin', '0px', 'important');
   }
   if (parentEl) {
     parentEl.setAttribute('dir', 'ltr');
@@ -15537,10 +15573,7 @@ function prepareRtlElementForFullA4Capture(contentEl, isLandscape = false, extra
 
   contentEl.setAttribute('dir', 'rtl');
   contentEl.style.setProperty('direction', 'rtl', 'important');
-  contentEl.style.setProperty('position', 'fixed', 'important');
-  contentEl.style.setProperty('left', '0px', 'important');
-  contentEl.style.setProperty('top', '0px', 'important');
-  contentEl.style.setProperty('right', 'auto', 'important');
+  contentEl.style.setProperty('position', 'static', 'important');
   contentEl.style.setProperty('width', targetA4Px, 'important');
   contentEl.style.setProperty('min-width', targetA4Px, 'important');
   contentEl.style.setProperty('max-width', targetA4Px, 'important');
@@ -15548,7 +15581,6 @@ function prepareRtlElementForFullA4Capture(contentEl, isLandscape = false, extra
   contentEl.style.setProperty('padding', extraPaddingPx ? `${extraPaddingPx}px` : '0px', 'important');
   contentEl.style.setProperty('background', '#ffffff', 'important');
   contentEl.style.setProperty('box-sizing', 'border-box', 'important');
-  contentEl.style.setProperty('z-index', '-1', 'important');
 
   const restore = () => {
     contentEl.style.cssText = saved.elCss;
@@ -15568,6 +15600,8 @@ function prepareRtlElementForFullA4Capture(contentEl, isLandscape = false, extra
       if (saved.bodyDir) document.body.setAttribute('dir', saved.bodyDir);
       else document.body.removeAttribute('dir');
       document.body.style.direction = saved.bodyDirStyle;
+      document.body.style.padding = saved.bodyPadding;
+      document.body.style.margin = saved.bodyMargin;
     }
   };
 
@@ -15575,17 +15609,6 @@ function prepareRtlElementForFullA4Capture(contentEl, isLandscape = false, extra
 }
 
 async function generateCurrentReportPdfBlobAndUpload() {
-  const contentEl = document.getElementById('print-document-content');
-  if (!contentEl || !contentEl.innerHTML.trim()) return null;
-  paginateTablesForPrintAndPdf(contentEl, _lastPrintLandscape);
-  normalizeDomForHtml2CanvasArabic(contentEl);
-  if (typeof window.html2pdf !== 'function') return null;
-
-  const isSinglePageStmt = Boolean(contentEl.querySelector('[data-single-page-statement="1"]'));
-  const explicitBreaksCount = contentEl.querySelectorAll('.html2pdf__page-break').length;
-  const expectedMaxPages = isSinglePageStmt ? 1 : (explicitBreaksCount > 0 ? (explicitBreaksCount + 1) : 0);
-  const safeName = buildCleanAsciiPdfFileName(_lastPrintDocumentTitle || 'Report');
-
   if (_cachedGeneratedPdfFile && _cachedGeneratedForDocTitle === _lastPrintDocumentTitle) {
     return {
       file: _cachedGeneratedPdfFile,
@@ -15594,141 +15617,267 @@ async function generateCurrentReportPdfBlobAndUpload() {
       pdfUrl: _cachedUploadedPdfUrl
     };
   }
+  return runExclusiveCaptureTask(async () => {
+    if (_cachedGeneratedPdfFile && _cachedGeneratedForDocTitle === _lastPrintDocumentTitle) {
+      return {
+        file: _cachedGeneratedPdfFile,
+        blob: _cachedGeneratedPdfBlob,
+        safeName: _cachedGeneratedPdfSafeName,
+        pdfUrl: _cachedUploadedPdfUrl
+      };
+    }
+    const contentEl = document.getElementById('print-document-content');
+    if (!contentEl || !contentEl.innerHTML.trim()) return null;
+    paginateTablesForPrintAndPdf(contentEl, _lastPrintLandscape);
+    normalizeDomForHtml2CanvasArabic(contentEl);
+    if (typeof window.html2pdf !== 'function') return null;
 
-  const { targetA4PxNum, restore } = prepareRtlElementForFullA4Capture(contentEl, _lastPrintLandscape, 0);
+    const isSinglePageStmt = Boolean(contentEl.querySelector('[data-single-page-statement="1"]'));
+    const explicitBreaksCount = contentEl.querySelectorAll('.html2pdf__page-break').length;
+    const expectedMaxPages = isSinglePageStmt ? 1 : (explicitBreaksCount > 0 ? (explicitBreaksCount + 1) : 0);
+    const safeName = buildCleanAsciiPdfFileName(_lastPrintDocumentTitle || 'Report');
 
-  let pdfObj = null;
-  try {
-    const worker = window.html2pdf().set({
-      margin: isSinglePageStmt ? 4 : 6,
-      filename: safeName,
-      pagebreak: { mode: ['css', 'legacy'] },
-      image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: {
+    const { targetA4PxNum, restore } = prepareRtlElementForFullA4Capture(contentEl, _lastPrintLandscape, 0);
+
+    let pdfObj = null;
+    try {
+      const worker = window.html2pdf().set({
+        margin: isSinglePageStmt ? 4 : 6,
+        filename: safeName,
+        pagebreak: { mode: ['css', 'legacy'] },
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          letterRendering: false,
+          backgroundColor: '#ffffff',
+          scrollY: 0,
+          scrollX: 0,
+          x: 0,
+          y: 0,
+          width: targetA4PxNum,
+          windowWidth: targetA4PxNum
+        },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: _lastPrintLandscape ? 'landscape' : 'portrait' }
+      }).from(contentEl).toPdf();
+
+      pdfObj = await worker.get('pdf');
+    } finally {
+      restore();
+    }
+
+    if (!pdfObj) return null;
+
+    if (expectedMaxPages > 0 && pdfObj.internal && typeof pdfObj.internal.getNumberOfPages === 'function') {
+      while (pdfObj.internal.getNumberOfPages() > expectedMaxPages) {
+        pdfObj.deletePage(pdfObj.internal.getNumberOfPages());
+      }
+    }
+    if (typeof pdfObj.setProperties === 'function') {
+      pdfObj.setProperties({
+        title: safeName.replace(/\.pdf$/i, ''),
+        subject: 'Al Asimah Factory Official PDF Report',
+        author: 'Al Asimah Factory',
+        creator: 'Al Asimah Factory'
+      });
+    }
+
+    const pdfBlob = pdfObj.output('blob');
+    const pdfFile = new File([pdfBlob], safeName, { type: 'application/pdf' });
+    let uploadedUrl = '';
+
+    try {
+      const dataUri = pdfObj.output('datauristring');
+      const upRes = await fetch('/api/upload-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: safeName, pdfBase64: dataUri })
+      });
+      if (upRes.ok) {
+        const upJson = await upRes.json();
+        if (upJson && upJson.pdfUrl) uploadedUrl = upJson.pdfUrl;
+      }
+    } catch (_) {}
+
+    _cachedGeneratedPdfFile = pdfFile;
+    _cachedGeneratedPdfBlob = pdfBlob;
+    _cachedGeneratedPdfSafeName = safeName;
+    _cachedUploadedPdfUrl = uploadedUrl;
+    _cachedGeneratedForDocTitle = _lastPrintDocumentTitle;
+
+    return { file: pdfFile, blob: pdfBlob, safeName, pdfUrl: uploadedUrl };
+  });
+}
+
+async function generateCurrentReportImageBlob() {
+  if (_cachedGeneratedImageFile && _cachedGeneratedImageForDocTitle === _lastPrintDocumentTitle) {
+    return {
+      file: _cachedGeneratedImageFile,
+      blob: _cachedGeneratedImageBlob,
+      dataUrl: _cachedGeneratedImageDataUrl,
+      safeName: _cachedGeneratedImageSafeName
+    };
+  }
+  return runExclusiveCaptureTask(async () => {
+    if (_cachedGeneratedImageFile && _cachedGeneratedImageForDocTitle === _lastPrintDocumentTitle) {
+      return {
+        file: _cachedGeneratedImageFile,
+        blob: _cachedGeneratedImageBlob,
+        dataUrl: _cachedGeneratedImageDataUrl,
+        safeName: _cachedGeneratedImageSafeName
+      };
+    }
+    const contentEl = document.getElementById('print-document-content');
+    if (!contentEl || !contentEl.innerHTML.trim()) return null;
+    paginateTablesForPrintAndPdf(contentEl, _lastPrintLandscape);
+    normalizeDomForHtml2CanvasArabic(contentEl);
+
+    const h2c = await ensureHtml2CanvasLoaded();
+    if (typeof h2c !== 'function' && typeof window.html2pdf !== 'function') return null;
+
+    const safePdfName = buildCleanAsciiPdfFileName(_lastPrintDocumentTitle || 'Report');
+    const safeImgName = safePdfName.replace(/\.pdf$/i, '.png');
+    const targetA4PxNum = _lastPrintLandscape ? 1060 : 760;
+
+    // Create a dedicated, clean off-screen LTR-anchored stage with a static-flow RTL clone inside it.
+    // This guarantees stage.offsetWidth === targetA4PxNum, stage.offsetHeight > 0 (full report height),
+    // and stage.getBoundingClientRect().left === 0 on all mobile and desktop browsers!
+    const prevStage = document.getElementById('__asimah_img_capture_stage__');
+    if (prevStage) prevStage.remove();
+
+    const savedHtmlDir = document.documentElement ? document.documentElement.getAttribute('dir') : 'rtl';
+    const savedHtmlDirStyle = document.documentElement ? document.documentElement.style.direction : '';
+    const savedBodyDir = document.body ? document.body.getAttribute('dir') : 'rtl';
+    const savedBodyDirStyle = document.body ? document.body.style.direction : '';
+    const savedScrollX = window.scrollX || window.pageXOffset || 0;
+    const savedScrollY = window.scrollY || window.pageYOffset || 0;
+
+    const stage = document.createElement('div');
+    stage.id = '__asimah_img_capture_stage__';
+    stage.setAttribute('dir', 'rtl');
+    stage.style.cssText =
+      `position:absolute !important;left:0px !important;top:0px !important;right:auto !important;` +
+      `width:${targetA4PxNum}px !important;min-width:${targetA4PxNum}px !important;max-width:${targetA4PxNum}px !important;` +
+      `padding:14px !important;margin:0px !important;background:#ffffff !important;color:#000000 !important;` +
+      `direction:rtl !important;box-sizing:border-box !important;z-index:-10 !important;overflow:visible !important;`;
+
+    const cloneEl = contentEl.cloneNode(true);
+    cloneEl.setAttribute('dir', 'rtl');
+    cloneEl.style.cssText =
+      `position:static !important;width:100% !important;min-width:100% !important;max-width:100% !important;` +
+      `margin:0px !important;padding:0px !important;background:#ffffff !important;color:#000000 !important;` +
+      `direction:rtl !important;box-sizing:border-box !important;overflow:visible !important;`;
+
+    cloneEl.querySelectorAll('.pdf-report-wrap, table').forEach(el => {
+      el.style.width = '100%';
+      el.style.maxWidth = '100%';
+      el.style.boxSizing = 'border-box';
+    });
+
+    stage.appendChild(cloneEl);
+
+    let canvasObj = null;
+    try {
+      if (document.documentElement) {
+        document.documentElement.setAttribute('dir', 'ltr');
+        document.documentElement.style.setProperty('direction', 'ltr', 'important');
+      }
+      if (document.body) {
+        document.body.setAttribute('dir', 'ltr');
+        document.body.style.setProperty('direction', 'ltr', 'important');
+        document.body.appendChild(stage);
+      }
+
+      if (typeof window.scrollTo === 'function') {
+        window.scrollTo(0, 0);
+      }
+
+      // Wait for any images inside the cloned stage to decode
+      const imgs = Array.from(stage.querySelectorAll('img'));
+      if (imgs.length > 0) {
+        await Promise.race([
+          Promise.all(imgs.map(img => img.decode ? img.decode().catch(() => {}) : Promise.resolve())),
+          new Promise(r => setTimeout(r, 250))
+        ]);
+      }
+
+      const stageW = Math.max(targetA4PxNum, stage.scrollWidth || stage.offsetWidth || targetA4PxNum);
+      const stageH = Math.max(200, stage.scrollHeight || stage.offsetHeight || 600);
+
+      const h2cOpts = {
         scale: 2,
         useCORS: true,
+        allowTaint: true,
+        logging: false,
         letterRendering: false,
         backgroundColor: '#ffffff',
         scrollY: 0,
         scrollX: 0,
         x: 0,
         y: 0,
-        width: targetA4PxNum,
-        windowWidth: targetA4PxNum
-      },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: _lastPrintLandscape ? 'landscape' : 'portrait' }
-    }).from(contentEl).toPdf();
+        width: stageW,
+        height: stageH,
+        windowWidth: stageW,
+        windowHeight: stageH
+      };
 
-    pdfObj = await worker.get('pdf');
-  } finally {
-    restore();
-  }
-
-  if (expectedMaxPages > 0 && pdfObj && pdfObj.internal && typeof pdfObj.internal.getNumberOfPages === 'function') {
-    while (pdfObj.internal.getNumberOfPages() > expectedMaxPages) {
-      pdfObj.deletePage(pdfObj.internal.getNumberOfPages());
+      if (typeof h2c === 'function') {
+        canvasObj = await h2c(stage, h2cOpts);
+      } else if (typeof window.html2pdf === 'function') {
+        const worker = window.html2pdf().set({
+          margin: 4,
+          html2canvas: h2cOpts,
+          jsPDF: { unit: 'mm', format: 'a4', orientation: _lastPrintLandscape ? 'landscape' : 'portrait' }
+        }).from(stage).toCanvas();
+        canvasObj = await worker.get('canvas');
+      }
+    } finally {
+      try { stage.remove(); } catch (_) {}
+      if (document.documentElement) {
+        document.documentElement.setAttribute('dir', savedHtmlDir || 'rtl');
+        document.documentElement.style.direction = savedHtmlDirStyle;
+      }
+      if (document.body) {
+        if (savedBodyDir) document.body.setAttribute('dir', savedBodyDir);
+        else document.body.removeAttribute('dir');
+        document.body.style.direction = savedBodyDirStyle;
+      }
+      if (typeof window.scrollTo === 'function') {
+        window.scrollTo(savedScrollX, savedScrollY);
+      }
     }
-  }
-  if (pdfObj && typeof pdfObj.setProperties === 'function') {
-    pdfObj.setProperties({
-      title: safeName.replace(/\.pdf$/i, ''),
-      subject: 'Al Asimah Factory Official PDF Report',
-      author: 'Al Asimah Factory',
-      creator: 'Al Asimah Factory'
+
+    if (!canvasObj || !canvasObj.width || !canvasObj.height) return null;
+
+    let dataUrl = '';
+    try {
+      dataUrl = canvasObj.toDataURL('image/png');
+    } catch (_) {}
+
+    const imgBlob = await new Promise(resolve => {
+      if (canvasObj.toBlob) {
+        try {
+          canvasObj.toBlob(b => resolve(b), 'image/png', 1.0);
+          return;
+        } catch (_) {}
+      }
+      if (dataUrl) {
+        fetch(dataUrl).then(r => r.blob()).then(resolve).catch(() => resolve(null));
+      } else {
+        resolve(null);
+      }
     });
-  }
+    if (!imgBlob) return null;
 
-  const pdfBlob = pdfObj.output('blob');
-  const pdfFile = new File([pdfBlob], safeName, { type: 'application/pdf' });
-  let uploadedUrl = '';
+    const imgFile = new File([imgBlob], safeImgName, { type: 'image/png', lastModified: Date.now() });
+    _cachedGeneratedImageFile = imgFile;
+    _cachedGeneratedImageBlob = imgBlob;
+    _cachedGeneratedImageDataUrl = dataUrl;
+    _cachedGeneratedImageSafeName = safeImgName;
+    _cachedGeneratedImageForDocTitle = _lastPrintDocumentTitle;
 
-  try {
-    const dataUri = pdfObj.output('datauristring');
-    const upRes = await fetch('/api/upload-pdf', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename: safeName, pdfBase64: dataUri })
-    });
-    if (upRes.ok) {
-      const upJson = await upRes.json();
-      if (upJson && upJson.pdfUrl) uploadedUrl = upJson.pdfUrl;
-    }
-  } catch (_) {}
-
-  _cachedGeneratedPdfFile = pdfFile;
-  _cachedGeneratedPdfBlob = pdfBlob;
-  _cachedGeneratedPdfSafeName = safeName;
-  _cachedUploadedPdfUrl = uploadedUrl;
-  _cachedGeneratedForDocTitle = _lastPrintDocumentTitle;
-
-  return { file: pdfFile, blob: pdfBlob, safeName, pdfUrl: uploadedUrl };
-}
-
-async function generateCurrentReportImageBlob() {
-  const contentEl = document.getElementById('print-document-content');
-  if (!contentEl || !contentEl.innerHTML.trim()) return null;
-  paginateTablesForPrintAndPdf(contentEl, _lastPrintLandscape);
-  normalizeDomForHtml2CanvasArabic(contentEl);
-  if (typeof window.html2pdf !== 'function' && typeof window.html2canvas !== 'function') return null;
-
-  const safePdfName = buildCleanAsciiPdfFileName(_lastPrintDocumentTitle || 'Report');
-  const safeImgName = safePdfName.replace(/\.pdf$/i, '.png');
-
-  if (_cachedGeneratedImageFile && _cachedGeneratedImageForDocTitle === _lastPrintDocumentTitle) {
-    return {
-      file: _cachedGeneratedImageFile,
-      blob: _cachedGeneratedImageBlob,
-      safeName: _cachedGeneratedImageSafeName
-    };
-  }
-
-  const { targetA4PxNum, restore } = prepareRtlElementForFullA4Capture(contentEl, _lastPrintLandscape, 10);
-
-  let canvasObj = null;
-  try {
-    const h2cOpts = {
-      scale: 2,
-      useCORS: true,
-      letterRendering: false,
-      backgroundColor: '#ffffff',
-      scrollY: 0,
-      scrollX: 0,
-      x: 0,
-      y: 0,
-      width: targetA4PxNum,
-      windowWidth: targetA4PxNum
-    };
-    if (typeof window.html2canvas === 'function') {
-      canvasObj = await window.html2canvas(contentEl, h2cOpts);
-    } else if (typeof window.html2pdf === 'function') {
-      const worker = window.html2pdf().set({
-        html2canvas: h2cOpts
-      }).from(contentEl).toCanvas();
-      canvasObj = await worker.get('canvas');
-    }
-  } finally {
-    restore();
-  }
-
-  if (!canvasObj) return null;
-
-  const imgBlob = await new Promise(resolve => {
-    if (canvasObj.toBlob) {
-      canvasObj.toBlob(b => resolve(b), 'image/png', 1.0);
-    } else {
-      const dataUrl = canvasObj.toDataURL('image/png');
-      fetch(dataUrl).then(r => r.blob()).then(resolve).catch(() => resolve(null));
-    }
+    return { file: imgFile, blob: imgBlob, dataUrl, safeName: safeImgName };
   });
-  if (!imgBlob) return null;
-
-  const imgFile = new File([imgBlob], safeImgName, { type: 'image/png' });
-  _cachedGeneratedImageFile = imgFile;
-  _cachedGeneratedImageBlob = imgBlob;
-  _cachedGeneratedImageSafeName = safeImgName;
-  _cachedGeneratedImageForDocTitle = _lastPrintDocumentTitle;
-
-  return { file: imgFile, blob: imgBlob, safeName: safeImgName };
 }
 
 async function downloadInPageImageFile() {
@@ -15779,35 +15928,114 @@ function buildWhatsAppReportMessageText(recipientName = '', formatType = 'pdf') 
   );
 }
 
+async function tryNativeShareFile(file, safeName = '', msgText = '') {
+  if (!file || typeof navigator === 'undefined' || typeof navigator.share !== 'function') {
+    return { shared: false, aborted: false };
+  }
+  let canShareFiles = true;
+  if (typeof navigator.canShare === 'function') {
+    try {
+      canShareFiles = navigator.canShare({ files: [file] });
+    } catch (_) {
+      canShareFiles = false;
+    }
+  }
+  if (!canShareFiles) return { shared: false, aborted: false };
+
+  try {
+    await navigator.share({
+      files: [file],
+      title: safeName || file.name,
+      text: msgText || ''
+    });
+    return { shared: true, aborted: false };
+  } catch (err1) {
+    if (err1 && err1.name === 'AbortError') {
+      return { shared: false, aborted: true };
+    }
+    // Fallback for mobile browsers/WebViews that only accept { files } without text/title
+    try {
+      await navigator.share({ files: [file] });
+      return { shared: true, aborted: false };
+    } catch (err2) {
+      if (err2 && err2.name === 'AbortError') {
+        return { shared: false, aborted: true };
+      }
+      return { shared: false, aborted: false };
+    }
+  }
+}
+
+async function tryCopyImageBlobToClipboard(blob) {
+  if (!blob || typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.write !== 'function' || typeof window.ClipboardItem !== 'function') {
+    return false;
+  }
+  try {
+    const item = new window.ClipboardItem({ 'image/png': blob });
+    await navigator.clipboard.write([item]);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function copyCurrentReportImageToClipboard() {
+  const statusEl = document.getElementById('wa-pdf-status-box');
+  let res = (_cachedGeneratedImageFile && _cachedGeneratedImageForDocTitle === _lastPrintDocumentTitle)
+    ? { file: _cachedGeneratedImageFile, blob: _cachedGeneratedImageBlob, safeName: _cachedGeneratedImageSafeName }
+    : await generateCurrentReportImageBlob();
+  if (!res || !res.blob) return;
+  const copied = await tryCopyImageBlobToClipboard(res.blob);
+  if (statusEl) {
+    statusEl.innerHTML = copied
+      ? `✅ تم نسخ صورة التقرير (<strong>${res.safeName}</strong>) إلى الحافظة بنجاح! افتح أي محادثة واتساب واضغط <strong>(لصق / Ctrl + V)</strong> لإرسال الصورة فوراً.`
+      : `✅ تم تحميل صورة التقرير (<strong>${res.safeName}</strong>) على جهازك لإرفاقها في الواتساب.`;
+  }
+  if (!copied) {
+    triggerBlobDownload(res.blob, res.safeName);
+  }
+}
+
 async function shareGeneratedImageFileDirectly(recipientName = '') {
   const statusEl = document.getElementById('wa-pdf-status-box');
+  const msgText = buildWhatsAppReportMessageText(recipientName, 'image');
+
+  // Fast synchronous path if image is already cached (preserves mobile user gesture activation!)
+  if (_cachedGeneratedImageFile && _cachedGeneratedImageForDocTitle === _lastPrintDocumentTitle) {
+    const fastShare = await tryNativeShareFile(_cachedGeneratedImageFile, _cachedGeneratedImageSafeName, msgText);
+    if (fastShare.aborted) return;
+    if (fastShare.shared) {
+      if (statusEl) {
+        statusEl.innerHTML = `✅ تم إرفاق ومشاركة التقرير كـ <strong>صورة عالية الدقة (${_cachedGeneratedImageSafeName})</strong> مباشرة عبر تطبيق الواتساب بنجاح!`;
+      }
+      return;
+    }
+  }
+
   if (statusEl) statusEl.innerHTML = '⏳ جاري تحويل التقرير إلى صورة عالية الدقة (PNG) لإرفاقها مباشرة في الواتساب...';
   const res = await generateCurrentReportImageBlob();
   if (!res || !res.file) {
-    downloadInPageImageFile();
+    if (statusEl) statusEl.innerHTML = '⚠️ تعذر توليد الصورة تلقائياً، جاري محاولة التحميل المباشر...';
     return;
   }
-  const msgText = buildWhatsAppReportMessageText(recipientName, 'image');
-  if (navigator.canShare && navigator.canShare({ files: [res.file] })) {
-    try {
-      await navigator.share({
-        files: [res.file],
-        title: res.safeName,
-        text: msgText
-      });
-      if (statusEl) {
-        statusEl.innerHTML = `✅ تم إرفاق ومشاركة التقرير كـ <strong>صورة عالية الدقة (${res.safeName})</strong> مباشرة عبر تطبيق الواتساب بنجاح!`;
-      }
-      return;
-    } catch (err) {
-      if (err && err.name === 'AbortError') return;
+
+  const shareRes = await tryNativeShareFile(res.file, res.safeName, msgText);
+  if (shareRes.aborted) return;
+  if (shareRes.shared) {
+    if (statusEl) {
+      statusEl.innerHTML = `✅ تم إرفاق ومشاركة التقرير كـ <strong>صورة عالية الدقة (${res.safeName})</strong> مباشرة عبر تطبيق الواتساب بنجاح!`;
     }
+    return;
   }
+
+  const copied = await tryCopyImageBlobToClipboard(res.blob);
   triggerBlobDownload(res.blob, res.safeName);
   const waUrl = `https://wa.me/?text=${encodeURIComponent(msgText)}`;
   window.open(waUrl, '_blank');
   if (statusEl) {
-    statusEl.innerHTML = `✅ تم تحميل صورة التقرير (<strong>${res.safeName}</strong>) على جهازك — قم الآن بإرفاق الصورة المحملة داخل محادثة الواتساب المفتوحة.`;
+    statusEl.innerHTML = copied
+      ? `✅ تم <strong>نسخ صورة التقرير للحافظة تلقائياً</strong> وتحميلها (<strong>${res.safeName}</strong>) — داخل محادثة الواتساب المفتوحة اضغط فقط <strong>(Ctrl + V / لصق)</strong> لإرسال الصورة فوراً!`
+      : `✅ تم تحميل صورة التقرير (<strong>${res.safeName}</strong>) على جهازك — قم الآن بإرفاق الصورة المحملة داخل محادثة الواتساب المفتوحة.`;
   }
 }
 
@@ -15816,33 +16044,39 @@ async function sendImageToWhatsAppNumber(rawPhone = '', recipientName = '') {
   const chosenPhone = rawPhone || (phoneInput ? phoneInput.value : '');
   const formattedPhone = formatEgyptianWhatsAppPhone(chosenPhone);
   const statusEl = document.getElementById('wa-pdf-status-box');
+  const msgText = buildWhatsAppReportMessageText(recipientName, 'image');
+
+  // Fast synchronous path if image is already cached (preserves mobile user gesture activation!)
+  if (_cachedGeneratedImageFile && _cachedGeneratedImageForDocTitle === _lastPrintDocumentTitle) {
+    const fastShare = await tryNativeShareFile(_cachedGeneratedImageFile, _cachedGeneratedImageSafeName, msgText);
+    if (fastShare.aborted) return;
+    if (fastShare.shared) {
+      if (statusEl) {
+        statusEl.innerHTML = `✅ تم إرفاق صورة التقرير (<strong>${_cachedGeneratedImageSafeName}</strong>) مباشرة في الواتساب ${recipientName ? 'لإرسالها إلى <strong>' + recipientName + '</strong>' : ''} بدون أي تداخل!`;
+      }
+      return;
+    }
+  }
+
   if (statusEl) {
     statusEl.innerHTML = `⏳ جاري تحويل التقرير إلى صورة واضحة (PNG) وإرفاقها عبر الواتساب ${recipientName ? 'إلى (' + recipientName + ')' : ''}...`;
   }
 
   const res = await generateCurrentReportImageBlob();
-  const msgText = buildWhatsAppReportMessageText(recipientName, 'image');
-
-  if (res && res.file && navigator.canShare && navigator.canShare({ files: [res.file] })) {
-    if (formattedPhone && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-      try { await navigator.clipboard.writeText(chosenPhone); } catch (_) {}
-    }
-    try {
-      await navigator.share({
-        files: [res.file],
-        title: res.safeName,
-        text: msgText
-      });
+  if (res && res.file) {
+    const shareRes = await tryNativeShareFile(res.file, res.safeName, msgText);
+    if (shareRes.aborted) return;
+    if (shareRes.shared) {
       if (statusEl) {
         statusEl.innerHTML = `✅ تم إرفاق صورة التقرير (<strong>${res.safeName}</strong>) مباشرة في الواتساب ${recipientName ? 'لإرسالها إلى <strong>' + recipientName + '</strong>' : ''} بدون أي تداخل!`;
       }
       return;
-    } catch (err) {
-      if (err && err.name === 'AbortError') return;
     }
   }
 
+  let copied = false;
   if (res && res.blob) {
+    copied = await tryCopyImageBlobToClipboard(res.blob);
     triggerBlobDownload(res.blob, res.safeName);
   }
   const waUrl = formattedPhone
@@ -15851,42 +16085,55 @@ async function sendImageToWhatsAppNumber(rawPhone = '', recipientName = '') {
   window.open(waUrl, '_blank');
 
   if (statusEl) {
-    statusEl.innerHTML = `✅ تم تحميل صورة التقرير (<strong>${res?.safeName || 'report.png'}</strong>) وفتح محادثة الواتساب ${recipientName ? 'مع <strong>' + recipientName + '</strong>' : ''} — يمكنك سحب وإرفاق الصورة المحملة مباشرة في المحادثة.`;
+    statusEl.innerHTML = copied
+      ? `✅ تم <strong>نسخ صورة التقرير للحافظة تلقائياً</strong> وتحميلها (<strong>${res?.safeName || 'report.png'}</strong>) وفتح محادثة الواتساب ${recipientName ? 'مع <strong>' + recipientName + '</strong>' : ''} — اضغط فقط <strong>(Ctrl + V / لصق)</strong> داخل محادثة الواتساب لإرسال الصورة فوراً!`
+      : `✅ تم تحميل صورة التقرير (<strong>${res?.safeName || 'report.png'}</strong>) وفتح محادثة الواتساب ${recipientName ? 'مع <strong>' + recipientName + '</strong>' : ''} — يمكنك سحب وإرفاق الصورة المحملة مباشرة في المحادثة.`;
   }
 }
 
 async function sendImageToAllSystemUsersWhatsApp() {
   const usersWithPhones = (state.users || []).filter(u => u && u.active !== false && formatEgyptianWhatsAppPhone(u.phone));
   const statusEl = document.getElementById('wa-pdf-status-box');
+  const msgText = buildWhatsAppReportMessageText('جميع مستخدمي النظام', 'image');
+
+  if (_cachedGeneratedImageFile && _cachedGeneratedImageForDocTitle === _lastPrintDocumentTitle) {
+    const fastShare = await tryNativeShareFile(_cachedGeneratedImageFile, _cachedGeneratedImageSafeName, msgText);
+    if (fastShare.aborted) return;
+    if (fastShare.shared) {
+      if (statusEl) {
+        statusEl.innerHTML = `✅ تم إرفاق صورة التقرير (<strong>${_cachedGeneratedImageSafeName}</strong>) مباشرة عبر تطبيق الواتساب لإرسالها لمستخدمي النظام / جروب المصنع!`;
+      }
+      return;
+    }
+  }
+
   if (statusEl) {
     statusEl.innerHTML = '⏳ جاري تجهيز صورة التقرير (PNG) لإرفاقها وإرسالها لمستخدمي النظام عبر الواتساب...';
   }
   const res = await generateCurrentReportImageBlob();
-  const msgText = buildWhatsAppReportMessageText('جميع مستخدمي النظام', 'image');
 
-  if (res && res.file && navigator.canShare && navigator.canShare({ files: [res.file] })) {
-    try {
-      await navigator.share({
-        files: [res.file],
-        title: res.safeName,
-        text: msgText
-      });
+  if (res && res.file) {
+    const shareRes = await tryNativeShareFile(res.file, res.safeName, msgText);
+    if (shareRes.aborted) return;
+    if (shareRes.shared) {
       if (statusEl) {
         statusEl.innerHTML = `✅ تم إرفاق صورة التقرير (<strong>${res.safeName}</strong>) مباشرة عبر تطبيق الواتساب لإرسالها لمستخدمي النظام / جروب المصنع!`;
       }
       return;
-    } catch (err) {
-      if (err && err.name === 'AbortError') return;
     }
   }
 
+  let copied = false;
   if (res && res.blob) {
+    copied = await tryCopyImageBlobToClipboard(res.blob);
     triggerBlobDownload(res.blob, res.safeName);
   }
   if (usersWithPhones.length === 0) {
     window.open(`https://wa.me/?text=${encodeURIComponent(msgText)}`, '_blank');
     if (statusEl) {
-      statusEl.innerHTML = `✅ تم تحميل صورة التقرير (PNG) وفتح واتساب لإرفاق الصورة مباشرة لجروب المصنع أو المستخدمين.`;
+      statusEl.innerHTML = copied
+        ? `✅ تم نسخ صورة التقرير للحافظة وتحميلها وفتح واتساب — اضغط (Ctrl + V / لصق) داخل محادثة الواتساب لإرسال الصورة فوراً.`
+        : `✅ تم تحميل صورة التقرير (PNG) وفتح واتساب لإرفاق الصورة مباشرة لجروب المصنع أو المستخدمين.`;
     }
     return;
   }
@@ -15898,33 +16145,38 @@ async function sendImageToAllSystemUsersWhatsApp() {
     }, idx * 600);
   });
   if (statusEl) {
-    statusEl.innerHTML = `✅ تم تحويل وتحميل التقرير كصورة (PNG) وفتح محادثات الواتساب لعدد (${usersWithPhones.length}) من مستخدمي النظام!`;
+    statusEl.innerHTML = `✅ تم تحويل${copied ? ' ونسخ' : ''} وتحميل التقرير كصورة (PNG) وفتح محادثات الواتساب لعدد (${usersWithPhones.length}) من مستخدمي النظام!`;
   }
 }
 
 async function shareGeneratedPdfFileDirectly(recipientName = '') {
   const statusEl = document.getElementById('wa-pdf-status-box');
+  const msgText = buildWhatsAppReportMessageText(recipientName, 'pdf');
+
+  if (_cachedGeneratedPdfFile && _cachedGeneratedForDocTitle === _lastPrintDocumentTitle) {
+    const fastShare = await tryNativeShareFile(_cachedGeneratedPdfFile, _cachedGeneratedPdfSafeName, msgText);
+    if (fastShare.aborted) return;
+    if (fastShare.shared) {
+      if (statusEl) {
+        statusEl.innerHTML = `✅ تم إرفاق ومشاركة ملف الـ PDF (<strong>${_cachedGeneratedPdfSafeName}</strong>) مباشرة عبر تطبيق الواتساب بنجاح!`;
+      }
+      return;
+    }
+  }
+
   if (statusEl) statusEl.innerHTML = '⏳ جاري تجهيز ملف الـ PDF لإرفاقه مباشرة في الواتساب...';
   const res = await generateCurrentReportPdfBlobAndUpload();
   if (!res || !res.file) {
     downloadInPagePdfFile();
     return;
   }
-  const msgText = buildWhatsAppReportMessageText(recipientName, 'pdf');
-  if (navigator.canShare && navigator.canShare({ files: [res.file] })) {
-    try {
-      await navigator.share({
-        files: [res.file],
-        title: res.safeName,
-        text: msgText
-      });
-      if (statusEl) {
-        statusEl.innerHTML = `✅ تم إرفاق ومشاركة ملف الـ PDF (<strong>${res.safeName}</strong>) مباشرة عبر تطبيق الواتساب بنجاح!`;
-      }
-      return;
-    } catch (err) {
-      if (err && err.name === 'AbortError') return;
+  const shareRes = await tryNativeShareFile(res.file, res.safeName, msgText);
+  if (shareRes.aborted) return;
+  if (shareRes.shared) {
+    if (statusEl) {
+      statusEl.innerHTML = `✅ تم إرفاق ومشاركة ملف الـ PDF (<strong>${res.safeName}</strong>) مباشرة عبر تطبيق الواتساب بنجاح!`;
     }
+    return;
   }
   triggerBlobDownload(res.blob, res.safeName);
   const waUrl = `https://wa.me/?text=${encodeURIComponent(msgText)}`;
@@ -15939,30 +16191,32 @@ async function sendPdfToWhatsAppNumber(rawPhone = '', recipientName = '') {
   const chosenPhone = rawPhone || (phoneInput ? phoneInput.value : '');
   const formattedPhone = formatEgyptianWhatsAppPhone(chosenPhone);
   const statusEl = document.getElementById('wa-pdf-status-box');
+  const msgText = buildWhatsAppReportMessageText(recipientName, 'pdf');
+
+  if (_cachedGeneratedPdfFile && _cachedGeneratedForDocTitle === _lastPrintDocumentTitle) {
+    const fastShare = await tryNativeShareFile(_cachedGeneratedPdfFile, _cachedGeneratedPdfSafeName, msgText);
+    if (fastShare.aborted) return;
+    if (fastShare.shared) {
+      if (statusEl) {
+        statusEl.innerHTML = `✅ تم إرفاق ملف الـ PDF (<strong>${_cachedGeneratedPdfSafeName}</strong>) مباشرة في الواتساب ${recipientName ? 'لإرساله إلى <strong>' + recipientName + '</strong>' : ''} بدون أي روابط!`;
+      }
+      return;
+    }
+  }
+
   if (statusEl) {
     statusEl.innerHTML = `⏳ جاري تحويل التقرير إلى ملف PDF وإرفاقه عبر الواتساب ${recipientName ? 'إلى (' + recipientName + ')' : ''}...`;
   }
 
   const res = await generateCurrentReportPdfBlobAndUpload();
-  const msgText = buildWhatsAppReportMessageText(recipientName, 'pdf');
-
-  // On mobile phones / browsers that support Web Share API for files, attach the actual PDF file directly to WhatsApp (never send a link!)
-  if (res && res.file && navigator.canShare && navigator.canShare({ files: [res.file] })) {
-    if (formattedPhone && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-      try { await navigator.clipboard.writeText(chosenPhone); } catch (_) {}
-    }
-    try {
-      await navigator.share({
-        files: [res.file],
-        title: res.safeName,
-        text: msgText
-      });
+  if (res && res.file) {
+    const shareRes = await tryNativeShareFile(res.file, res.safeName, msgText);
+    if (shareRes.aborted) return;
+    if (shareRes.shared) {
       if (statusEl) {
         statusEl.innerHTML = `✅ تم إرفاق ملف الـ PDF (<strong>${res.safeName}</strong>) مباشرة في الواتساب ${recipientName ? 'لإرساله إلى <strong>' + recipientName + '</strong>' : ''} بدون أي روابط!`;
       }
       return;
-    } catch (err) {
-      if (err && err.name === 'AbortError') return;
     }
   }
 
@@ -15982,25 +16236,32 @@ async function sendPdfToWhatsAppNumber(rawPhone = '', recipientName = '') {
 async function sendPdfToAllSystemUsersWhatsApp() {
   const usersWithPhones = (state.users || []).filter(u => u && u.active !== false && formatEgyptianWhatsAppPhone(u.phone));
   const statusEl = document.getElementById('wa-pdf-status-box');
+  const msgText = buildWhatsAppReportMessageText('جميع مستخدمي النظام', 'pdf');
+
+  if (_cachedGeneratedPdfFile && _cachedGeneratedForDocTitle === _lastPrintDocumentTitle) {
+    const fastShare = await tryNativeShareFile(_cachedGeneratedPdfFile, _cachedGeneratedPdfSafeName, msgText);
+    if (fastShare.aborted) return;
+    if (fastShare.shared) {
+      if (statusEl) {
+        statusEl.innerHTML = `✅ تم إرفاق ملف الـ PDF (<strong>${_cachedGeneratedPdfSafeName}</strong>) مباشرة عبر تطبيق الواتساب لإرساله لمستخدمي النظام / جروب المصنع!`;
+      }
+      return;
+    }
+  }
+
   if (statusEl) {
     statusEl.innerHTML = '⏳ جاري تجهيز ملف الـ PDF لإرفاقه وإرساله لمستخدمي النظام عبر الواتساب...';
   }
   const res = await generateCurrentReportPdfBlobAndUpload();
-  const msgText = buildWhatsAppReportMessageText('جميع مستخدمي النظام', 'pdf');
 
-  if (res && res.file && navigator.canShare && navigator.canShare({ files: [res.file] })) {
-    try {
-      await navigator.share({
-        files: [res.file],
-        title: res.safeName,
-        text: msgText
-      });
+  if (res && res.file) {
+    const shareRes = await tryNativeShareFile(res.file, res.safeName, msgText);
+    if (shareRes.aborted) return;
+    if (shareRes.shared) {
       if (statusEl) {
         statusEl.innerHTML = `✅ تم إرفاق ملف الـ PDF (<strong>${res.safeName}</strong>) مباشرة عبر تطبيق الواتساب لإرساله لمستخدمي النظام / جروب المصنع!`;
       }
       return;
-    } catch (err) {
-      if (err && err.name === 'AbortError') return;
     }
   }
 
@@ -16055,8 +16316,26 @@ function openWhatsAppPdfShareModal(presetPhone = '', presetRecipientName = '', d
         <button type="button" onclick="document.getElementById('wa-pdf-share-overlay')?.remove()" style="background:#ef4444;color:#fff;border:none;padding:6px 12px;border-radius:8px;font-weight:900;cursor:pointer;">✕ إغلاق</button>
       </div>
 
-      <div id="wa-pdf-status-box" style="background:#f0fdf4;border:1.5px solid #16a34a;color:#15803d;padding:10px 14px;border-radius:10px;font-weight:800;font-size:0.86rem;margin-bottom:14px;">
+      <div id="wa-pdf-status-box" style="background:#f0fdf4;border:1.5px solid #16a34a;color:#15803d;padding:10px 14px;border-radius:10px;font-weight:800;font-size:0.86rem;margin-bottom:12px;">
         ⏳ جاري تجهيز التقرير بصيغتي (صورة عالية الدقة PNG) و(ملف PDF) للإرسال الفوري عبر الواتساب...
+      </div>
+
+      <!-- Live Image Preview & Quick Copy/Download Bar -->
+      <div id="wa-image-preview-container" style="display:none;background:#f8fafc;border:1.5px solid #0284c7;border-radius:10px;padding:10px 12px;margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+          <span style="font-weight:900;font-size:0.84rem;color:#0369a1;">🖼️ معاينة صورة التقرير الجاهزة للإرسال عبر الواتساب (كاملة الدقة بدون أي اقتصاص):</span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button type="button" onclick="copyCurrentReportImageToClipboard()" style="background:#0f766e;color:#fff;border:none;padding:5px 11px;border-radius:6px;font-weight:800;font-size:0.76rem;cursor:pointer;font-family:'Cairo',sans-serif;">
+              📋 نسخ الصورة للحافظة (لصق مباشر Ctrl+V في واتساب)
+            </button>
+            <button type="button" onclick="downloadInPageImageFile()" style="background:#0284c7;color:#fff;border:none;padding:5px 11px;border-radius:6px;font-weight:800;font-size:0.76rem;cursor:pointer;font-family:'Cairo',sans-serif;">
+              📥 تحميل الصورة (PNG)
+            </button>
+          </div>
+        </div>
+        <div style="max-height:190px;overflow-y:auto;border:1px solid #cbd5e1;border-radius:8px;background:#ffffff;padding:6px;text-align:center;">
+          <img id="wa-image-preview-img" alt="معاينة صورة التقرير" style="max-width:100%;height:auto;display:block;margin:0 auto;border-radius:4px;" />
+        </div>
       </div>
 
       <!-- Quick Action 1: Direct Native Share (Image PNG + PDF) -->
@@ -16148,11 +16427,33 @@ function openWhatsAppPdfShareModal(presetPhone = '', presetRecipientName = '', d
 
   document.body.appendChild(overlay);
 
-  // Pre-generate both Image and PDF in background so either button responds immediately!
-  Promise.all([
-    generateCurrentReportImageBlob().catch(() => null),
-    generateCurrentReportPdfBlobAndUpload().catch(() => null)
-  ]).then(([imgRes, pdfRes]) => {
+  const showImgPreviewInModal = (imgRes) => {
+    if (!imgRes || !imgRes.dataUrl) return;
+    const prevBox = document.getElementById('wa-image-preview-container');
+    const prevImg = document.getElementById('wa-image-preview-img');
+    if (prevBox && prevImg) {
+      prevImg.src = imgRes.dataUrl;
+      prevBox.style.display = 'block';
+    }
+  };
+
+  // Sequentially pre-generate Image and PDF (prioritizing the clicked mode first so there is zero DOM conflict!)
+  (async () => {
+    let imgRes = null;
+    let pdfRes = null;
+    if (defaultMode === 'image') {
+      imgRes = await generateCurrentReportImageBlob().catch(() => null);
+      showImgPreviewInModal(imgRes);
+      const statusEl1 = document.getElementById('wa-pdf-status-box');
+      if (statusEl1 && imgRes?.file) {
+        statusEl1.innerHTML = `✅ <strong>صورة التقرير (${imgRes.safeName}) جاهزة الآن!</strong> اضغط على زر الإرسال أدناه لإرفاقها عبر الواتساب مباشرة.`;
+      }
+      pdfRes = await generateCurrentReportPdfBlobAndUpload().catch(() => null);
+    } else {
+      pdfRes = await generateCurrentReportPdfBlobAndUpload().catch(() => null);
+      imgRes = await generateCurrentReportImageBlob().catch(() => null);
+      showImgPreviewInModal(imgRes);
+    }
     const statusEl = document.getElementById('wa-pdf-status-box');
     if (!statusEl) return;
     if (imgRes?.file || pdfRes?.file) {
@@ -16160,7 +16461,7 @@ function openWhatsAppPdfShareModal(presetPhone = '', presetRecipientName = '', d
     } else {
       statusEl.innerHTML = `✅ التقرير جاهز للإرسال عبر الواتساب كصورة أو ملف PDF.`;
     }
-  });
+  })();
 }
 
 function sendReportViaWhatsApp(printTriggerFn, presetPhone = '', presetRecipientName = '', defaultMode = 'pdf') {

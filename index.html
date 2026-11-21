@@ -15,11 +15,12 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./icons/logo.svg" />
   <link rel="apple-touch-icon" href="./icons/logo.svg" />
-  <link rel="stylesheet" href="./styles.css?v=76" />
+  <link rel="stylesheet" href="./styles.css?v=77" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" defer></script>
   <script>
     (function() {
-      var TARGET_VER = 'v76';
+      var TARGET_VER = 'v77';
       var rawState = localStorage.getItem('al_asimah_factory_v1_state') || '';
       if (rawState.indexOf('\uFFFD') !== -1 || rawState.indexOf('lcnt-mwkktok3-fwvs') !== -1 || rawState.indexOf('2026-11-17T19:36:39.295Z') !== -1 || rawState.indexOf('2026-11-17T19:41:06.134Z') !== -1) {
         localStorage.removeItem('al_asimah_factory_v1_state');
@@ -51,7 +52,7 @@
   <div id="modal-root"></div>
   <div id="print-area"></div>
 
-  <script src="./app.js?v=76"></script>
+  <script src="./app.js?v=77"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.addEventListener('message', (e) => {
@@ -60,7 +61,7 @@
         }
       });
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js?v=76').then(reg => {
+        navigator.serviceWorker.register('./sw.js?v=77').then(reg => {
           reg.update();
         }).catch(() => {});
       });

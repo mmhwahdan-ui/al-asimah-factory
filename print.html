@@ -130,6 +130,7 @@
       }
     }
   </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" defer></script>
 </head>
 <body>
@@ -431,6 +432,18 @@
       return base.replace(/[^A-Za-z0-9_.-]/g, '_').replace(/_+/g, '_') + '.pdf';
     }
 
+    async function ensureHtml2CanvasLoaded() {
+      if (typeof window.html2canvas === 'function') return window.html2canvas;
+      return new Promise((resolve) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+        s.async = true;
+        s.onload = () => resolve(window.html2canvas || null);
+        s.onerror = () => resolve(null);
+        document.head.appendChild(s);
+      });
+    }
+
     function prepareRtlElementForFullA4Capture(container, isLandscape = false, extraPaddingPx = 0) {
       const targetA4PxNum = isLandscape ? 1040 : 740;
       const targetA4Px = `${targetA4PxNum}px`;
@@ -455,10 +468,7 @@
 
       container.setAttribute('dir', 'rtl');
       container.style.setProperty('direction', 'rtl', 'important');
-      container.style.setProperty('position', 'fixed', 'important');
-      container.style.setProperty('left', '0px', 'important');
-      container.style.setProperty('top', '0px', 'important');
-      container.style.setProperty('right', 'auto', 'important');
+      container.style.setProperty('position', 'static', 'important');
       container.style.setProperty('width', targetA4Px, 'important');
       container.style.setProperty('min-width', targetA4Px, 'important');
       container.style.setProperty('max-width', targetA4Px, 'important');
@@ -466,7 +476,6 @@
       container.style.setProperty('padding', extraPaddingPx ? `${extraPaddingPx}px` : '0px', 'important');
       container.style.setProperty('background', '#ffffff', 'important');
       container.style.setProperty('box-sizing', 'border-box', 'important');
-      container.style.setProperty('z-index', '-1', 'important');
 
       const restore = () => {
         container.style.cssText = saved.elCss;
@@ -491,34 +500,93 @@
       if (!container || !container.innerHTML.trim()) return null;
       paginateTablesForPrintAndPdf(container, Boolean(window._isLandscapeDoc));
       normalizeDomForHtml2CanvasArabic(container);
+      const h2c = await ensureHtml2CanvasLoaded();
       const safeFile = buildCleanAsciiPdfFileName(_currentDocTitle || 'Report').replace(/\.pdf$/i, '.png');
+      const targetA4PxNum = window._isLandscapeDoc ? 1060 : 760;
 
-      const { targetA4PxNum, restore } = prepareRtlElementForFullA4Capture(container, Boolean(window._isLandscapeDoc), 10);
+      const prevStage = document.getElementById('__asimah_standalone_img_stage__');
+      if (prevStage) prevStage.remove();
+
+      const savedHtmlDir = document.documentElement ? document.documentElement.getAttribute('dir') : 'rtl';
+      const savedBodyDir = document.body ? document.body.getAttribute('dir') : 'rtl';
+
+      const stage = document.createElement('div');
+      stage.id = '__asimah_standalone_img_stage__';
+      stage.setAttribute('dir', 'rtl');
+      stage.style.cssText =
+        `position:absolute !important;left:0px !important;top:0px !important;right:auto !important;` +
+        `width:${targetA4PxNum}px !important;min-width:${targetA4PxNum}px !important;max-width:${targetA4PxNum}px !important;` +
+        `padding:14px !important;margin:0px !important;background:#ffffff !important;color:#000000 !important;` +
+        `direction:rtl !important;box-sizing:border-box !important;z-index:-10 !important;overflow:visible !important;`;
+
+      const cloneEl = container.cloneNode(true);
+      cloneEl.setAttribute('dir', 'rtl');
+      cloneEl.style.cssText =
+        `position:static !important;width:100% !important;min-width:100% !important;max-width:100% !important;` +
+        `margin:0px !important;padding:0px !important;background:#ffffff !important;color:#000000 !important;` +
+        `direction:rtl !important;box-sizing:border-box !important;overflow:visible !important;`;
+
+      cloneEl.querySelectorAll('.pdf-report-wrap, table').forEach(el => {
+        el.style.width = '100%';
+        el.style.maxWidth = '100%';
+        el.style.boxSizing = 'border-box';
+      });
+
+      stage.appendChild(cloneEl);
 
       let canvasObj = null;
       try {
+        if (document.documentElement) {
+          document.documentElement.setAttribute('dir', 'ltr');
+          document.documentElement.style.setProperty('direction', 'ltr', 'important');
+        }
+        if (document.body) {
+          document.body.setAttribute('dir', 'ltr');
+          document.body.style.setProperty('direction', 'ltr', 'important');
+          document.body.appendChild(stage);
+        }
+
+        const stageW = Math.max(targetA4PxNum, stage.scrollWidth || stage.offsetWidth || targetA4PxNum);
+        const stageH = Math.max(200, stage.scrollHeight || stage.offsetHeight || 600);
+
         const h2cOpts = {
           scale: 2,
           useCORS: true,
+          allowTaint: true,
+          logging: false,
           letterRendering: false,
           backgroundColor: '#ffffff',
           scrollY: 0,
           scrollX: 0,
           x: 0,
           y: 0,
-          width: targetA4PxNum,
-          windowWidth: targetA4PxNum
+          width: stageW,
+          height: stageH,
+          windowWidth: stageW,
+          windowHeight: stageH
         };
-        if (typeof window.html2canvas === 'function') {
-          canvasObj = await window.html2canvas(container, h2cOpts);
+        if (typeof h2c === 'function') {
+          canvasObj = await h2c(stage, h2cOpts);
         } else if (typeof window.html2pdf === 'function') {
-          const worker = window.html2pdf().set({ html2canvas: h2cOpts }).from(container).toCanvas();
+          const worker = window.html2pdf().set({
+            margin: 4,
+            html2canvas: h2cOpts,
+            jsPDF: { unit: 'mm', format: 'a4', orientation: window._isLandscapeDoc ? 'landscape' : 'portrait' }
+          }).from(stage).toCanvas();
           canvasObj = await worker.get('canvas');
         }
       } finally {
-        restore();
+        try { stage.remove(); } catch (_) {}
+        if (document.documentElement) {
+          document.documentElement.setAttribute('dir', savedHtmlDir || 'rtl');
+          document.documentElement.style.removeProperty('direction');
+        }
+        if (document.body) {
+          document.body.setAttribute('dir', savedBodyDir || 'rtl');
+          document.body.style.removeProperty('direction');
+        }
       }
-      if (!canvasObj) return null;
+      if (!canvasObj || !canvasObj.width || !canvasObj.height) return null;
       const imgBlob = await new Promise(resolve => {
         if (canvasObj.toBlob) canvasObj.toBlob(b => resolve(b), 'image/png', 1.0);
         else {
@@ -526,7 +594,7 @@
         }
       });
       if (!imgBlob) return null;
-      const imgFile = new File([imgBlob], safeFile, { type: 'image/png' });
+      const imgFile = new File([imgBlob], safeFile, { type: 'image/png', lastModified: Date.now() });
       return { file: imgFile, blob: imgBlob, safeFile };
     }
 
@@ -554,7 +622,22 @@
                 if (btn) btn.innerHTML = oldTxt;
                 return;
               }
+              try {
+                await navigator.share({ files: [res.file] });
+                if (btn) btn.innerHTML = oldTxt;
+                return;
+              } catch (err2) {
+                if (err2 && err2.name === 'AbortError') {
+                  if (btn) btn.innerHTML = oldTxt;
+                  return;
+                }
+              }
             }
+          }
+          if (navigator.clipboard && typeof navigator.clipboard.write === 'function' && typeof window.ClipboardItem === 'function') {
+            try {
+              await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': res.blob })]);
+            } catch (_) {}
           }
           const blobUrl = URL.createObjectURL(res.blob);
           const a = document.createElement('a');
