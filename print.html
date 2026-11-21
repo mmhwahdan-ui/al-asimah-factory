@@ -136,28 +136,41 @@
   <div class="no-print-bar" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:#0f172a;color:#fff;padding:10px 16px;border-radius:10px;margin-bottom:14px;">
     <div>
       <strong id="print-bar-title" style="font-size:15px;color:#fbbf24;">🖨️ معاينة الطباعة الرسمية - مصنع العاصمة للصناعات المتخصصة</strong>
-      <div style="font-size:12px;color:#cbd5e1;">المستند جاهز للطباعة الفورية أو التحميل كملف PDF</div>
+      <div style="font-size:12px;color:#cbd5e1;">المستند جاهز للإرسال عبر الواتساب كـ (صورة PNG) أو (ملف PDF) أو الطباعة الفورية</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <button type="button" id="btn-wa-pdf" onclick="sendStandalonePdfViaWhatsApp()" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#ffffff;border:2px solid #ffffff;padding:8px 20px;border-radius:50px;font-weight:900;font-size:14px;cursor:pointer;box-shadow:0 4px 14px rgba(37,211,102,0.55);display:inline-flex;align-items:center;gap:8px;">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="22" height="22" fill="#ffffff" style="vertical-align:middle;flex-shrink:0;"><path d="M16.004 3.2c-7.072 0-12.8 5.728-12.8 12.8 0 2.256.592 4.464 1.712 6.416L3.2 28.8l6.56-1.712c1.888 1.024 4.016 1.568 6.24 1.568h.004c7.072 0 12.8-5.728 12.8-12.8 0-3.424-1.328-6.64-3.744-9.056C22.644 4.528 19.428 3.2 16.004 3.2zm7.488 18.288c-.32.896-1.856 1.712-2.592 1.824-.672.096-1.52.144-2.464-.16-.576-.176-1.312-.416-2.256-.816-3.968-1.712-6.56-5.696-6.752-5.968-.192-.256-1.616-2.144-1.616-4.096 0-1.952 1.024-2.912 1.392-3.312.368-.4.784-.496 1.056-.496.256 0 .528.016.752.016.24.016.56-.096.88.672.32.784 1.088 2.672 1.184 2.864.096.192.16.432.032.688-.128.256-.192.416-.384.64-.192.224-.4.496-.576.672-.192.192-.384.4-.16.784.224.384 1.008 1.664 2.16 2.688 1.488 1.328 2.736 1.744 3.12 1.936.384.192.608.16.832-.096.224-.256.96-1.12 1.216-1.504.256-.384.512-.32.864-.192.352.128 2.24 1.056 2.624 1.248.384.192.64.288.736.448.096.16.096.928-.224 1.824z"/></svg>
-        <span>إرسال واتساب PDF</span>
+      <button type="button" id="btn-wa-img" onclick="sendStandaloneImageViaWhatsApp()" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#ffffff;border:2px solid #ffffff;padding:8px 18px;border-radius:50px;font-weight:900;font-size:13.5px;cursor:pointer;box-shadow:0 4px 14px rgba(2,132,199,0.55);display:inline-flex;align-items:center;gap:7px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="20" height="20" fill="#ffffff" style="vertical-align:middle;flex-shrink:0;"><path d="M16.004 3.2c-7.072 0-12.8 5.728-12.8 12.8 0 2.256.592 4.464 1.712 6.416L3.2 28.8l6.56-1.712c1.888 1.024 4.016 1.568 6.24 1.568h.004c7.072 0 12.8-5.728 12.8-12.8 0-3.424-1.328-6.64-3.744-9.056C22.644 4.528 19.428 3.2 16.004 3.2zm7.488 18.288c-.32.896-1.856 1.712-2.592 1.824-.672.096-1.52.144-2.464-.16-.576-.176-1.312-.416-2.256-.816-3.968-1.712-6.56-5.696-6.752-5.968-.192-.256-1.616-2.144-1.616-4.096 0-1.952 1.024-2.912 1.392-3.312.368-.4.784-.496 1.056-.496.256 0 .528.016.752.016.24.016.56-.096.88.672.32.784 1.088 2.672 1.184 2.864.096.192.16.432.032.688-.128.256-.192.416-.384.64-.192.224-.4.496-.576.672-.192.192-.384.4-.16.784.224.384 1.008 1.664 2.16 2.688 1.488 1.328 2.736 1.744 3.12 1.936.384.192.608.16.832-.096.224-.256.96-1.12 1.216-1.504.256-.384.512-.32.864-.192.352.128 2.24 1.056 2.624 1.248.384.192.64.288.736.448.096.16.096.928-.224 1.824z"/></svg>
+        <span>🖼️ إرسال واتساب صورة</span>
       </button>
-      <button type="button" onclick="triggerBrowserPrintNow()" style="background:#10b981;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">
+      <button type="button" id="btn-wa-pdf" onclick="sendStandalonePdfViaWhatsApp()" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#ffffff;border:2px solid #ffffff;padding:8px 18px;border-radius:50px;font-weight:900;font-size:13.5px;cursor:pointer;box-shadow:0 4px 14px rgba(37,211,102,0.55);display:inline-flex;align-items:center;gap:7px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="20" height="20" fill="#ffffff" style="vertical-align:middle;flex-shrink:0;"><path d="M16.004 3.2c-7.072 0-12.8 5.728-12.8 12.8 0 2.256.592 4.464 1.712 6.416L3.2 28.8l6.56-1.712c1.888 1.024 4.016 1.568 6.24 1.568h.004c7.072 0 12.8-5.728 12.8-12.8 0-3.424-1.328-6.64-3.744-9.056C22.644 4.528 19.428 3.2 16.004 3.2zm7.488 18.288c-.32.896-1.856 1.712-2.592 1.824-.672.096-1.52.144-2.464-.16-.576-.176-1.312-.416-2.256-.816-3.968-1.712-6.56-5.696-6.752-5.968-.192-.256-1.616-2.144-1.616-4.096 0-1.952 1.024-2.912 1.392-3.312.368-.4.784-.496 1.056-.496.256 0 .528.016.752.016.24.016.56-.096.88.672.32.784 1.088 2.672 1.184 2.864.096.192.16.432.032.688-.128.256-.192.416-.384.64-.192.224-.4.496-.576.672-.192.192-.384.4-.16.784.224.384 1.008 1.664 2.16 2.688 1.488 1.328 2.736 1.744 3.12 1.936.384.192.608.16.832-.096.224-.256.96-1.12 1.216-1.504.256-.384.512-.32.864-.192.352.128 2.24 1.056 2.624 1.248.384.192.64.288.736.448.096.16.096.928-.224 1.824z"/></svg>
+        <span>📄 إرسال واتساب PDF</span>
+      </button>
+      <button type="button" onclick="triggerBrowserPrintNow()" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">
         🖨️ فتح صفحة الطابعة الآن / حفظ PDF
       </button>
-      <button type="button" id="btn-download-pdf" onclick="downloadDirectPdfFile()" style="background:#7c3aed;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">
-        📥 تحميل كملف PDF مباشر
+      <button type="button" id="btn-download-img" onclick="downloadDirectImageFile()" style="background:#0d9488;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">
+        🖼️ تحميل كصورة PNG
+      </button>
+      <button type="button" id="btn-download-pdf" onclick="downloadDirectPdfFile()" style="background:#7c3aed;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">
+        📥 تحميل كملف PDF
       </button>
       <button type="button" onclick="window.close();" style="background:#ef4444;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">
         ✕ إغلاق النافذة
       </button>
     </div>
   </div>
-  <button type="button" class="no-print-bar" onclick="sendStandalonePdfViaWhatsApp()" style="position:fixed;bottom:24px;left:24px;z-index:99998;background:linear-gradient(135deg,#25D366,#128C7E);color:#ffffff;border:3px solid #ffffff;padding:12px 22px;border-radius:50px;font-weight:900;font-size:15px;cursor:pointer;box-shadow:0 8px 25px rgba(37,211,102,0.65);display:flex;align-items:center;gap:10px;">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="28" height="28" fill="#ffffff" style="vertical-align:middle;flex-shrink:0;"><path d="M16.004 3.2c-7.072 0-12.8 5.728-12.8 12.8 0 2.256.592 4.464 1.712 6.416L3.2 28.8l6.56-1.712c1.888 1.024 4.016 1.568 6.24 1.568h.004c7.072 0 12.8-5.728 12.8-12.8 0-3.424-1.328-6.64-3.744-9.056C22.644 4.528 19.428 3.2 16.004 3.2zm7.488 18.288c-.32.896-1.856 1.712-2.592 1.824-.672.096-1.52.144-2.464-.16-.576-.176-1.312-.416-2.256-.816-3.968-1.712-6.56-5.696-6.752-5.968-.192-.256-1.616-2.144-1.616-4.096 0-1.952 1.024-2.912 1.392-3.312.368-.4.784-.496 1.056-.496.256 0 .528.016.752.016.24.016.56-.096.88.672.32.784 1.088 2.672 1.184 2.864.096.192.16.432.032.688-.128.256-.192.416-.384.64-.192.224-.4.496-.576.672-.192.192-.384.4-.16.784.224.384 1.008 1.664 2.16 2.688 1.488 1.328 2.736 1.744 3.12 1.936.384.192.608.16.832-.096.224-.256.96-1.12 1.216-1.504.256-.384.512-.32.864-.192.352.128 2.24 1.056 2.624 1.248.384.192.64.288.736.448.096.16.096.928-.224 1.824z"/></svg>
-    <span>إرسال واتساب PDF</span>
-  </button>
+  <div class="no-print-bar" style="position:fixed;bottom:20px;left:20px;z-index:99998;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+    <button type="button" onclick="sendStandaloneImageViaWhatsApp()" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#ffffff;border:3px solid #ffffff;padding:11px 18px;border-radius:50px;font-weight:900;font-size:14px;cursor:pointer;box-shadow:0 8px 25px rgba(2,132,199,0.6);display:flex;align-items:center;gap:8px;">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="24" height="24" fill="#ffffff" style="vertical-align:middle;flex-shrink:0;"><path d="M16.004 3.2c-7.072 0-12.8 5.728-12.8 12.8 0 2.256.592 4.464 1.712 6.416L3.2 28.8l6.56-1.712c1.888 1.024 4.016 1.568 6.24 1.568h.004c7.072 0 12.8-5.728 12.8-12.8 0-3.424-1.328-6.64-3.744-9.056C22.644 4.528 19.428 3.2 16.004 3.2zm7.488 18.288c-.32.896-1.856 1.712-2.592 1.824-.672.096-1.52.144-2.464-.16-.576-.176-1.312-.416-2.256-.816-3.968-1.712-6.56-5.696-6.752-5.968-.192-.256-1.616-2.144-1.616-4.096 0-1.952 1.024-2.912 1.392-3.312.368-.4.784-.496 1.056-.496.256 0 .528.016.752.016.24.016.56-.096.88.672.32.784 1.088 2.672 1.184 2.864.096.192.16.432.032.688-.128.256-.192.416-.384.64-.192.224-.4.496-.576.672-.192.192-.384.4-.16.784.224.384 1.008 1.664 2.16 2.688 1.488 1.328 2.736 1.744 3.12 1.936.384.192.608.16.832-.096.224-.256.96-1.12 1.216-1.504.256-.384.512-.32.864-.192.352.128 2.24 1.056 2.624 1.248.384.192.64.288.736.448.096.16.096.928-.224 1.824z"/></svg>
+      <span>🖼️ إرسال واتساب صورة</span>
+    </button>
+    <button type="button" onclick="sendStandalonePdfViaWhatsApp()" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#ffffff;border:3px solid #ffffff;padding:11px 18px;border-radius:50px;font-weight:900;font-size:14px;cursor:pointer;box-shadow:0 8px 25px rgba(37,211,102,0.65);display:flex;align-items:center;gap:8px;">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="24" height="24" fill="#ffffff" style="vertical-align:middle;flex-shrink:0;"><path d="M16.004 3.2c-7.072 0-12.8 5.728-12.8 12.8 0 2.256.592 4.464 1.712 6.416L3.2 28.8l6.56-1.712c1.888 1.024 4.016 1.568 6.24 1.568h.004c7.072 0 12.8-5.728 12.8-12.8 0-3.424-1.328-6.64-3.744-9.056C22.644 4.528 19.428 3.2 16.004 3.2zm7.488 18.288c-.32.896-1.856 1.712-2.592 1.824-.672.096-1.52.144-2.464-.16-.576-.176-1.312-.416-2.256-.816-3.968-1.712-6.56-5.696-6.752-5.968-.192-.256-1.616-2.144-1.616-4.096 0-1.952 1.024-2.912 1.392-3.312.368-.4.784-.496 1.056-.496.256 0 .528.016.752.016.24.016.56-.096.88.672.32.784 1.088 2.672 1.184 2.864.096.192.16.432.032.688-.128.256-.192.416-.384.64-.192.224-.4.496-.576.672-.192.192-.384.4-.16.784.224.384 1.008 1.664 2.16 2.688 1.488 1.328 2.736 1.744 3.12 1.936.384.192.608.16.832-.096.224-.256.96-1.12 1.216-1.504.256-.384.512-.32.864-.192.352.128 2.24 1.056 2.624 1.248.384.192.64.288.736.448.096.16.096.928-.224 1.824z"/></svg>
+      <span>📄 إرسال واتساب PDF</span>
+    </button>
+  </div>
 
   <div id="print-loading-indicator" style="text-align:center;padding:30px;font-weight:800;font-size:16px;color:#0f172a;">
     ⏳ جاري تجهيز مستند الطباعة الرسمي...
@@ -416,6 +429,138 @@
         base = `Al_Asimah_Report_${asciiTokens ? asciiTokens + '_' : ''}${dStr}`;
       }
       return base.replace(/[^A-Za-z0-9_.-]/g, '_').replace(/_+/g, '_') + '.pdf';
+    }
+
+    async function generateStandaloneImageBlob() {
+      const container = document.getElementById('standalone-print-body');
+      if (!container || !container.innerHTML.trim()) return null;
+      paginateTablesForPrintAndPdf(container, Boolean(window._isLandscapeDoc));
+      normalizeDomForHtml2CanvasArabic(container);
+      const safeFile = buildCleanAsciiPdfFileName(_currentDocTitle || 'Report').replace(/\.pdf$/i, '.png');
+
+      const targetA4PxNum = window._isLandscapeDoc ? 1040 : 740;
+      const targetA4Px = `${targetA4PxNum}px`;
+      const prevCssText = container.style.cssText || '';
+      const prevDir = container.getAttribute('dir');
+      const prevHtmlDir = document.documentElement ? document.documentElement.getAttribute('dir') : 'rtl';
+      const prevBodyDir = document.body ? document.body.getAttribute('dir') : 'rtl';
+
+      if (document.documentElement) document.documentElement.setAttribute('dir', 'ltr');
+      if (document.body) {
+        document.body.setAttribute('dir', 'ltr');
+        document.body.style.setProperty('direction', 'ltr', 'important');
+      }
+      container.setAttribute('dir', 'rtl');
+      container.style.width = targetA4Px;
+      container.style.minWidth = targetA4Px;
+      container.style.maxWidth = targetA4Px;
+      container.style.margin = '0';
+      container.style.padding = '10px';
+      container.style.background = '#ffffff';
+      container.style.boxSizing = 'border-box';
+
+      const restoreWidths = () => {
+        container.style.cssText = prevCssText;
+        if (prevDir) container.setAttribute('dir', prevDir);
+        else container.removeAttribute('dir');
+        if (document.documentElement) document.documentElement.setAttribute('dir', prevHtmlDir || 'rtl');
+        if (document.body) {
+          if (prevBodyDir) document.body.setAttribute('dir', prevBodyDir);
+          else document.body.removeAttribute('dir');
+          document.body.style.setProperty('direction', 'rtl', 'important');
+        }
+      };
+
+      let canvasObj = null;
+      try {
+        const h2cOpts = {
+          scale: 2,
+          useCORS: true,
+          letterRendering: false,
+          backgroundColor: '#ffffff',
+          scrollY: 0,
+          scrollX: 0,
+          x: 0,
+          width: targetA4PxNum,
+          windowWidth: targetA4PxNum + 40
+        };
+        if (typeof window.html2canvas === 'function') {
+          canvasObj = await window.html2canvas(container, h2cOpts);
+        } else if (typeof window.html2pdf === 'function') {
+          const worker = window.html2pdf().set({ html2canvas: h2cOpts }).from(container).toCanvas();
+          canvasObj = await worker.get('canvas');
+        }
+      } finally {
+        restoreWidths();
+      }
+      if (!canvasObj) return null;
+      const imgBlob = await new Promise(resolve => {
+        if (canvasObj.toBlob) canvasObj.toBlob(b => resolve(b), 'image/png', 1.0);
+        else {
+          fetch(canvasObj.toDataURL('image/png')).then(r => r.blob()).then(resolve).catch(() => resolve(null));
+        }
+      });
+      if (!imgBlob) return null;
+      const imgFile = new File([imgBlob], safeFile, { type: 'image/png' });
+      return { file: imgFile, blob: imgBlob, safeFile };
+    }
+
+    async function sendStandaloneImageViaWhatsApp() {
+      const btn = document.getElementById('btn-wa-img');
+      const oldTxt = btn ? btn.innerHTML : '';
+      if (btn) btn.innerText = '⏳ جاري تحويل التقرير لصورة وإرسالها للواتساب...';
+      try {
+        const res = await generateStandaloneImageBlob();
+        if (res && res.file) {
+          const msgText =
+            `🏭 *مصنع العاصمة للصناعات المتخصصة*\n` +
+            `🖼️ مرفق صورة التقرير (PNG): *${_currentDocTitle || 'تقرير رسمي'}*`;
+          if (navigator.canShare && navigator.canShare({ files: [res.file] })) {
+            try {
+              await navigator.share({
+                files: [res.file],
+                title: res.safeFile,
+                text: msgText
+              });
+              if (btn) btn.innerHTML = oldTxt;
+              return;
+            } catch (err) {
+              if (err && err.name === 'AbortError') {
+                if (btn) btn.innerHTML = oldTxt;
+                return;
+              }
+            }
+          }
+          const blobUrl = URL.createObjectURL(res.blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = res.safeFile;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => { try { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); } catch (_) {} }, 1000);
+          window.open(`https://wa.me/?text=${encodeURIComponent(msgText)}`, '_blank');
+        }
+      } catch (_) {}
+      if (btn) btn.innerHTML = oldTxt;
+    }
+
+    async function downloadDirectImageFile() {
+      const btn = document.getElementById('btn-download-img');
+      const oldText = btn ? btn.innerText : '';
+      if (btn) btn.innerText = '⏳ جاري تجهيز الصورة...';
+      try {
+        const res = await generateStandaloneImageBlob();
+        if (res && res.blob) {
+          const blobUrl = URL.createObjectURL(res.blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = res.safeFile;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => { try { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); } catch (_) {} }, 1000);
+        }
+      } catch (_) {}
+      if (btn) btn.innerText = oldText;
     }
 
     async function sendStandalonePdfViaWhatsApp() {

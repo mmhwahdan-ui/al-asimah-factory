@@ -4600,9 +4600,13 @@ function renderFinishedVeneerWarehouse() {
           <button class="btn btn-sm btn-primary" onclick="printVeneerQuantitiesMatrixPdf()">
             🖨️ طباعة جدول الكميات PDF
           </button>
-          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsApp(printVeneerQuantitiesMatrixPdf)">
-            ${getWhatsAppSvgIconHtml(16)}
-            <span>إرسال واتساب PDF</span>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printVeneerQuantitiesMatrixPdf)">
+            ${getWhatsAppSvgIconHtml(15)}
+            <span>🖼️ إرسال واتساب صورة</span>
+          </button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printVeneerQuantitiesMatrixPdf)">
+            ${getWhatsAppSvgIconHtml(15)}
+            <span>📄 إرسال واتساب PDF</span>
           </button>
           ${canSeeFinancialPrices() ? `
             <button class="btn btn-sm btn-accent" onclick="printVeneerPricesMatrixPdf()">
@@ -4611,9 +4615,13 @@ function renderFinishedVeneerWarehouse() {
             <button class="btn btn-sm btn-success" onclick="printBothMatricesPdf()">
               🖨️ طباعة الكميات + الأسعار PDF
             </button>
-            <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsApp(printBothMatricesPdf)">
-              ${getWhatsAppSvgIconHtml(16)}
-              <span>إرسال الكميات والأسعار واتساب PDF</span>
+            <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printBothMatricesPdf)">
+              ${getWhatsAppSvgIconHtml(15)}
+              <span>🖼️ إرسال الكميات والأسعار صورة</span>
+            </button>
+            <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printBothMatricesPdf)">
+              ${getWhatsAppSvgIconHtml(15)}
+              <span>📄 إرسال الكميات والأسعار PDF</span>
             </button>
           ` : ''}
           <button class="btn btn-sm ${veneerViewMode === 'matrix' ? 'btn-primary' : 'btn-outline'}" onclick="veneerViewMode='matrix'; render();">
@@ -5153,6 +5161,8 @@ function renderRawMaterialsWarehouse() {
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-sm btn-outline" onclick="printRawMaterialsReportPdf()">🖨️ طباعة تقرير الخامات PDF</button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printRawMaterialsReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>🖼️ إرسال واتساب صورة</span></button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printRawMaterialsReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>📄 إرسال واتساب PDF</span></button>
           ${hasPerm('warehouseIssueReceive') ? `
             <button class="btn btn-sm btn-primary" onclick="openAddRawMaterialModal()">➕ إضافة / توريد خامات للمخزن</button>
           ` : ''}
@@ -5222,6 +5232,8 @@ function renderScrapWarehouse() {
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-sm btn-outline" onclick="printScrapReportPdf()">🖨️ طباعة تقرير الهالك PDF</button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printScrapReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>🖼️ إرسال واتساب صورة</span></button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printScrapReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>📄 إرسال واتساب PDF</span></button>
           ${hasPerm('warehouseIssueReceive') ? `
             <button class="btn btn-sm btn-primary" onclick="openAddScrapModal()">➕ تسجيل إضافة هالك / قصاقيص</button>
           ` : ''}
@@ -5282,6 +5294,8 @@ function renderSparePartsWarehouse() {
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-sm btn-outline" onclick="printSparePartsReportPdf()">🖨️ طباعة قطع الغيار PDF</button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printSparePartsReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>🖼️ إرسال واتساب صورة</span></button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printSparePartsReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>📄 إرسال واتساب PDF</span></button>
           ${hasPerm('warehouseIssueReceive') ? `
             <button class="btn btn-sm btn-primary" onclick="openAddSparePartModal()">➕ إضافة صنف قطع غيار / مهمات</button>
           ` : ''}
@@ -5762,9 +5776,13 @@ function renderProductionLogTableSection() {
           <button class="btn btn-sm btn-accent" style="font-weight:800;" onclick="printProductionLogReportPdf()">
             🖨️ طباعة جدول الإنتاج (${data.periodLabel}) PDF
           </button>
-          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsApp(printProductionLogReportPdf)">
-            ${getWhatsAppSvgIconHtml(16)}
-            <span>إرسال واتساب PDF</span>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printProductionLogReportPdf)">
+            ${getWhatsAppSvgIconHtml(15)}
+            <span>🖼️ إرسال واتساب صورة</span>
+          </button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printProductionLogReportPdf)">
+            ${getWhatsAppSvgIconHtml(15)}
+            <span>📄 إرسال واتساب PDF</span>
           </button>
         </div>
       </div>
@@ -6055,6 +6073,8 @@ function renderProductionLogTableSection() {
                   <td>
                     <div style="display:flex;gap:4px;">
                       <button class="btn btn-sm btn-outline" onclick="printWarehouseVoucher('${r.id}')" title="طباعة إذن">🖨️</button>
+                      <button class="btn btn-sm" style="background:#0284c7;color:#fff;font-weight:800;padding:3px 7px;" onclick="sendReportViaWhatsAppImage(() => printWarehouseVoucher('${r.id}'))" title="إرسال الإذن كصورة عبر واتساب">🖼️</button>
+                      <button class="btn btn-sm" style="background:#16a34a;color:#fff;font-weight:800;padding:3px 7px;" onclick="sendReportViaWhatsApp(() => printWarehouseVoucher('${r.id}'))" title="إرسال الإذن PDF عبر واتساب">📄</button>
                       ${isFullAdmin(currentUser) ? `
                         <button class="btn btn-sm btn-accent" onclick="openEditWarehouseMovementModal('${r.id}')" title="تعديل">✏️</button>
                         <button class="btn btn-sm btn-danger" onclick="deleteWarehouseMovementWithRestore('${r.id}')" title="حذف وإرجاع الرصيد">🗑️</button>
@@ -6179,6 +6199,8 @@ function renderWarehouseMovements() {
             <button class="btn btn-sm btn-outline" onclick="movementDateFilterFrom=''; movementDateFilterTo=''; render();">إلغاء الفلتر</button>
           ` : ''}
           <button class="btn btn-sm btn-primary" onclick="printWarehouseMovementsReportPdf()">🖨️ طباعة سجل الحركات PDF</button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printWarehouseMovementsReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>🖼️ إرسال واتساب صورة</span></button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printWarehouseMovementsReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>📄 إرسال واتساب PDF</span></button>
         </div>
       </div>
       <div class="table-responsive">
@@ -6219,6 +6241,8 @@ function renderWarehouseMovements() {
                     ` : `
                       <button class="btn btn-sm btn-outline" onclick="printWarehouseVoucher('${m.id}')">🖨️ طباعة إذن</button>
                     `}
+                    <button class="btn btn-sm" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(() => printWarehouseVoucher('${m.id}'))">🖼️ واتساب صورة</button>
+                    <button class="btn btn-sm" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(() => printWarehouseVoucher('${m.id}'))">📄 واتساب PDF</button>
                     ${isFullAdmin(currentUser) ? `
                       <button class="btn btn-sm btn-accent" onclick="openEditWarehouseMovementModal('${m.id}')">✏️ تعديل البيان والرصيد</button>
                       <button class="btn btn-sm btn-danger" onclick="deleteWarehouseMovementWithRestore('${m.id}')">🗑️ حذف وإرجاع الرصيد</button>
@@ -6570,6 +6594,8 @@ function renderProduction() {
             <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="openFactoryStampModal()">💮 ختم الشركة والحسابات البنكية</button>
           ` : ''}
           <button class="btn btn-outline" onclick="printAllProductionOrdersReportPdf()">🖨️ طباعة سجل أوامر التجهيز PDF</button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printAllProductionOrdersReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>🖼️ إرسال واتساب صورة</span></button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printAllProductionOrdersReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>📄 إرسال واتساب PDF</span></button>
           <button class="btn btn-outline" onclick="setTab('approvals')">✅ الانتقال لاعتماد أذون الصرف والسيارات</button>
         </div>
       </div>
@@ -6674,6 +6700,10 @@ function renderProduction() {
                           <button class="btn btn-sm btn-accent" style="font-weight:800;" onclick="printClientOrderStatement('${ord.id}')">
                             🖨️ تصدير وطباعة البيان PDF
                           </button>
+                          <div style="display:flex;gap:4px;">
+                            <button class="btn btn-sm" style="flex:1;background:#0284c7;color:#fff;font-weight:800;font-size:0.7rem;padding:4px 6px;" onclick="sendReportViaWhatsAppImage(() => printClientOrderStatement('${ord.id}'), '${ord.clientPhone || ''}', '${ord.clientName || ''}')">🖼️ واتساب صورة</button>
+                            <button class="btn btn-sm" style="flex:1;background:#16a34a;color:#fff;font-weight:800;font-size:0.7rem;padding:4px 6px;" onclick="sendReportViaWhatsApp(() => printClientOrderStatement('${ord.id}'), '${ord.clientPhone || ''}', '${ord.clientName || ''}')">📄 واتساب PDF</button>
+                          </div>
                         ` : ''}
 
                         ${st === 'pending_executive' && isExec ? `
@@ -6710,6 +6740,10 @@ function renderProduction() {
                           <button class="btn btn-sm btn-success" onclick="printVehicleDispatchVoucher('${ord.id}')">
                             🖨️ طباعة إذن السيارة (${ord.carDispatchVoucher.carPlateNumber})
                           </button>
+                          <div style="display:flex;gap:4px;">
+                            <button class="btn btn-sm" style="flex:1;background:#0284c7;color:#fff;font-weight:800;font-size:0.7rem;padding:4px 6px;" onclick="sendReportViaWhatsAppImage(() => printVehicleDispatchVoucher('${ord.id}'), '${ord.clientPhone || ''}', '${ord.clientName || ''}')">🖼️ إذن السيارة صورة</button>
+                            <button class="btn btn-sm" style="flex:1;background:#16a34a;color:#fff;font-weight:800;font-size:0.7rem;padding:4px 6px;" onclick="sendReportViaWhatsApp(() => printVehicleDispatchVoucher('${ord.id}'), '${ord.clientPhone || ''}', '${ord.clientName || ''}')">📄 إذن السيارة PDF</button>
+                          </div>
                         ` : ''}
 
                         ${isExec ? `
@@ -6820,6 +6854,8 @@ function renderApprovals() {
             <button class="btn btn-success" onclick="printVehicleDispatchVoucher('${releaseOrders.find(o => o.carDispatchVoucher).id}')">🚚 طباعة إذن صرف السيارة المعتمد</button>
           ` : ''}
           <button class="btn btn-outline" onclick="printAllApprovalsDispatchReportPdf()">🖨️ طباعة سجل أذون الصرف والسيارات PDF</button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printAllApprovalsDispatchReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>🖼️ إرسال واتساب صورة</span></button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printAllApprovalsDispatchReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>📄 إرسال واتساب PDF</span></button>
           <button class="btn btn-primary" onclick="setTab('production')">📋 عرض جميع أوامر تجهيز الطلبيات</button>
         </div>
       </div>
@@ -6915,6 +6951,10 @@ function renderApprovals() {
                           <button type="button" class="btn btn-sm btn-success" onclick="printVehicleDispatchVoucher('${ord.id}')">
                             🖨️ طباعة إذن السيارة
                           </button>
+                          <div style="display:flex;gap:4px;">
+                            <button type="button" class="btn btn-sm" style="flex:1;background:#0284c7;color:#fff;font-weight:800;font-size:0.7rem;padding:4px 6px;" onclick="sendReportViaWhatsAppImage(() => printVehicleDispatchVoucher('${ord.id}'), '${ord.clientPhone || ''}', '${ord.clientName || ''}')">🖼️ صورة</button>
+                            <button type="button" class="btn btn-sm" style="flex:1;background:#16a34a;color:#fff;font-weight:800;font-size:0.7rem;padding:4px 6px;" onclick="sendReportViaWhatsApp(() => printVehicleDispatchVoucher('${ord.id}'), '${ord.clientPhone || ''}', '${ord.clientName || ''}')">📄 PDF</button>
+                          </div>
                         ` : ''}
 
                         ${isExec ? `
@@ -7051,7 +7091,8 @@ function renderAccounting() {
           <button class="btn btn-outline" style="border-color:#d97706;color:#b45309;font-weight:800;" onclick="openSetDefaultPalletPriceModal()">🪵 تحديد قيمة البالتة (${fmtMoney(defaultPalletPrice)})</button>
           <button class="btn btn-outline" onclick="openNewFinancialTxModal()">💵 تسجيل سند مالي عام بالخزينة</button>
           <button class="btn btn-outline" onclick="printAllClientsAccountingReportPdf()">🖨️ طباعة كشف حسابات جميع العملاء PDF</button>
-          <button class="btn" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsApp(printAllClientsAccountingReportPdf)">${getWhatsAppSvgIconHtml(18)}<span>إرسال واتساب PDF</span></button>
+          <button class="btn" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsAppImage(printAllClientsAccountingReportPdf)">${getWhatsAppSvgIconHtml(18)}<span>🖼️ إرسال واتساب صورة</span></button>
+          <button class="btn" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsApp(printAllClientsAccountingReportPdf)">${getWhatsAppSvgIconHtml(18)}<span>📄 إرسال واتساب PDF</span></button>
         </div>
       </div>
 
@@ -7187,9 +7228,13 @@ function renderAccounting() {
                       <button class="btn btn-sm btn-outline" onclick="printClientFullStatement('${pt.id}')">
                         🖨️ طباعة
                       </button>
+                      <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(() => printClientFullStatement('${pt.id}'), '${pt.phone || ''}', '${pt.name || ''}')" title="تحويل كشف حساب العميل إلى صورة عالية الدقة وإرسالها عبر الواتساب">
+                        ${getWhatsAppSvgIconHtml(14)}
+                        <span>🖼️ واتساب صورة</span>
+                      </button>
                       <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(() => printClientFullStatement('${pt.id}'), '${pt.phone || ''}', '${pt.name || ''}')" title="تحويل كشف حساب العميل إلى PDF وإرساله عبر الواتساب">
                         ${getWhatsAppSvgIconHtml(15)}
-                        <span>واتساب PDF</span>
+                        <span>📄 واتساب PDF</span>
                       </button>
                       ${isFullAdmin(currentUser) ? `
                         <button class="btn btn-sm" style="background:#0f766e;color:#fff;font-weight:800;" onclick="openNewClientOrderPrepModal('${pt.id}', true)" title="تنفيذ طلبية قديمة للعميل بعد الرصيد الافتتاحي (مع سؤال الخروج من المخزن أم لا)">📜 طلبية قديمة</button>
@@ -7368,6 +7413,8 @@ function renderAccounting() {
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <button class="btn btn-sm btn-primary" onclick="openNewCheckUnderCollectionModal()">➕ تسجيل شيك جديد تحت التحصيل</button>
           <button class="btn btn-sm btn-outline" onclick="printChecksUnderCollectionReportPdf()">🖨️ طباعة سجل الشيكات PDF</button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printChecksUnderCollectionReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>🖼️ واتساب صورة</span></button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printChecksUnderCollectionReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>📄 واتساب PDF</span></button>
         </div>
       </div>
 
@@ -7450,7 +7497,11 @@ function renderAccounting() {
       <div class="card">
         <div class="card-header">
           <div class="card-title">💰 آخر الفواتير والتحصيلات المالية للعملاء</div>
-          <button class="btn btn-sm btn-outline" onclick="printAllFinancialTransactionsReportPdf()">🖨️ طباعة سجل الفواتير PDF</button>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-outline" onclick="printAllFinancialTransactionsReportPdf()">🖨️ طباعة سجل الفواتير PDF</button>
+            <button class="btn btn-sm" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printAllFinancialTransactionsReportPdf)">🖼️ واتساب صورة</button>
+            <button class="btn btn-sm" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printAllFinancialTransactionsReportPdf)">📄 واتساب PDF</button>
+          </div>
         </div>
         <div class="table-responsive">
           <table>
@@ -7481,6 +7532,8 @@ function renderAccounting() {
                   <td>
                     <div style="display:flex;gap:4px;">
                       <button class="btn btn-sm btn-outline" style="padding:3px 7px;" onclick="printFinancialInvoice('${tx.id}')" title="طباعة">🖨️</button>
+                      <button class="btn btn-sm" style="background:#0284c7;color:#fff;font-weight:800;padding:3px 7px;" onclick="sendReportViaWhatsAppImage(() => printFinancialInvoice('${tx.id}'))" title="إرسال السند كصورة عبر واتساب">🖼️</button>
+                      <button class="btn btn-sm" style="background:#16a34a;color:#fff;font-weight:800;padding:3px 7px;" onclick="sendReportViaWhatsApp(() => printFinancialInvoice('${tx.id}'))" title="إرسال السند PDF عبر واتساب">📄</button>
                       ${isFullAdmin(currentUser) ? `
                         <button class="btn btn-sm btn-outline" style="padding:3px 7px;" onclick="openEditFinancialTxModal('${tx.id}')" title="تعديل السند المالي">✏️</button>
                         <button class="btn btn-sm btn-danger" style="padding:3px 7px;" onclick="deleteFinancialTxRecord('${tx.id}')" title="حذف السند المالي">🗑️</button>
@@ -7500,6 +7553,8 @@ function renderAccounting() {
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
             <button class="btn btn-sm btn-outline" style="border-color:#d97706;color:#b45309;font-weight:800;" onclick="openSetDefaultPalletPriceModal()">💰 قيمة البالتة (${fmtNum(defaultPalletPrice, 0)} ج)</button>
             <button class="btn btn-sm btn-outline" onclick="printAllPalletMovementsReportPdf()">🖨️ طباعة سجل البالتات PDF</button>
+            <button class="btn btn-sm" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printAllPalletMovementsReportPdf)">🖼️ واتساب صورة</button>
+            <button class="btn btn-sm" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printAllPalletMovementsReportPdf)">📄 واتساب PDF</button>
           </div>
         </div>
         <div class="table-responsive">
@@ -7582,32 +7637,49 @@ function renderReports() {
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;">
         <button class="btn btn-success" style="font-weight:800;" onclick="printProductionLogReportPdf()">🖨️ جدول الإنتاج (يومي / أسبوعي / شهري) PDF</button>
-        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printProductionLogReportPdf)">📲 إرسال جدول الإنتاج PDF واتساب</button>
+        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printProductionLogReportPdf)">🖼️ إرسال جدول الإنتاج صورة واتساب</button>
+        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printProductionLogReportPdf)">📄 إرسال جدول الإنتاج PDF واتساب</button>
         <button class="btn btn-primary" onclick="printVeneerQuantitiesMatrixPdf()">🖨️ جدول كميات القشرة PDF</button>
-        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printVeneerQuantitiesMatrixPdf)">📲 إرسال جدول الكميات PDF واتساب</button>
+        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printVeneerQuantitiesMatrixPdf)">🖼️ إرسال جدول الكميات صورة واتساب</button>
+        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printVeneerQuantitiesMatrixPdf)">📄 إرسال جدول الكميات PDF واتساب</button>
         ${canSeeFinancialPrices() ? `
           <button class="btn btn-accent" onclick="printVeneerPricesMatrixPdf()">🖨️ جدول الأسعار PDF</button>
+          <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printVeneerPricesMatrixPdf)">🖼️ إرسال جدول الأسعار صورة واتساب</button>
           <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="printBothMatricesPdf()">🖨️ جدول الكميات + الأسعار معاً PDF</button>
-          <button class="btn" style="background:#15803d;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printBothMatricesPdf)">📲 إرسال الكميات + الأسعار PDF واتساب</button>
+          <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printBothMatricesPdf)">🖼️ إرسال الكميات + الأسعار صورة واتساب</button>
+          <button class="btn" style="background:#15803d;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printBothMatricesPdf)">📄 إرسال الكميات + الأسعار PDF واتساب</button>
         ` : ''}
         <button class="btn btn-outline" onclick="printPalletsInventoryPdf()">🖨️ سجل البالتات بالمخزن PDF</button>
+        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printPalletsInventoryPdf)">🖼️ سجل البالتات صورة واتساب</button>
         <button class="btn btn-outline" onclick="printSalesReturnsReportPdf()">🖨️ سجل مرتجعات المبيعات PDF</button>
+        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printSalesReturnsReportPdf)">🖼️ مرتجعات المبيعات صورة واتساب</button>
         <button class="btn btn-outline" onclick="printRawMaterialsReportPdf()">🖨️ جرد مخزن الخامات PDF</button>
+        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printRawMaterialsReportPdf)">🖼️ مخزن الخامات صورة واتساب</button>
         <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="printLogContainersAndSerialsReportPdf()">🖨️ بيان حاويات وسيريالات الجذوع PDF</button>
-        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printLogContainersAndSerialsReportPdf)">📲 إرسال بيان الجذوع PDF واتساب</button>
+        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printLogContainersAndSerialsReportPdf)">🖼️ إرسال بيان الجذوع صورة واتساب</button>
+        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printLogContainersAndSerialsReportPdf)">📄 إرسال بيان الجذوع PDF واتساب</button>
         <button class="btn btn-outline" onclick="printScrapReportPdf()">🖨️ جرد مخزن الهالك PDF</button>
+        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printScrapReportPdf)">🖼️ مخزن الهالك صورة واتساب</button>
         <button class="btn btn-outline" onclick="printSparePartsReportPdf()">🖨️ جرد قطع الغيار PDF</button>
+        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printSparePartsReportPdf)">🖼️ قطع الغيار صورة واتساب</button>
         <button class="btn btn-outline" onclick="printWarehouseMovementsReportPdf()">🖨️ سجل حركات المخازن PDF</button>
-        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printWarehouseMovementsReportPdf)">📲 إرسال حركات المخازن PDF واتساب</button>
+        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printWarehouseMovementsReportPdf)">🖼️ إرسال حركات المخازن صورة واتساب</button>
+        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printWarehouseMovementsReportPdf)">📄 إرسال حركات المخازن PDF واتساب</button>
         <button class="btn btn-outline" onclick="printAllProductionOrdersReportPdf()">🖨️ سجل أوامر التجهيز PDF</button>
+        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printAllProductionOrdersReportPdf)">🖼️ أوامر التجهيز صورة واتساب</button>
         <button class="btn btn-outline" onclick="printAllApprovalsDispatchReportPdf()">🖨️ سجل أذون الصرف والسيارات PDF</button>
+        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printAllApprovalsDispatchReportPdf)">🖼️ أذون الصرف والسيارات صورة واتساب</button>
         ${canSeeFinancialPrices() ? `
           <button class="btn btn-outline" onclick="printAllClientsAccountingReportPdf()">🖨️ كشف حسابات جميع العملاء PDF</button>
-          <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printAllClientsAccountingReportPdf)">📲 إرسال حسابات جميع العملاء PDF واتساب</button>
+          <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printAllClientsAccountingReportPdf)">🖼️ إرسال حسابات جميع العملاء صورة واتساب</button>
+          <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printAllClientsAccountingReportPdf)">📄 إرسال حسابات جميع العملاء PDF واتساب</button>
           <button class="btn btn-outline" onclick="printAllFinancialTransactionsReportPdf()">🖨️ سجل الفواتير والتحصيلات PDF</button>
+          <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printAllFinancialTransactionsReportPdf)">🖼️ الفواتير والتحصيلات صورة واتساب</button>
           <button class="btn btn-outline" onclick="printAllPalletMovementsReportPdf()">🖨️ سجل حركة البالتات مع العملاء PDF</button>
+          <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printAllPalletMovementsReportPdf)">🖼️ حركة البالتات صورة واتساب</button>
         ` : ''}
         <button class="btn btn-outline" onclick="printGeneralInventoryAndAuditReportPdf()">🖨️ تقرير الجرد العام والرقابة PDF</button>
+        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printGeneralInventoryAndAuditReportPdf)">🖼️ الجرد العام صورة واتساب</button>
       </div>
     </div>
 
@@ -9881,13 +9953,20 @@ function openClientOrderStatementModal(orderId) {
               <button type="button" class="btn btn-accent" style="font-weight:800;" onclick="saveAndPrintClientOrderStatement('${ord.id}')">
                 🖨️ طباعة وتصدير بيان الطلبية PDF (رسمي باللوجو والختم)
               </button>
+              <button type="button" class="btn" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsAppImage(() => saveAndPrintClientOrderStatement('${ord.id}'), '${clientObj?.phone || ord.clientPhone || ''}', '${ord.clientName || ''}')">
+                ${getWhatsAppSvgIconHtml(18)}
+                <span>🖼️ إرسال واتساب صورة</span>
+              </button>
               <button type="button" class="btn" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsApp(() => saveAndPrintClientOrderStatement('${ord.id}'), '${clientObj?.phone || ord.clientPhone || ''}', '${ord.clientName || ''}')">
                 ${getWhatsAppSvgIconHtml(18)}
-                <span>إرسال واتساب PDF</span>
+                <span>📄 إرسال واتساب PDF</span>
               </button>
               ${ord.carDispatchVoucher ? `
                 <button type="button" class="btn btn-success" onclick="printVehicleDispatchVoucher('${ord.id}')">
                   🚚 طباعة إذن صرف السيارة (${ord.carDispatchVoucher.carPlateNumber || ord.orderNumber})
+                </button>
+                <button type="button" class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(() => printVehicleDispatchVoucher('${ord.id}'), '${clientObj?.phone || ord.clientPhone || ''}', '${ord.clientName || ''}')">
+                  🖼️ إرسال إذن السيارة صورة
                 </button>
               ` : ''}
               ${isExec ? `
@@ -11724,7 +11803,8 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
             <button class="btn btn-sm btn-accent" onclick="printClientFullStatement('${pt.id}')">🖨️ طباعة كشف حساب وبيان للعميل</button>
-            <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(() => printClientFullStatement('${pt.id}'), '${pt.phone || ''}', '${pt.name || ''}')">${getWhatsAppSvgIconHtml(16)}<span>إرسال واتساب PDF</span></button>
+            <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(() => printClientFullStatement('${pt.id}'), '${pt.phone || ''}', '${pt.name || ''}')">${getWhatsAppSvgIconHtml(15)}<span>🖼️ إرسال واتساب صورة</span></button>
+            <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(() => printClientFullStatement('${pt.id}'), '${pt.phone || ''}', '${pt.name || ''}')">${getWhatsAppSvgIconHtml(16)}<span>📄 إرسال واتساب PDF</span></button>
             <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
           </div>
         </div>
@@ -14998,6 +15078,11 @@ let _cachedGeneratedPdfBlob = null;
 let _cachedGeneratedPdfSafeName = '';
 let _cachedUploadedPdfUrl = '';
 let _cachedGeneratedForDocTitle = '';
+let _cachedGeneratedImageFile = null;
+let _cachedGeneratedImageBlob = null;
+let _cachedGeneratedImageSafeName = '';
+let _cachedGeneratedImageForDocTitle = '';
+let _waSharePreferredFormat = 'pdf';
 
 function getWhatsAppSvgIconHtml(size = 20) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="${size}" height="${size}" fill="#ffffff" style="vertical-align:middle;flex-shrink:0;display:inline-block;"><path d="M16.004 3.2c-7.072 0-12.8 5.728-12.8 12.8 0 2.256.592 4.464 1.712 6.416L3.2 28.8l6.56-1.712c1.888 1.024 4.016 1.568 6.24 1.568h.004c7.072 0 12.8-5.728 12.8-12.8 0-3.424-1.328-6.64-3.744-9.056C22.644 4.528 19.428 3.2 16.004 3.2zm7.488 18.288c-.32.896-1.856 1.712-2.592 1.824-.672.096-1.52.144-2.464-.16-.576-.176-1.312-.416-2.256-.816-3.968-1.712-6.56-5.696-6.752-5.968-.192-.256-1.616-2.144-1.616-4.096 0-1.952 1.024-2.912 1.392-3.312.368-.4.784-.496 1.056-.496.256 0 .528.016.752.016.24.016.56-.096.88.672.32.784 1.088 2.672 1.184 2.864.096.192.16.432.032.688-.128.256-.192.416-.384.64-.192.224-.4.496-.576.672-.192.192-.384.4-.16.784.224.384 1.008 1.664 2.16 2.688 1.488 1.328 2.736 1.744 3.12 1.936.384.192.608.16.832-.096.224-.256.96-1.12 1.216-1.504.256-.384.512-.32.864-.192.352.128 2.24 1.056 2.624 1.248.384.192.64.288.736.448.096.16.096.928-.224 1.824z"/></svg>`;
@@ -15190,6 +15275,106 @@ async function generateCurrentReportPdfBlobAndUpload() {
   return { file: pdfFile, blob: pdfBlob, safeName, pdfUrl: uploadedUrl };
 }
 
+async function generateCurrentReportImageBlob() {
+  const contentEl = document.getElementById('print-document-content');
+  if (!contentEl || !contentEl.innerHTML.trim()) return null;
+  paginateTablesForPrintAndPdf(contentEl, _lastPrintLandscape);
+  normalizeDomForHtml2CanvasArabic(contentEl);
+  if (typeof window.html2pdf !== 'function' && typeof window.html2canvas !== 'function') return null;
+
+  const safePdfName = buildCleanAsciiPdfFileName(_lastPrintDocumentTitle || 'Report');
+  const safeImgName = safePdfName.replace(/\.pdf$/i, '.png');
+
+  if (_cachedGeneratedImageFile && _cachedGeneratedImageForDocTitle === _lastPrintDocumentTitle) {
+    return {
+      file: _cachedGeneratedImageFile,
+      blob: _cachedGeneratedImageBlob,
+      safeName: _cachedGeneratedImageSafeName
+    };
+  }
+
+  const targetA4PxNum = _lastPrintLandscape ? 1040 : 740;
+  const targetA4Px = `${targetA4PxNum}px`;
+  const prevCssText = contentEl.style.cssText || '';
+  const prevDir = contentEl.getAttribute('dir');
+  const prevHtmlDir = document.documentElement ? document.documentElement.getAttribute('dir') : 'rtl';
+  const prevBodyDir = document.body ? document.body.getAttribute('dir') : 'rtl';
+
+  if (document.documentElement) document.documentElement.setAttribute('dir', 'ltr');
+  if (document.body) document.body.setAttribute('dir', 'ltr');
+  contentEl.setAttribute('dir', 'rtl');
+  contentEl.style.width = targetA4Px;
+  contentEl.style.minWidth = targetA4Px;
+  contentEl.style.maxWidth = targetA4Px;
+  contentEl.style.margin = '0';
+  contentEl.style.padding = '10px';
+  contentEl.style.background = '#ffffff';
+  contentEl.style.boxSizing = 'border-box';
+
+  const restoreLayoutState = () => {
+    contentEl.style.cssText = prevCssText;
+    if (prevDir) contentEl.setAttribute('dir', prevDir);
+    else contentEl.removeAttribute('dir');
+    if (document.documentElement) document.documentElement.setAttribute('dir', prevHtmlDir || 'rtl');
+    if (document.body) {
+      if (prevBodyDir) document.body.setAttribute('dir', prevBodyDir);
+      else document.body.removeAttribute('dir');
+    }
+  };
+
+  let canvasObj = null;
+  try {
+    const h2cOpts = {
+      scale: 2,
+      useCORS: true,
+      letterRendering: false,
+      backgroundColor: '#ffffff',
+      scrollY: 0,
+      scrollX: 0,
+      x: 0,
+      width: targetA4PxNum,
+      windowWidth: targetA4PxNum + 40
+    };
+    if (typeof window.html2canvas === 'function') {
+      canvasObj = await window.html2canvas(contentEl, h2cOpts);
+    } else if (typeof window.html2pdf === 'function') {
+      const worker = window.html2pdf().set({
+        html2canvas: h2cOpts
+      }).from(contentEl).toCanvas();
+      canvasObj = await worker.get('canvas');
+    }
+  } finally {
+    restoreLayoutState();
+  }
+
+  if (!canvasObj) return null;
+
+  const imgBlob = await new Promise(resolve => {
+    if (canvasObj.toBlob) {
+      canvasObj.toBlob(b => resolve(b), 'image/png', 1.0);
+    } else {
+      const dataUrl = canvasObj.toDataURL('image/png');
+      fetch(dataUrl).then(r => r.blob()).then(resolve).catch(() => resolve(null));
+    }
+  });
+  if (!imgBlob) return null;
+
+  const imgFile = new File([imgBlob], safeImgName, { type: 'image/png' });
+  _cachedGeneratedImageFile = imgFile;
+  _cachedGeneratedImageBlob = imgBlob;
+  _cachedGeneratedImageSafeName = safeImgName;
+  _cachedGeneratedImageForDocTitle = _lastPrintDocumentTitle;
+
+  return { file: imgFile, blob: imgBlob, safeName: safeImgName };
+}
+
+async function downloadInPageImageFile() {
+  const res = await generateCurrentReportImageBlob();
+  if (res && res.blob) {
+    triggerBlobDownload(res.blob, res.safeName);
+  }
+}
+
 function triggerBlobDownload(blob, filename) {
   if (!blob) return;
   try {
@@ -15216,18 +15401,142 @@ function saveUserWhatsAppPhone(userId, phoneVal) {
   syncToServerAndCloud();
 }
 
-function buildWhatsAppReportMessageText(recipientName = '', _pdfUrl = '') {
+function buildWhatsAppReportMessageText(recipientName = '', formatType = 'pdf') {
   const factoryName = state?.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة';
   const docTitle = _lastPrintDocumentTitle || 'تقرير رسمي';
   const senderName = currentUser ? `${currentUser.name}` : 'إدارة المصنع';
   const greet = recipientName ? `تحية طيبة أ/ ${recipientName}،\n` : 'تحية طيبة،\n';
+  const fmtLabel = formatType === 'image' ? 'صورة عالية الدقة (PNG)' : 'تقرير (PDF)';
   return (
     `🏭 *${factoryName}*\n` +
     `${greet}` +
-    `📄 مرفق لسيادتكم تقرير (PDF): *${docTitle}*\n` +
+    `📄 مرفق لسيادتكم ${fmtLabel}: *${docTitle}*\n` +
     `📅 التاريخ: ${todayStr()}\n` +
     `👤 مرسل بواسطة: ${senderName}`
   );
+}
+
+async function shareGeneratedImageFileDirectly(recipientName = '') {
+  const statusEl = document.getElementById('wa-pdf-status-box');
+  if (statusEl) statusEl.innerHTML = '⏳ جاري تحويل التقرير إلى صورة عالية الدقة (PNG) لإرفاقها مباشرة في الواتساب...';
+  const res = await generateCurrentReportImageBlob();
+  if (!res || !res.file) {
+    downloadInPageImageFile();
+    return;
+  }
+  const msgText = buildWhatsAppReportMessageText(recipientName, 'image');
+  if (navigator.canShare && navigator.canShare({ files: [res.file] })) {
+    try {
+      await navigator.share({
+        files: [res.file],
+        title: res.safeName,
+        text: msgText
+      });
+      if (statusEl) {
+        statusEl.innerHTML = `✅ تم إرفاق ومشاركة التقرير كـ <strong>صورة عالية الدقة (${res.safeName})</strong> مباشرة عبر تطبيق الواتساب بنجاح!`;
+      }
+      return;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+    }
+  }
+  triggerBlobDownload(res.blob, res.safeName);
+  const waUrl = `https://wa.me/?text=${encodeURIComponent(msgText)}`;
+  window.open(waUrl, '_blank');
+  if (statusEl) {
+    statusEl.innerHTML = `✅ تم تحميل صورة التقرير (<strong>${res.safeName}</strong>) على جهازك — قم الآن بإرفاق الصورة المحملة داخل محادثة الواتساب المفتوحة.`;
+  }
+}
+
+async function sendImageToWhatsAppNumber(rawPhone = '', recipientName = '') {
+  const phoneInput = document.getElementById('wa-custom-phone-input');
+  const chosenPhone = rawPhone || (phoneInput ? phoneInput.value : '');
+  const formattedPhone = formatEgyptianWhatsAppPhone(chosenPhone);
+  const statusEl = document.getElementById('wa-pdf-status-box');
+  if (statusEl) {
+    statusEl.innerHTML = `⏳ جاري تحويل التقرير إلى صورة واضحة (PNG) وإرفاقها عبر الواتساب ${recipientName ? 'إلى (' + recipientName + ')' : ''}...`;
+  }
+
+  const res = await generateCurrentReportImageBlob();
+  const msgText = buildWhatsAppReportMessageText(recipientName, 'image');
+
+  if (res && res.file && navigator.canShare && navigator.canShare({ files: [res.file] })) {
+    if (formattedPhone && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      try { await navigator.clipboard.writeText(chosenPhone); } catch (_) {}
+    }
+    try {
+      await navigator.share({
+        files: [res.file],
+        title: res.safeName,
+        text: msgText
+      });
+      if (statusEl) {
+        statusEl.innerHTML = `✅ تم إرفاق صورة التقرير (<strong>${res.safeName}</strong>) مباشرة في الواتساب ${recipientName ? 'لإرسالها إلى <strong>' + recipientName + '</strong>' : ''} بدون أي تداخل!`;
+      }
+      return;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+    }
+  }
+
+  if (res && res.blob) {
+    triggerBlobDownload(res.blob, res.safeName);
+  }
+  const waUrl = formattedPhone
+    ? `https://wa.me/${formattedPhone}?text=${encodeURIComponent(msgText)}`
+    : `https://wa.me/?text=${encodeURIComponent(msgText)}`;
+  window.open(waUrl, '_blank');
+
+  if (statusEl) {
+    statusEl.innerHTML = `✅ تم تحميل صورة التقرير (<strong>${res?.safeName || 'report.png'}</strong>) وفتح محادثة الواتساب ${recipientName ? 'مع <strong>' + recipientName + '</strong>' : ''} — يمكنك سحب وإرفاق الصورة المحملة مباشرة في المحادثة.`;
+  }
+}
+
+async function sendImageToAllSystemUsersWhatsApp() {
+  const usersWithPhones = (state.users || []).filter(u => u && u.active !== false && formatEgyptianWhatsAppPhone(u.phone));
+  const statusEl = document.getElementById('wa-pdf-status-box');
+  if (statusEl) {
+    statusEl.innerHTML = '⏳ جاري تجهيز صورة التقرير (PNG) لإرفاقها وإرسالها لمستخدمي النظام عبر الواتساب...';
+  }
+  const res = await generateCurrentReportImageBlob();
+  const msgText = buildWhatsAppReportMessageText('جميع مستخدمي النظام', 'image');
+
+  if (res && res.file && navigator.canShare && navigator.canShare({ files: [res.file] })) {
+    try {
+      await navigator.share({
+        files: [res.file],
+        title: res.safeName,
+        text: msgText
+      });
+      if (statusEl) {
+        statusEl.innerHTML = `✅ تم إرفاق صورة التقرير (<strong>${res.safeName}</strong>) مباشرة عبر تطبيق الواتساب لإرسالها لمستخدمي النظام / جروب المصنع!`;
+      }
+      return;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+    }
+  }
+
+  if (res && res.blob) {
+    triggerBlobDownload(res.blob, res.safeName);
+  }
+  if (usersWithPhones.length === 0) {
+    window.open(`https://wa.me/?text=${encodeURIComponent(msgText)}`, '_blank');
+    if (statusEl) {
+      statusEl.innerHTML = `✅ تم تحميل صورة التقرير (PNG) وفتح واتساب لإرفاق الصورة مباشرة لجروب المصنع أو المستخدمين.`;
+    }
+    return;
+  }
+  usersWithPhones.forEach((u, idx) => {
+    const ph = formatEgyptianWhatsAppPhone(u.phone);
+    const userMsg = buildWhatsAppReportMessageText(u.name, 'image');
+    setTimeout(() => {
+      window.open(`https://wa.me/${ph}?text=${encodeURIComponent(userMsg)}`, '_blank');
+    }, idx * 600);
+  });
+  if (statusEl) {
+    statusEl.innerHTML = `✅ تم تحويل وتحميل التقرير كصورة (PNG) وفتح محادثات الواتساب لعدد (${usersWithPhones.length}) من مستخدمي النظام!`;
+  }
 }
 
 async function shareGeneratedPdfFileDirectly(recipientName = '') {
@@ -15238,7 +15547,7 @@ async function shareGeneratedPdfFileDirectly(recipientName = '') {
     downloadInPagePdfFile();
     return;
   }
-  const msgText = buildWhatsAppReportMessageText(recipientName);
+  const msgText = buildWhatsAppReportMessageText(recipientName, 'pdf');
   if (navigator.canShare && navigator.canShare({ files: [res.file] })) {
     try {
       await navigator.share({
@@ -15272,7 +15581,7 @@ async function sendPdfToWhatsAppNumber(rawPhone = '', recipientName = '') {
   }
 
   const res = await generateCurrentReportPdfBlobAndUpload();
-  const msgText = buildWhatsAppReportMessageText(recipientName);
+  const msgText = buildWhatsAppReportMessageText(recipientName, 'pdf');
 
   // On mobile phones / browsers that support Web Share API for files, attach the actual PDF file directly to WhatsApp (never send a link!)
   if (res && res.file && navigator.canShare && navigator.canShare({ files: [res.file] })) {
@@ -15314,7 +15623,7 @@ async function sendPdfToAllSystemUsersWhatsApp() {
     statusEl.innerHTML = '⏳ جاري تجهيز ملف الـ PDF لإرفاقه وإرساله لمستخدمي النظام عبر الواتساب...';
   }
   const res = await generateCurrentReportPdfBlobAndUpload();
-  const msgText = buildWhatsAppReportMessageText('جميع مستخدمي النظام');
+  const msgText = buildWhatsAppReportMessageText('جميع مستخدمي النظام', 'pdf');
 
   if (res && res.file && navigator.canShare && navigator.canShare({ files: [res.file] })) {
     try {
@@ -15344,7 +15653,7 @@ async function sendPdfToAllSystemUsersWhatsApp() {
   }
   usersWithPhones.forEach((u, idx) => {
     const ph = formatEgyptianWhatsAppPhone(u.phone);
-    const userMsg = buildWhatsAppReportMessageText(u.name);
+    const userMsg = buildWhatsAppReportMessageText(u.name, 'pdf');
     setTimeout(() => {
       window.open(`https://wa.me/${ph}?text=${encodeURIComponent(userMsg)}`, '_blank');
     }, idx * 600);
@@ -15354,7 +15663,8 @@ async function sendPdfToAllSystemUsersWhatsApp() {
   }
 }
 
-function openWhatsAppPdfShareModal(presetPhone = '', presetRecipientName = '') {
+function openWhatsAppPdfShareModal(presetPhone = '', presetRecipientName = '', defaultMode = 'pdf') {
+  _waSharePreferredFormat = defaultMode === 'image' ? 'image' : 'pdf';
   const existingOverlay = document.getElementById('wa-pdf-share-overlay');
   if (existingOverlay) existingOverlay.remove();
 
@@ -15368,38 +15678,46 @@ function openWhatsAppPdfShareModal(presetPhone = '', presetRecipientName = '') {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.75);z-index:999999;display:flex;align-items:center;justify-content:center;padding:14px;font-family:\'Cairo\',sans-serif;direction:rtl;overflow-y:auto;';
 
   overlay.innerHTML = `
-    <div style="background:#ffffff;color:#0f172a;border-radius:14px;max-width:780px;width:100%;max-height:92vh;overflow-y:auto;padding:18px 20px;box-shadow:0 20px 50px rgba(0,0,0,0.4);border:2.5px solid #16a34a;">
+    <div style="background:#ffffff;color:#0f172a;border-radius:14px;max-width:820px;width:100%;max-height:92vh;overflow-y:auto;padding:18px 20px;box-shadow:0 20px 50px rgba(0,0,0,0.4);border:2.5px solid #16a34a;">
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #e2e8f0;padding-bottom:10px;margin-bottom:12px;gap:10px;">
         <div style="display:flex;align-items:center;gap:10px;">
-          <div style="background:#25D366;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(37,211,102,0.4);">
+          <div style="background:#25D366;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(37,211,102,0.4);">
             ${getWhatsAppSvgIconHtml(24)}
           </div>
           <div>
-            <div style="font-size:1.1rem;font-weight:900;color:#15803d;">إرسال التقرير / الجدول بصيغة PDF عبر الواتساب لجميع المستخدمين</div>
-            <small style="color:#475569;font-weight:700;">المستند: <strong>${docTitle}</strong> — تم ضبط الحروف والأرقام وتكرار عناوين الجداول بدون أي تداخل</small>
+            <div style="font-size:1.08rem;font-weight:900;color:#15803d;">إرسال التقرير / الجدول عبر الواتساب بصيغة (صورة واضحة PNG) أو (ملف PDF) لجميع المستخدمين</div>
+            <small style="color:#475569;font-weight:700;">المستند: <strong>${docTitle}</strong> — منسق بالكامل بدون أي تداخل في الحروف أو الأرقام</small>
           </div>
         </div>
         <button type="button" onclick="document.getElementById('wa-pdf-share-overlay')?.remove()" style="background:#ef4444;color:#fff;border:none;padding:6px 12px;border-radius:8px;font-weight:900;cursor:pointer;">✕ إغلاق</button>
       </div>
 
       <div id="wa-pdf-status-box" style="background:#f0fdf4;border:1.5px solid #16a34a;color:#15803d;padding:10px 14px;border-radius:10px;font-weight:800;font-size:0.86rem;margin-bottom:14px;">
-        ⏳ جاري تحويل التقرير إلى ملف PDF رسمي جاهز للإرسال عبر الواتساب...
+        ⏳ جاري تجهيز التقرير بصيغتي (صورة عالية الدقة PNG) و(ملف PDF) للإرسال الفوري عبر الواتساب...
       </div>
 
-      <!-- Quick Action 1: Direct Native Share / WhatsApp Group or All Users -->
-      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
-        <button type="button" onclick="shareGeneratedPdfFileDirectly()" style="flex:1;min-width:220px;background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;border:none;padding:11px 16px;border-radius:10px;font-weight:900;font-size:0.9rem;cursor:pointer;font-family:'Cairo',sans-serif;">
-          📱 مشاركة وإرفاق ملف الـ PDF مباشرة عبر تطبيق واتساب
+      <!-- Quick Action 1: Direct Native Share (Image PNG + PDF) -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(230px, 1fr));gap:8px;margin-bottom:14px;">
+        <button type="button" onclick="shareGeneratedImageFileDirectly()" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;border:none;padding:11px 14px;border-radius:10px;font-weight:900;font-size:0.88rem;cursor:pointer;font-family:'Cairo',sans-serif;display:flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 4px 12px rgba(2,132,199,0.35);">
+          ${getWhatsAppSvgIconHtml(18)}
+          <span>🖼️ مشاركة وإرفاق التقرير كـ (صورة PNG) عبر واتساب</span>
         </button>
-        <button type="button" onclick="sendPdfToAllSystemUsersWhatsApp()" style="flex:1;min-width:220px;background:linear-gradient(135deg,#0f766e,#0d9488);color:#fff;border:none;padding:11px 16px;border-radius:10px;font-weight:900;font-size:0.9rem;cursor:pointer;font-family:'Cairo',sans-serif;">
-          📢 إرسال التقرير PDF لجميع مستخدمي النظام / جروب المصنع
+        <button type="button" onclick="shareGeneratedPdfFileDirectly()" style="background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;border:none;padding:11px 14px;border-radius:10px;font-weight:900;font-size:0.88rem;cursor:pointer;font-family:'Cairo',sans-serif;display:flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 4px 12px rgba(22,163,74,0.35);">
+          ${getWhatsAppSvgIconHtml(18)}
+          <span>📄 مشاركة وإرفاق التقرير كـ (ملف PDF) عبر واتساب</span>
+        </button>
+        <button type="button" onclick="sendImageToAllSystemUsersWhatsApp()" style="background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;border:none;padding:10px 14px;border-radius:10px;font-weight:900;font-size:0.84rem;cursor:pointer;font-family:'Cairo',sans-serif;">
+          🖼️📢 إرسال التقرير (صورة PNG) لجميع مستخدمي النظام
+        </button>
+        <button type="button" onclick="sendPdfToAllSystemUsersWhatsApp()" style="background:linear-gradient(135deg,#0f766e,#0d9488);color:#fff;border:none;padding:10px 14px;border-radius:10px;font-weight:900;font-size:0.84rem;cursor:pointer;font-family:'Cairo',sans-serif;">
+          📄📢 إرسال التقرير (ملف PDF) لجميع مستخدمي النظام
         </button>
       </div>
 
-      <!-- Quick Action 2: Send to Specific Phone / Client -->
+      <!-- Quick Action 2: Send to Specific Phone / Client (Image or PDF) -->
       <div style="background:#f8fafc;border:1.5px solid #cbd5e1;border-radius:10px;padding:12px;margin-bottom:14px;">
-        <div style="font-weight:900;font-size:0.88rem;color:#0f172a;margin-bottom:8px;">🤝 إرسال لعميل أو رقم واتساب محدد:</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(210px, 1fr));gap:8px;align-items:end;">
+        <div style="font-weight:900;font-size:0.88rem;color:#0f172a;margin-bottom:8px;">🤝 إرسال لعميل أو رقم واتساب محدد (كصورة أو PDF):</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:8px;align-items:end;">
           <div>
             <label style="font-size:0.76rem;font-weight:800;display:block;margin-bottom:3px;">اختر عميل من النظام (يتعبأ رقمه تلقائياً):</label>
             <select id="wa-client-select" class="form-control" style="padding:6px 8px;font-weight:800;" onchange="const opt=this.options[this.selectedIndex]; document.getElementById('wa-custom-phone-input').value=opt.getAttribute('data-phone')||''; document.getElementById('wa-custom-name-input').value=opt.getAttribute('data-name')||'';">
@@ -15409,21 +15727,24 @@ function openWhatsAppPdfShareModal(presetPhone = '', presetRecipientName = '') {
           </div>
           <div>
             <label style="font-size:0.76rem;font-weight:800;display:block;margin-bottom:3px;">📞 رقم الواتساب (مثال: 01009544072):</label>
-            <input id="wa-custom-phone-input" type="text" class="form-control" value="${presetPhone || ''}" placeholder="اكتب رقم الواتساب أو اتركه فارغاً لاختيار جهة اتصال..." style="padding:6px 10px;font-weight:900;direction:ltr;text-align:left;" />
+            <input id="wa-custom-phone-input" type="text" class="form-control" value="${presetPhone || ''}" placeholder="اكتب رقم الواتساب أو اتركه فارغاً..." style="padding:6px 10px;font-weight:900;direction:ltr;text-align:left;" />
             <input id="wa-custom-name-input" type="hidden" value="${presetRecipientName || ''}" />
           </div>
-          <div>
-            <button type="button" onclick="sendPdfToWhatsAppNumber(document.getElementById('wa-custom-phone-input')?.value, document.getElementById('wa-custom-name-input')?.value)" style="width:100%;background:#16a34a;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:900;font-size:0.86rem;cursor:pointer;font-family:'Cairo',sans-serif;">
-              📲 تحميل الـ PDF + إرسال للرقم عبر واتساب
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button type="button" onclick="sendImageToWhatsAppNumber(document.getElementById('wa-custom-phone-input')?.value, document.getElementById('wa-custom-name-input')?.value)" style="flex:1;background:#0284c7;color:#fff;border:none;padding:8px 10px;border-radius:8px;font-weight:900;font-size:0.82rem;cursor:pointer;font-family:'Cairo',sans-serif;">
+              🖼️ إرسال صورة للرقم
+            </button>
+            <button type="button" onclick="sendPdfToWhatsAppNumber(document.getElementById('wa-custom-phone-input')?.value, document.getElementById('wa-custom-name-input')?.value)" style="flex:1;background:#16a34a;color:#fff;border:none;padding:8px 10px;border-radius:8px;font-weight:900;font-size:0.82rem;cursor:pointer;font-family:'Cairo',sans-serif;">
+              📄 إرسال PDF للرقم
             </button>
           </div>
         </div>
       </div>
 
-      <!-- Quick Action 3: All System Users Directory with 1-Click WhatsApp Send -->
+      <!-- Quick Action 3: All System Users Directory with 1-Click WhatsApp Send (Image & PDF) -->
       <div style="background:#f8fafc;border:1.5px solid #cbd5e1;border-radius:10px;padding:12px;">
         <div style="font-weight:900;font-size:0.88rem;color:#0f172a;margin-bottom:8px;">
-          👥 قائمة جميع مستخدمي النظام (المدير التنفيذي، مدير المشروعات، المحاسب، المدير الإداري، أمين المخزن):
+          👥 قائمة جميع مستخدمي النظام (إرسال فوري كـ صورة PNG أو ملف PDF لكل مستخدم):
         </div>
         <div style="overflow-x:auto;">
           <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
@@ -15432,7 +15753,7 @@ function openWhatsAppPdfShareModal(presetPhone = '', presetRecipientName = '') {
                 <th style="border:1px solid #cbd5e1;padding:6px;">المستخدم</th>
                 <th style="border:1px solid #cbd5e1;padding:6px;">الصلاحية / الوظيفة</th>
                 <th style="border:1px solid #cbd5e1;padding:6px;">رقم واتساب المستخدم (يُحفظ تلقائياً)</th>
-                <th style="border:1px solid #cbd5e1;padding:6px;">إرسال التقرير PDF</th>
+                <th style="border:1px solid #cbd5e1;padding:6px;">إرسال عبر واتساب (صورة / PDF)</th>
               </tr>
             </thead>
             <tbody>
@@ -15444,9 +15765,14 @@ function openWhatsAppPdfShareModal(presetPhone = '', presetRecipientName = '') {
                     <input type="text" id="wa-user-phone-${u.id}" value="${u.phone || ''}" placeholder="اكتب رقم واتساب ${u.name}..." oninput="saveUserWhatsAppPhone('${u.id}', this.value)" style="width:100%;padding:4px 8px;border:1px solid #94a3b8;border-radius:6px;font-weight:800;direction:ltr;text-align:left;" />
                   </td>
                   <td style="border:1px solid #cbd5e1;padding:6px;text-align:center;">
-                    <button type="button" onclick="sendPdfToWhatsAppNumber(document.getElementById('wa-user-phone-${u.id}')?.value, '${u.name}')" style="background:#16a34a;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-weight:800;font-size:0.78rem;cursor:pointer;font-family:'Cairo',sans-serif;">
-                      📲 إرسال PDF لـ ${u.name}
-                    </button>
+                    <div style="display:flex;gap:5px;justify-content:center;flex-wrap:wrap;">
+                      <button type="button" onclick="sendImageToWhatsAppNumber(document.getElementById('wa-user-phone-${u.id}')?.value, '${u.name}')" style="background:#0284c7;color:#fff;border:none;padding:5px 10px;border-radius:6px;font-weight:800;font-size:0.76rem;cursor:pointer;font-family:'Cairo',sans-serif;">
+                        🖼️ إرسال صورة
+                      </button>
+                      <button type="button" onclick="sendPdfToWhatsAppNumber(document.getElementById('wa-user-phone-${u.id}')?.value, '${u.name}')" style="background:#16a34a;color:#fff;border:none;padding:5px 10px;border-radius:6px;font-weight:800;font-size:0.76rem;cursor:pointer;font-family:'Cairo',sans-serif;">
+                        📄 إرسال PDF
+                      </button>
+                    </div>
                   </td>
                 </tr>
               `).join('')}
@@ -15459,22 +15785,27 @@ function openWhatsAppPdfShareModal(presetPhone = '', presetRecipientName = '') {
 
   document.body.appendChild(overlay);
 
-  // Immediately generate & upload the PDF in the background so it's ready in ~1s
-  generateCurrentReportPdfBlobAndUpload().then(res => {
+  // Pre-generate both Image and PDF in background so either button responds immediately!
+  Promise.all([
+    generateCurrentReportImageBlob().catch(() => null),
+    generateCurrentReportPdfBlobAndUpload().catch(() => null)
+  ]).then(([imgRes, pdfRes]) => {
     const statusEl = document.getElementById('wa-pdf-status-box');
     if (!statusEl) return;
-    if (res && res.file) {
-      statusEl.innerHTML = `✅ تم تحويل التقرير إلى ملف PDF بنجاح: <strong>${res.safeName}</strong> — جاهز الآن للإرسال عبر الواتساب لأي مستخدم أو عميل!`;
+    if (imgRes?.file || pdfRes?.file) {
+      statusEl.innerHTML = `✅ التقرير جاهز الآن للإرسال عبر الواتساب كـ <strong>صورة عالية الدقة (${imgRes?.safeName || 'PNG'})</strong> أو كـ <strong>ملف PDF (${pdfRes?.safeName || 'PDF'})</strong> لأي مستخدم أو عميل!`;
     } else {
-      statusEl.innerHTML = `✅ التقرير جاهز للإرسال عبر الواتساب والطباعة كملف PDF.`;
+      statusEl.innerHTML = `✅ التقرير جاهز للإرسال عبر الواتساب كصورة أو ملف PDF.`;
     }
-  }).catch(() => {});
+  });
 }
 
-function sendReportViaWhatsApp(printTriggerFn, presetPhone = '', presetRecipientName = '') {
+function sendReportViaWhatsApp(printTriggerFn, presetPhone = '', presetRecipientName = '', defaultMode = 'pdf') {
   window._suppressAutoPrintForWhatsApp = true;
   _cachedGeneratedPdfFile = null;
   _cachedGeneratedForDocTitle = '';
+  _cachedGeneratedImageFile = null;
+  _cachedGeneratedImageForDocTitle = '';
   try {
     if (typeof printTriggerFn === 'function') {
       printTriggerFn();
@@ -15483,8 +15814,12 @@ function sendReportViaWhatsApp(printTriggerFn, presetPhone = '', presetRecipient
     window._suppressAutoPrintForWhatsApp = false;
   }
   setTimeout(() => {
-    openWhatsAppPdfShareModal(presetPhone, presetRecipientName);
+    openWhatsAppPdfShareModal(presetPhone, presetRecipientName, defaultMode);
   }, 120);
+}
+
+function sendReportViaWhatsAppImage(printTriggerFn, presetPhone = '', presetRecipientName = '') {
+  sendReportViaWhatsApp(printTriggerFn, presetPhone, presetRecipientName, 'image');
 }
 
 function downloadInPagePdfFile() {
@@ -15616,7 +15951,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '71');
+  urlObj.searchParams.set('v', '74');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
@@ -15808,32 +16143,45 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
     <div class="no-print-bar" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:#0f172a;color:#fff;padding:12px 18px;border-radius:10px;margin-bottom:16px;font-family:'Cairo',sans-serif;direction:rtl;">
       <div>
         <strong style="font-size:15px;color:#fbbf24;">🖨️ معاينة التقرير والطباعة الرسمية: ${docTitle}</strong>
-        <div style="font-size:12px;color:#cbd5e1;">المستند جاهز للإرسال عبر الواتساب كملف PDF أو الطباعة الفورية أو التحميل المباشر</div>
+        <div style="font-size:12px;color:#cbd5e1;">المستند جاهز للإرسال عبر الواتساب كـ (صورة PNG) أو (ملف PDF) أو الطباعة الفورية أو التحميل المباشر</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-        <button type="button" id="top-wa-pdf-btn" onclick="openWhatsAppPdfShareModal()" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#ffffff;border:2px solid #ffffff;padding:9px 20px;border-radius:50px;font-weight:900;font-size:14px;cursor:pointer;font-family:'Cairo',sans-serif;box-shadow:0 4px 14px rgba(37,211,102,0.55);display:inline-flex;align-items:center;gap:8px;">
-          ${getWhatsAppSvgIconHtml(22)}
-          <span>إرسال واتساب PDF</span>
+        <button type="button" id="top-wa-img-btn" onclick="openWhatsAppPdfShareModal('', '', 'image')" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#ffffff;border:2px solid #ffffff;padding:8px 18px;border-radius:50px;font-weight:900;font-size:13.5px;cursor:pointer;font-family:'Cairo',sans-serif;box-shadow:0 4px 14px rgba(2,132,199,0.5);display:inline-flex;align-items:center;gap:7px;">
+          ${getWhatsAppSvgIconHtml(20)}
+          <span>🖼️ إرسال واتساب صورة</span>
         </button>
-        <button type="button" onclick="window.focus(); window.print();" style="background:#10b981;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
+        <button type="button" id="top-wa-pdf-btn" onclick="openWhatsAppPdfShareModal('', '', 'pdf')" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#ffffff;border:2px solid #ffffff;padding:8px 18px;border-radius:50px;font-weight:900;font-size:13.5px;cursor:pointer;font-family:'Cairo',sans-serif;box-shadow:0 4px 14px rgba(37,211,102,0.55);display:inline-flex;align-items:center;gap:7px;">
+          ${getWhatsAppSvgIconHtml(20)}
+          <span>📄 إرسال واتساب PDF</span>
+        </button>
+        <button type="button" onclick="window.focus(); window.print();" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
           🖨️ طباعة الآن / حفظ كـ PDF
         </button>
-        <button type="button" onclick="downloadInPagePdfFile()" style="background:#7c3aed;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
-          📥 تحميل كملف PDF مباشر
+        <button type="button" onclick="downloadInPageImageFile()" style="background:#0d9488;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
+          🖼️ تحميل كصورة PNG
         </button>
-        <button type="button" onclick="openStandalonePrintPopup()" style="background:#2563eb;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
-          🗔 فتح في صفحة طباعة مستقلة
+        <button type="button" onclick="downloadInPagePdfFile()" style="background:#7c3aed;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
+          📥 تحميل كملف PDF
         </button>
-        <button type="button" onclick="closeUniversalPrintView()" style="background:#ef4444;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
-          🔙 العودة للنظام وإغلاق شاشة الطباعة
+        <button type="button" onclick="openStandalonePrintPopup()" style="background:#2563eb;color:#fff;border:none;padding:8px 12px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
+          🗔 فتح في صفحة مستقلة
+        </button>
+        <button type="button" onclick="closeUniversalPrintView()" style="background:#ef4444;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;">
+          🔙 العودة للنظام
         </button>
       </div>
     </div>
-    <!-- Floating Green WhatsApp PDF Icon Button (Visible whenever any report is opened) -->
-    <button type="button" id="floating-wa-pdf-btn" class="no-print-bar" onclick="openWhatsAppPdfShareModal()" title="إرسال التقرير عبر الواتساب بصيغة PDF لجميع المستخدمين" style="position:fixed;bottom:24px;left:24px;z-index:99998;background:linear-gradient(135deg,#25D366,#128C7E);color:#ffffff;border:3px solid #ffffff;padding:12px 22px;border-radius:50px;font-weight:900;font-size:15px;cursor:pointer;font-family:'Cairo',sans-serif;box-shadow:0 8px 25px rgba(37,211,102,0.65);display:flex;align-items:center;gap:10px;">
-      ${getWhatsAppSvgIconHtml(28)}
-      <span>إرسال واتساب PDF</span>
-    </button>
+    <!-- Floating WhatsApp Image & PDF Buttons (Visible whenever any report is opened) -->
+    <div class="no-print-bar" style="position:fixed;bottom:20px;left:20px;z-index:99998;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+      <button type="button" id="floating-wa-img-btn" onclick="openWhatsAppPdfShareModal('', '', 'image')" title="إرسال التقرير عبر الواتساب كصورة عالية الدقة PNG لجميع المستخدمين" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#ffffff;border:3px solid #ffffff;padding:11px 18px;border-radius:50px;font-weight:900;font-size:14px;cursor:pointer;font-family:'Cairo',sans-serif;box-shadow:0 8px 25px rgba(2,132,199,0.6);display:flex;align-items:center;gap:8px;">
+        ${getWhatsAppSvgIconHtml(24)}
+        <span>🖼️ إرسال واتساب صورة</span>
+      </button>
+      <button type="button" id="floating-wa-pdf-btn" onclick="openWhatsAppPdfShareModal('', '', 'pdf')" title="إرسال التقرير عبر الواتساب بصيغة PDF لجميع المستخدمين" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#ffffff;border:3px solid #ffffff;padding:11px 18px;border-radius:50px;font-weight:900;font-size:14px;cursor:pointer;font-family:'Cairo',sans-serif;box-shadow:0 8px 25px rgba(37,211,102,0.65);display:flex;align-items:center;gap:8px;">
+        ${getWhatsAppSvgIconHtml(24)}
+        <span>📄 إرسال واتساب PDF</span>
+      </button>
+    </div>
     <div id="print-document-content" style="background:#fff;color:#000;">
       ${docHtml}
     </div>
@@ -15852,9 +16200,11 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
   }
   void printEl.offsetHeight;
 
-  // Reset cached PDF when opening a new print document
+  // Reset cached PDF & Image when opening a new print document
   _cachedGeneratedPdfFile = null;
   _cachedGeneratedForDocTitle = '';
+  _cachedGeneratedImageFile = null;
+  _cachedGeneratedImageForDocTitle = '';
 
   // Build real committed URL to ./print.html (NEVER about:blank!)
   _lastPrintUrl = buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions);
