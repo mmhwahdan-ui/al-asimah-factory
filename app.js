@@ -130,13 +130,93 @@ function isWarehouseKeeperOnly(user = currentUser) {
   );
 }
 
+function isReadOnlyObserverRole(user = currentUser) {
+  if (!user) return false;
+  return Boolean(
+    user.roleKey === 'reserve_user' ||
+    user.id === 'u-8' ||
+    (user.name && user.name.includes('الاطلاع'))
+  );
+}
+
 function canSeeFinancialPrices(user = currentUser) {
   return !isWarehouseKeeperOnly(user);
 }
 
-// المرتجع يدخل المخزن مرة أخرى بعد موافقة المدير التنفيذي أو مدير المشروعات أو المحاسب فقط
+// 1) صلاحية إصدار أوامر التجهيز الجديدة (مسموحة للمستخدم "الاطلاع الكامل" ومن يمتلك صلاحية production)
+function canIssuePrepOrders(user = currentUser) {
+  if (!user) return false;
+  if (isFullAdmin(user)) return true;
+  if (isWarehouseKeeperOnly(user)) return false;
+  return Boolean(user.permissions && user.permissions.production);
+}
+
+// 2) صلاحية تكويد وإضافة العملاء الجدد (مسموحة للمستخدم "الاطلاع الكامل" ومن يمتلك صلاحية clientsSuppliers)
+function canCodeNewClients(user = currentUser) {
+  if (!user) return false;
+  if (isFullAdmin(user)) return true;
+  return Boolean(user.permissions && user.permissions.clientsSuppliers);
+}
+
+// 3) صلاحية الموافقة على حسابات أوامر التجهيز (مسموحة للمستخدم "الاطلاع الكامل" ومن يمتلك صلاحية approveFinancial)
+function canApproveOrderAccounts(user = currentUser) {
+  if (!user) return false;
+  if (isFullAdmin(user)) return true;
+  return Boolean(user.permissions && user.permissions.approveFinancial);
+}
+
+// 4) صلاحية الإضافة والصرف والتعديل في المخازن والكتالوج (ممنوعة عن "الاطلاع الكامل" إلا إذا منحها له المدير التنفيذي أو مدير المشروعات مستقبلاً)
+function canEditWarehouseAndCatalog(user = currentUser) {
+  if (!user) return false;
+  if (isFullAdmin(user)) return true;
+  return Boolean(user.permissions && (user.permissions.warehouseIssueReceive || user.permissions.approveExecutive));
+}
+
+// 5) صلاحية تسجيل وتعديل الدفعات والشيكات وحسابات البالتات وتعديل البيانات المالية (ممنوعة عن "الاطلاع الكامل" إلا إذا منحها له المدير التنفيذي أو مدير المشروعات مستقبلاً)
+function canEditFinancialAndClientRecords(user = currentUser) {
+  if (!user) return false;
+  if (isFullAdmin(user)) return true;
+  if (user.permissions && (user.permissions.approveExecutive || user.permissions.editFinancialRecords === true)) return true;
+  if (['accountant', 'accounts_manager', 'accounting_manager'].includes(user.roleKey) && user.permissions?.editFinancialRecords !== false) {
+    return true;
+  }
+  return false;
+}
+
+// 6) صلاحية تعديل أسعار القطع في جدول الأسعار بالمخزن
+function canEditWarehousePrices(user = currentUser) {
+  if (!user) return false;
+  return canEditWarehouseAndCatalog(user) || canEditFinancialAndClientRecords(user);
+}
+
+// 7) صلاحية موافقة تجهيز المخزن وإصدار إذن صرف السيارة
+function canApproveWarehouseStage(user = currentUser) {
+  if (!user) return false;
+  if (isFullAdmin(user)) return true;
+  if (user.permissions && user.permissions.approveWarehouse === true) return true;
+  if (['admin_manager', 'warehouse_keeper'].includes(user.roleKey) && user.permissions?.approveWarehouse !== false) return true;
+  return false;
+}
+
+// 8) صلاحية الاعتماد التنفيذي الشامل
+function canApproveExecutiveStage(user = currentUser) {
+  if (!user) return false;
+  if (isFullAdmin(user)) return true;
+  return Boolean(user.permissions && user.permissions.approveExecutive);
+}
+
+// 9) صلاحية تعديل بيان طلبية قائم بعد إصداره (غير مسموح للمستخدم "الاطلاع الكامل" بتعديل بيان قائم؛ مسموح له الاطلاع والطباعة وإرسال الواتساب فقط، إلا إذا مُنح صلاحية التعديل مستقبلاً)
+function canEditExistingOrderStatement(user = currentUser, ord = null) {
+  if (!user) return false;
+  if (isFullAdmin(user) || canApproveExecutiveStage(user) || canEditFinancialAndClientRecords(user)) return true;
+  if (canApproveWarehouseStage(user) && ord && (ord.stage || ord.status) === 'pending_warehouse_prep') return true;
+  return false;
+}
+
+// المرتجع يدخل المخزن مرة أخرى بعد موافقة المدير التنفيذي أو مدير المشروعات أو المحاسب فقط (أو من يُمنح صلاحية التعديل المالي/التنفيذي)
 function canApproveSalesReturn(user = currentUser) {
   if (!user) return false;
+  if (isFullAdmin(user) || canApproveExecutiveStage(user) || canEditFinancialAndClientRecords(user)) return true;
   return ['ceo', 'projects_manager', 'accountant', 'accounts_manager', 'accounting_manager'].includes(user.roleKey);
 }
 
@@ -637,8 +717,8 @@ function checkIncomingNotifications(prevLogs = [], newLogs = [], prevChats = [],
 
   // 1) Direct live check for newly arrived or newly approved Preparation Orders & Car Dispatch Orders
   const prevOrderStageMap = new Map((prevOrders || []).map(o => [o.id, o.stage || o.status]));
-  const isWarehouseOrAdmin = currentUser.roleKey === 'admin_manager' || currentUser.roleKey === 'warehouse_keeper' || isFullAdmin(currentUser);
-  const isAccountantRole = ['accountant', 'accounts_manager', 'accounting_manager'].includes(currentUser.roleKey) || isFullAdmin(currentUser);
+  const isWarehouseOrAdmin = canApproveWarehouseStage(currentUser);
+  const isAccountantRole = canApproveOrderAccounts(currentUser);
 
   for (const ord of (newOrders || [])) {
     if (!ord || !ord.id) continue;
@@ -988,11 +1068,12 @@ function normalizeState(s) {
       if (!u.roleTitle || u.roleTitle.includes('\uFFFD')) u.roleTitle = defUser.roleTitle;
     }
     u.permissions = u.permissions || {};
-    u.permissions.dashboard = true;
-    u.permissions.warehouses = true;
-    u.permissions.production = true;
-    u.permissions.approvals = true;
-    u.permissions.reports = true;
+    if (u.permissions.dashboard === undefined) u.permissions.dashboard = true;
+    if (u.permissions.warehouses === undefined) u.permissions.warehouses = true;
+    if (u.permissions.production === undefined) u.permissions.production = true;
+    if (u.permissions.approvals === undefined) u.permissions.approvals = true;
+    if (u.permissions.reports === undefined) u.permissions.reports = true;
+
     if (u.roleKey === 'ceo' || u.roleKey === 'projects_manager') {
       u.permissions = {
         dashboard: true,
@@ -1005,22 +1086,51 @@ function normalizeState(s) {
         approveWarehouse: true,
         salesAccounting: true,
         clientsSuppliers: true,
+        editFinancialRecords: true,
         reports: true,
         settingsUsers: true
       };
+    } else if (u.roleKey === 'reserve_user' || u.id === 'u-8') {
+      if (!u.name || u.name === 'مستخدم احتياطي' || u.name === 'حساب احتياطي / مراقب جودة') {
+        u.name = 'الاطلاع الكامل';
+      }
+      if (!u.roleTitle || u.roleTitle.includes('احتياطي')) {
+        u.roleTitle = 'الاطلاع الكامل (اطلاع وطباعة واتساب + إصدار وتكويد واعتماد حسابات أوامر التجهيز)';
+      }
+      if (!u.permInitializedV76) {
+        u.permissions = {
+          dashboard: true,
+          warehouses: true,
+          warehouseIssueReceive: false,
+          production: true,
+          approvals: true,
+          approveFinancial: true,
+          approveExecutive: false,
+          approveWarehouse: false,
+          salesAccounting: true,
+          clientsSuppliers: true,
+          editFinancialRecords: false,
+          reports: true,
+          settingsUsers: false
+        };
+        u.permInitializedV76 = true;
+      }
     } else if (u.roleKey === 'warehouse_keeper') {
-      u.permissions.warehouseIssueReceive = true;
-      u.permissions.approveWarehouse = true;
+      if (u.permissions.warehouseIssueReceive === undefined) u.permissions.warehouseIssueReceive = true;
+      if (u.permissions.approveWarehouse === undefined) u.permissions.approveWarehouse = true;
       u.permissions.salesAccounting = false;
       u.permissions.clientsSuppliers = false;
       u.permissions.approveFinancial = false;
+      u.permissions.editFinancialRecords = false;
     } else if (['accountant', 'accounts_manager', 'accounting_manager'].includes(u.roleKey)) {
-      u.permissions.salesAccounting = true;
-      u.permissions.clientsSuppliers = true;
-      u.permissions.approveFinancial = true;
+      if (u.permissions.salesAccounting === undefined) u.permissions.salesAccounting = true;
+      if (u.permissions.clientsSuppliers === undefined) u.permissions.clientsSuppliers = true;
+      if (u.permissions.approveFinancial === undefined) u.permissions.approveFinancial = true;
+      if (u.permissions.editFinancialRecords === undefined) u.permissions.editFinancialRecords = true;
     } else if (u.roleKey === 'admin_manager') {
-      u.permissions.approveWarehouse = true;
-      u.permissions.clientsSuppliers = true;
+      if (u.permissions.approveWarehouse === undefined) u.permissions.approveWarehouse = true;
+      if (u.permissions.clientsSuppliers === undefined) u.permissions.clientsSuppliers = true;
+      if (u.permissions.editFinancialRecords === undefined) u.permissions.editFinancialRecords = false;
     }
   }
 
@@ -1350,7 +1460,7 @@ function getDefaultInitialState() {
   const fullPerms = {
     dashboard: true, warehouses: true, warehouseIssueReceive: true, production: true,
     approvals: true, approveFinancial: true, approveExecutive: true, approveWarehouse: true,
-    salesAccounting: true, clientsSuppliers: true, reports: true, settingsUsers: true
+    salesAccounting: true, clientsSuppliers: true, editFinancialRecords: true, reports: true, settingsUsers: true
   };
   return {
     factoryInfo: {
@@ -1364,12 +1474,12 @@ function getDefaultInitialState() {
     users: [
       { id: 'u-1', code: 'USR-01', name: 'المدير التنفيذي', roleKey: 'ceo', roleTitle: 'المدير التنفيذي (CEO) - كامل الصلاحيات', pin: '1111', avatarColor: '#d97706', active: true, permissions: { ...fullPerms } },
       { id: 'u-2', code: 'USR-02', name: 'مدير المشروعات', roleKey: 'projects_manager', roleTitle: 'مدير المشروعات - كامل الصلاحيات', pin: '2222', avatarColor: '#2563eb', active: true, permissions: { ...fullPerms } },
-      { id: 'u-3', code: 'USR-03', name: 'مدير الحسابات', roleKey: 'accounts_manager', roleTitle: 'مدير الحسابات والمالية', pin: '3333', avatarColor: '#059669', active: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: false, production: true, approvals: true, approveFinancial: true, approveExecutive: false, approveWarehouse: false, salesAccounting: true, clientsSuppliers: true, reports: true, settingsUsers: false } },
-      { id: 'u-4', code: 'USR-04', name: 'المحاسب', roleKey: 'accountant', roleTitle: 'محاسب المبيعات والخزينة', pin: '4444', avatarColor: '#10b981', active: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: false, production: true, approvals: true, approveFinancial: true, approveExecutive: false, approveWarehouse: false, salesAccounting: true, clientsSuppliers: true, reports: true, settingsUsers: false } },
-      { id: 'u-5', code: 'USR-05', name: 'المدير الإداري', roleKey: 'admin_manager', roleTitle: 'المدير الإداري وشؤون التشغيل', pin: '5555', avatarColor: '#7c3aed', active: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: false, production: true, approvals: true, approveFinancial: false, approveExecutive: false, approveWarehouse: true, salesAccounting: false, clientsSuppliers: true, reports: true, settingsUsers: false } },
-      { id: 'u-6', code: 'USR-06', name: 'أمين المخزن', roleKey: 'warehouse_keeper', roleTitle: 'أمين المخازن والرصيد والاستلام', pin: '6666', avatarColor: '#ea580c', active: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: true, production: true, approvals: true, approveFinancial: false, approveExecutive: false, approveWarehouse: true, salesAccounting: false, clientsSuppliers: false, reports: true, settingsUsers: false } },
-      { id: 'u-7', code: 'USR-07', name: 'مدير التشغيل', roleKey: 'operations_manager', roleTitle: 'مدير التشغيل وخطوط تقشير القشرة', pin: '7777', avatarColor: '#0284c7', active: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: true, production: true, approvals: true, approveFinancial: false, approveExecutive: false, approveWarehouse: false, salesAccounting: false, clientsSuppliers: false, reports: true, settingsUsers: false } },
-      { id: 'u-8', code: 'USR-08', name: 'مستخدم احتياطي', roleKey: 'reserve_user', roleTitle: 'حساب احتياطي / طوارئ وجرد', pin: '8888', avatarColor: '#64748b', active: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: true, production: true, approvals: true, approveFinancial: false, approveExecutive: false, approveWarehouse: false, salesAccounting: false, clientsSuppliers: false, reports: true, settingsUsers: false } }
+      { id: 'u-3', code: 'USR-03', name: 'مدير الحسابات', roleKey: 'accounts_manager', roleTitle: 'مدير الحسابات والمالية', pin: '3333', avatarColor: '#059669', active: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: false, production: true, approvals: true, approveFinancial: true, approveExecutive: false, approveWarehouse: false, salesAccounting: true, clientsSuppliers: true, editFinancialRecords: true, reports: true, settingsUsers: false } },
+      { id: 'u-4', code: 'USR-04', name: 'المحاسب', roleKey: 'accountant', roleTitle: 'محاسب المبيعات والخزينة', pin: '4444', avatarColor: '#10b981', active: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: false, production: true, approvals: true, approveFinancial: true, approveExecutive: false, approveWarehouse: false, salesAccounting: true, clientsSuppliers: true, editFinancialRecords: true, reports: true, settingsUsers: false } },
+      { id: 'u-5', code: 'USR-05', name: 'المدير الإداري', roleKey: 'admin_manager', roleTitle: 'المدير الإداري وشؤون التشغيل', pin: '5555', avatarColor: '#7c3aed', active: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: false, production: true, approvals: true, approveFinancial: false, approveExecutive: false, approveWarehouse: true, salesAccounting: false, clientsSuppliers: true, editFinancialRecords: false, reports: true, settingsUsers: false } },
+      { id: 'u-6', code: 'USR-06', name: 'أمين المخزن', roleKey: 'warehouse_keeper', roleTitle: 'أمين المخازن والرصيد والاستلام', pin: '6666', avatarColor: '#ea580c', active: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: true, production: true, approvals: true, approveFinancial: false, approveExecutive: false, approveWarehouse: true, salesAccounting: false, clientsSuppliers: false, editFinancialRecords: false, reports: true, settingsUsers: false } },
+      { id: 'u-7', code: 'USR-07', name: 'مدير التشغيل', roleKey: 'operations_manager', roleTitle: 'مدير التشغيل وخطوط تقشير القشرة', pin: '7777', avatarColor: '#0284c7', active: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: true, production: true, approvals: true, approveFinancial: false, approveExecutive: false, approveWarehouse: false, salesAccounting: false, clientsSuppliers: false, editFinancialRecords: false, reports: true, settingsUsers: false } },
+      { id: 'u-8', code: 'USR-08', name: 'الاطلاع الكامل', roleKey: 'reserve_user', roleTitle: 'الاطلاع الكامل (اطلاع وطباعة واتساب + إصدار وتكويد واعتماد حسابات أوامر التجهيز)', pin: '8888', avatarColor: '#64748b', active: true, permInitializedV76: true, permissions: { dashboard: true, warehouses: true, warehouseIssueReceive: false, production: true, approvals: true, approveFinancial: true, approveExecutive: false, approveWarehouse: false, salesAccounting: true, clientsSuppliers: true, editFinancialRecords: false, reports: true, settingsUsers: false } }
     ],
     pallets: [], rawMaterials: [], logContainers: [], logItems: [], scrapItems: [], spareParts: [], productionOrders: [],
     approvalRequests: [], warehouseMovements: [], salesReturns: [], partners: [], palletMovements: [], financialTransactions: [], checksUnderCollection: [],
@@ -1445,19 +1555,21 @@ async function loadData() {
           approveWarehouse: true,
           salesAccounting: true,
           clientsSuppliers: true,
+          editFinancialRecords: true,
           reports: true,
           settingsUsers: true
         };
       } else if (u.roleKey === 'warehouse_keeper') {
         u.permissions = u.permissions || {};
-        u.permissions.production = true;
-        u.permissions.approvals = true;
+        if (u.permissions.production === undefined) u.permissions.production = true;
+        if (u.permissions.approvals === undefined) u.permissions.approvals = true;
         u.permissions.salesAccounting = false;
         u.permissions.approveFinancial = false;
+        u.permissions.editFinancialRecords = false;
       } else if (['accountant', 'accounts_manager', 'accounting_manager', 'admin_manager'].includes(u.roleKey)) {
         u.permissions = u.permissions || {};
-        u.permissions.production = true;
-        u.permissions.approvals = true;
+        if (u.permissions.production === undefined) u.permissions.production = true;
+        if (u.permissions.approvals === undefined) u.permissions.approvals = true;
       }
     }
     const savedUserId = localStorage.getItem(SESSION_USER_KEY);
@@ -2478,6 +2590,10 @@ function getPrintTopLeftLogoHtml(metaHtml = '') {
 }
 
 function openFactoryLogoModal() {
+  if (!isFullAdmin(currentUser) && !canEditFinancialAndClientRecords(currentUser)) {
+    alert('⛔ عفواً، تعديل لوجو الشركة غير مسموح لحسابك (حسابك مخصص للاطلاع والطباعة وإرسال الواتساب).');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) return;
   const currentLogo = getFactoryLogoSrc();
@@ -2822,6 +2938,10 @@ function buildReturnedPalletsStatementText() {
 }
 
 function openFactoryStampModal() {
+  if (!isFullAdmin(currentUser) && !canEditFinancialAndClientRecords(currentUser)) {
+    alert('⛔ عفواً، تعديل ختم الشركة والحسابات البنكية غير مسموح لحسابك (حسابك مخصص للاطلاع والطباعة وإرسال الواتساب).');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) return;
   const currentStamp = getFactoryStampSrc();
@@ -3033,8 +3153,8 @@ function render() {
   }
 
   const isExecRole = isFullAdmin(currentUser);
-  const isWarehouseOrAdmin = currentUser.roleKey === 'admin_manager' || currentUser.roleKey === 'warehouse_keeper';
-  const isAccountantRole = currentUser.roleKey === 'accountant' || currentUser.roleKey === 'accounts_manager' || currentUser.roleKey === 'accounting_manager';
+  const isWarehouseOrAdmin = canApproveWarehouseStage(currentUser);
+  const isAccountantRole = canApproveOrderAccounts(currentUser);
 
   const pendingPrepOrdersCount = (state.productionOrders || []).filter(o => {
     const st = o.stage || o.status;
@@ -3788,8 +3908,8 @@ function renderDashboard() {
     : 0;
 
   const isExec = isFullAdmin(currentUser);
-  const isWarehouseOrAdmin = currentUser.roleKey === 'admin_manager' || currentUser.roleKey === 'warehouse_keeper' || isExec;
-  const isAccountantRole = ['accountant', 'accounts_manager', 'accounting_manager'].includes(currentUser.roleKey) || isExec;
+  const isWarehouseOrAdmin = canApproveWarehouseStage(currentUser);
+  const isAccountantRole = canApproveOrderAccounts(currentUser);
 
   const prepOrdersForWarehouse = (state.productionOrders || []).filter(o => (o.stage || o.status) === 'pending_warehouse_prep');
   const carDispatchOrdersForWarehouse = (state.productionOrders || []).filter(o => (o.stage || o.status) === 'ready_for_car_dispatch');
@@ -4002,15 +4122,18 @@ function renderDashboard() {
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
         <div style="font-weight:800;font-size:0.98rem;">⚡ حركات المخازن والإجراءات السريعة (${currentUser.name}):</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;">
-          ${hasPerm('warehouseIssueReceive') ? `
+          ${canEditWarehouseAndCatalog(currentUser) ? `
             <button class="btn btn-primary" style="font-weight:900;" onclick="openMultiProductionEntryModal()">📥 إضافة كميات إنتاج متعددة للمخازن</button>
             <button class="btn" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openWarehouseOpShortcut('sales_return')">🔄 إضافة مرتجع مبيعات (يدخل المخزن بعد الموافقة)</button>
             <button class="btn btn-success" onclick="openWarehouseOpShortcut('out')">📤 خروج الكميات حسب المبيعات</button>
             <button class="btn btn-accent" onclick="openWarehouseOpShortcut('rework')">♻️ خروج الكميات لإعادة التشغيل</button>
             <button class="btn btn-outline" onclick="openAddPalletModal()">➕ إضافة بالتة بالباركود</button>
           ` : ''}
-          ${hasPerm('production') && !isWarehouseKeeperOnly(currentUser) ? `
+          ${canIssuePrepOrders(currentUser) ? `
             <button class="btn btn-accent" onclick="openNewClientOrderPrepModal()">📋 أمر تجهيز طلبية جديدة للعميل</button>
+          ` : ''}
+          ${canCodeNewClients(currentUser) ? `
+            <button class="btn btn-primary" onclick="openNewPartnerModal()">🤝 تكويد وإضافة عميل جديد بالكود</button>
           ` : ''}
           ${isExec ? `
             <button class="btn" style="background:#0f766e;color:#fff;font-weight:900;" onclick="openNewClientOrderPrepModal('', true)">📜 تنفيذ الطلبيات القديمة للعملاء (بعد الرصيد الافتتاحي)</button>
@@ -4537,6 +4660,8 @@ function renderFinishedVeneerWarehouse() {
   }
 
   const tableClass = matrixCompactMode ? 'matrix-table' : 'matrix-table matrix-normal';
+  const canEditWh = canEditWarehouseAndCatalog(currentUser);
+  const canEditPrices = canEditWarehousePrices(currentUser);
 
   return `
     ${negativeCellsList.length > 0 ? `
@@ -4553,7 +4678,7 @@ function renderFinishedVeneerWarehouse() {
               ${negativeCellsList.map(nc => `
                 <div style="background:var(--bg-surface);border:1px solid var(--danger);padding:5px 10px;border-radius:8px;display:flex;align-items:center;gap:8px;font-size:0.82rem;">
                   <span><strong>${nc.thkMm} مم (${nc.directionLabel}) × ${nc.gradeCode}</strong>: <strong style="color:var(--danger);direction:ltr;display:inline-block;">${fmtNum(nc.sheets, 0)} قطعة</strong></span>
-                  <button type="button" class="btn btn-sm btn-primary" style="padding:2px 8px;font-size:0.74rem;" onclick="openMatrixCellModal('${nc.thkId}', '${nc.gradeId}', 'in')">📥 إضافة إنتاج لتغطية السالب</button>
+                  ${canEditWh ? `<button type="button" class="btn btn-sm btn-primary" style="padding:2px 8px;font-size:0.74rem;" onclick="openMatrixCellModal('${nc.thkId}', '${nc.gradeId}', 'in')">📥 إضافة إنتاج لتغطية السالب</button>` : ''}
                 </div>
               `).join('')}
             </div>
@@ -4567,18 +4692,22 @@ function renderFinishedVeneerWarehouse() {
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
         <div>
           <div style="font-weight:900;font-size:0.96rem;color:var(--primary);">
-            ⚙️ حركات كميات المخزن المعتمدة (إنتاج / مرتجع مبيعات / خروج مبيعات / إعادة تشغيل):
+            ${canEditWh ? '⚙️ حركات كميات المخزن المعتمدة (إنتاج / مرتجع مبيعات / خروج مبيعات / إعادة تشغيل):' : '👁️ وضع الاطلاع والطباعة وإرسال الواتساب لمخزن القشرة وجدول الإنتاج:'}
           </div>
           <small style="color:var(--text-muted);font-size:0.78rem;">
-            ⚠️ <strong>ملاحظة هامة:</strong> مرتجع المبيعات لا يدخل رصيد المخزن مرة أخرى إلا بعد موافقة <strong>(المدير التنفيذي أو مدير المشروعات أو المحاسب فقط)</strong>.
+            ${canEditWh
+              ? '⚠️ <strong>ملاحظة هامة:</strong> مرتجع المبيعات لا يدخل رصيد المخزن مرة أخرى إلا بعد موافقة <strong>(المدير التنفيذي أو مدير المشروعات أو المحاسب فقط)</strong>.'
+              : '🔒 حسابك مخصص للاطلاع والطباعة وإرسال الواتساب (صورة / PDF) في المخازن — غير مسموح بالتعديل في أرصدة أو أسعار المخازن.'}
           </small>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button class="btn btn-sm btn-primary" style="font-weight:900;" onclick="openMultiProductionEntryModal()">📥 إضافة كميات إنتاج متعددة للمخازن</button>
+          ${canEditWh ? `<button class="btn btn-sm btn-primary" style="font-weight:900;" onclick="openMultiProductionEntryModal()">📥 إضافة كميات إنتاج متعددة للمخازن</button>` : ''}
           <button class="btn btn-sm" style="background:#0284c7;color:#fff;font-weight:800;" onclick="activeWarehouseSubTab='production_log'; render();">📊 جدول الإنتاج (يومي / أسبوعي / شهري)</button>
-          <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openWarehouseOpShortcut('sales_return')">🔄 إضافة مرتجع مبيعات</button>
-          <button class="btn btn-sm btn-success" onclick="openWarehouseOpShortcut('out')">📤 خروج الكميات حسب المبيعات</button>
-          <button class="btn btn-sm btn-accent" onclick="openWarehouseOpShortcut('rework')">♻️ خروج الكميات لإعادة التشغيل</button>
+          ${canEditWh ? `
+            <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openWarehouseOpShortcut('sales_return')">🔄 إضافة مرتجع مبيعات</button>
+            <button class="btn btn-sm btn-success" onclick="openWarehouseOpShortcut('out')">📤 خروج الكميات حسب المبيعات</button>
+            <button class="btn btn-sm btn-accent" onclick="openWarehouseOpShortcut('rework')">♻️ خروج الكميات لإعادة التشغيل</button>
+          ` : ''}
         </div>
       </div>
     </div>
@@ -4651,12 +4780,14 @@ function renderFinishedVeneerWarehouse() {
           </select>
         </div>
 
+        ${canEditWh ? `
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button class="btn btn-sm btn-primary" onclick="openAddThicknessModal()">➕ تخانة محددة (قص/سدا)</button>
           <button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openCustomDimensionsModal()">📐 إضافة مقاس خاص للشركات</button>
           <button class="btn btn-sm btn-accent" onclick="addGradePrompt()">➕ جودة جديدة</button>
           <button class="btn btn-sm btn-outline" onclick="openAddPalletModal()">📦 بالتة بالباركود</button>
         </div>
+        ` : `<span class="badge badge-info">👁️ وضع الاطلاع والطباعة وإرسال الواتساب</span>`}
       </div>
 
       ${veneerViewMode === 'matrix' ? `
@@ -4676,9 +4807,11 @@ function renderFinishedVeneerWarehouse() {
                 <th class="matrix-corner-th">
                   <div style="display:flex;flex-direction:column;gap:3px;align-items:flex-start;">
                     <span>⬇️ التخانة \\ الجودة ⬅️</span>
-                    <button class="btn btn-sm" style="background:#fbbf24;color:#0f172a;padding:2px 6px;font-size:0.66rem;" onclick="openAddThicknessModal()">
-                      + تخانة (قص/سدا)
-                    </button>
+                    ${canEditWh ? `
+                      <button class="btn btn-sm" style="background:#fbbf24;color:#0f172a;padding:2px 6px;font-size:0.66rem;" onclick="openAddThicknessModal()">
+                        + تخانة (قص/سدا)
+                      </button>
+                    ` : ''}
                   </div>
                 </th>
 
@@ -4689,11 +4822,13 @@ function renderFinishedVeneerWarehouse() {
                     <th class="matrix-grade-th" style="border-top:3px solid ${g.color || '#3b82f6'};">
                       <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
                         <span class="badge" style="background:${g.color || '#3b82f6'};color:#fff;font-size:0.7rem;padding:2px 7px;">${g.code}</span>
-                        <button class="del-icon-btn" style="padding:1px 4px;font-size:0.7rem;"
-                          title="${canDeleteGrade ? 'إلغاء هذه الجودة (الرصيد صفر)' : 'لا يمكن إلغاء جودة لها رصيد بالمخزن (' + totalGradeSheetsAll + ' قطعة)'}"
-                          onclick="deleteGradeFromMatrix('${g.id}')">
-                          🗑️
-                        </button>
+                        ${canEditWh ? `
+                          <button class="del-icon-btn" style="padding:1px 4px;font-size:0.7rem;"
+                            title="${canDeleteGrade ? 'إلغاء هذه الجودة (الرصيد صفر)' : 'لا يمكن إلغاء جودة لها رصيد بالمخزن (' + totalGradeSheetsAll + ' قطعة)'}"
+                            onclick="deleteGradeFromMatrix('${g.id}')">
+                            🗑️
+                          </button>
+                        ` : ''}
                       </div>
                       <div style="margin-top:2px;font-size:0.76rem;font-weight:800;">${g.name}</div>
                     </th>
@@ -4701,7 +4836,7 @@ function renderFinishedVeneerWarehouse() {
                 }).join('')}
 
                 <th class="matrix-grade-th" style="min-width:100px;background:rgba(180,83,9,0.08);">
-                  <button class="btn btn-sm btn-primary" onclick="addGradePrompt()" style="width:100%;margin-bottom:3px;padding:2px 6px;font-size:0.66rem;">+ جودة</button>
+                  ${canEditWh ? `<button class="btn btn-sm btn-primary" onclick="addGradePrompt()" style="width:100%;margin-bottom:3px;padding:2px 6px;font-size:0.66rem;">+ جودة</button>` : ''}
                   <div style="font-size:0.75rem;font-weight:800;color:var(--primary);">إجمالي الصف</div>
                 </th>
               </tr>
@@ -4736,8 +4871,8 @@ function renderFinishedVeneerWarehouse() {
 
                   return `
                     <td class="matrix-cell ${hasStock || hasNegativeStock ? 'has-stock' : 'empty-stock'}"
-                        style="${hasNegativeStock ? 'background:rgba(220,38,38,0.10) !important;border:2px solid var(--danger) !important;' : ''}"
-                        onclick="openMatrixCellModal('${t.id}', '${g.id}')">
+                        style="${hasNegativeStock ? 'background:rgba(220,38,38,0.10) !important;border:2px solid var(--danger) !important;' : ''}${canEditWh ? '' : 'cursor:default;'}"
+                        ${canEditWh ? `onclick="openMatrixCellModal('${t.id}', '${g.id}')"` : ''}>
                       ${hasStock ? `
                         <div class="cell-main-qty" style="color:var(--primary);">${fmtNum(cell.sheets, 0)} قطعة</div>
                         <div class="cell-sub-metrics">
@@ -4762,6 +4897,7 @@ function renderFinishedVeneerWarehouse() {
                       ` : `
                         <div style="color:var(--text-muted);font-size:0.74rem;font-weight:600;">0</div>
                       `}
+                      ${canEditWh ? `
                       <div class="cell-action-hint">
                         <button type="button" class="cell-mini-btn" style="${hasNegativeStock ? 'background:#dc2626;color:#fff;border-color:#b91c1c;font-weight:800;' : ''}" title="${hasNegativeStock ? 'إضافة إنتاج لتغطية الرصيد السالب' : 'إضافة كميات إنتاج'}" onclick="event.stopPropagation(); openMatrixCellModal('${t.id}', '${g.id}', 'in')">${hasNegativeStock ? '+تغطية السالب' : '+إنتاج'}</button>
                         <button type="button" class="cell-mini-btn" style="background:rgba(124,58,237,0.14);color:#6d28d9;border-color:#8b5cf6;" title="إضافة مرتجع مبيعات" onclick="event.stopPropagation(); openMatrixCellModal('${t.id}', '${g.id}', 'sales_return')">مرتجع</button>
@@ -4770,6 +4906,7 @@ function renderFinishedVeneerWarehouse() {
                           <button type="button" class="cell-mini-btn" title="خروج الكميات لإعادة التشغيل" onclick="event.stopPropagation(); openMatrixCellModal('${t.id}', '${g.id}', 'rework')">تشغيل</button>
                         ` : ''}
                       </div>
+                      ` : ''}
                     </td>
                   `;
                 }).join('');
@@ -4783,11 +4920,13 @@ function renderFinishedVeneerWarehouse() {
                           <span class="badge badge-info" style="font-size:0.76rem;padding:2px 7px;">${t.mm} مم</span>
                           <span class="badge" style="background:${dirBadgeBg};color:#fff;font-size:0.68rem;padding:2px 6px;">${dirBadgeText}</span>
                         </div>
-                        <button class="del-icon-btn" style="padding:1px 4px;font-size:0.7rem;"
-                          title="${canDeleteThk ? 'إلغاء هذه التخانة (الرصيد صفر)' : 'لا يمكن إلغاء تخانة لها رصيد بالمخزن (' + totalThkSheetsAll + ' قطعة)'}"
-                          onclick="deleteThicknessFromMatrix('${t.id}')">
-                          🗑️
-                        </button>
+                        ${canEditWh ? `
+                          <button class="del-icon-btn" style="padding:1px 4px;font-size:0.7rem;"
+                            title="${canDeleteThk ? 'إلغاء هذه التخانة (الرصيد صفر)' : 'لا يمكن إلغاء تخانة لها رصيد بالمخزن (' + totalThkSheetsAll + ' قطعة)'}"
+                            onclick="deleteThicknessFromMatrix('${t.id}')">
+                            🗑️
+                          </button>
+                        ` : ''}
                       </div>
                     </td>
 
@@ -4886,7 +5025,7 @@ function renderFinishedVeneerWarehouse() {
                           value="${cell.unitPiecePrice || ''}"
                           placeholder="0"
                           title="سعر القطعة الواحدة بالجنيه"
-                          onchange="updateCellUnitPrice('${t.id}', '${g.id}', this.value)" />
+                          ${canEditPrices ? `onchange="updateCellUnitPrice('${t.id}', '${g.id}', this.value)"` : 'readonly disabled'} />
                         <span style="font-size:0.68rem;font-weight:700;color:var(--text-muted);">ج</span>
                       </div>
 
@@ -4999,11 +5138,11 @@ function renderFinishedVeneerWarehouse() {
                   <td><strong style="${isNeg ? 'color:var(--danger);direction:ltr;display:inline-block;' : ''}">${fmtNum(p.volumeM3, 4)} م³</strong></td>
                   <td>
                     <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                      ${isNeg ? `
+                      ${isNeg ? (canEditWh ? `
                         <button class="btn btn-sm btn-primary" onclick="openMatrixCellModal('${p.thicknessId || ('th-' + p.thicknessMm + '-' + (p.direction || 'qas'))}', '${p.gradeId}', 'in')">📥 إضافة إنتاج لتغطية السالب</button>
-                      ` : `
+                      ` : '<span class="badge badge-danger">رصيد سالب</span>') : `
                         <button class="btn btn-sm btn-outline" onclick="printPalletTag('${p.id}')">🖨️ كارت البالتة</button>
-                        <button class="btn btn-sm btn-primary" onclick="openMatrixCellModal('${p.thicknessId || ('th-' + p.thicknessMm + '-' + (p.direction || 'qas'))}', '${p.gradeId}', 'out')">📤 بيع/خروج</button>
+                        ${canEditWh ? `<button class="btn btn-sm btn-primary" onclick="openMatrixCellModal('${p.thicknessId || ('th-' + p.thicknessMm + '-' + (p.direction || 'qas'))}', '${p.gradeId}', 'out')">📤 بيع/خروج</button>` : ''}
                       `}
                       ${isFullAdmin(currentUser) ? `
                         <button class="btn btn-sm btn-accent" onclick="openEditPalletModal('${p.id}')">✏️ تعديل</button>
@@ -5043,9 +5182,11 @@ function renderSalesReturnsSection() {
           <button class="btn btn-sm btn-outline" onclick="printSalesReturnsReportPdf()">
             🖨️ طباعة سجل المرتجعات PDF
           </button>
-          <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openWarehouseOpShortcut('sales_return')">
-            ➕ تسجيل مرتجع مبيعات جديد
-          </button>
+          ${canEditWarehouseAndCatalog(currentUser) ? `
+            <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openWarehouseOpShortcut('sales_return')">
+              ➕ تسجيل مرتجع مبيعات جديد
+            </button>
+          ` : ''}
         </div>
       </div>
 
@@ -5767,12 +5908,14 @@ function renderProductionLogTableSection() {
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#d97706,#b45309);color:#fff;font-weight:900;" onclick="openAiLogToMultiPalletProductionModal()">
-            🪵⚙️ تشغيل جذع + إنتاج بالتات متعددة (جودة وتخانة) للمخزن
-          </button>
-          <button class="btn btn-sm btn-primary" style="font-weight:900;" onclick="openMultiProductionEntryModal()">
-            📥 إضافة كميات إنتاج متعددة للمخازن
-          </button>
+          ${canEditWarehouseAndCatalog(currentUser) ? `
+            <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#d97706,#b45309);color:#fff;font-weight:900;" onclick="openAiLogToMultiPalletProductionModal()">
+              🪵⚙️ تشغيل جذع + إنتاج بالتات متعددة (جودة وتخانة) للمخزن
+            </button>
+            <button class="btn btn-sm btn-primary" style="font-weight:900;" onclick="openMultiProductionEntryModal()">
+              📥 إضافة كميات إنتاج متعددة للمخازن
+            </button>
+          ` : ''}
           <button class="btn btn-sm btn-accent" style="font-weight:800;" onclick="printProductionLogReportPdf()">
             🖨️ طباعة جدول الإنتاج (${data.periodLabel}) PDF
           </button>
@@ -6546,9 +6689,11 @@ function renderProduction() {
   const visibleOrders = allOrders.filter(o => canUserSeeOrderInPrep(currentUser, o));
   const hiddenForWarehouseCount = allOrders.length - visibleOrders.length;
 
-  const isExec = isFullAdmin(currentUser);
-  const isWarehouseOrAdmin = currentUser.roleKey === 'admin_manager' || currentUser.roleKey === 'warehouse_keeper' || isExec;
-  const isAccountantOrExec = ['accountant', 'accounts_manager', 'accounting_manager', 'ceo', 'projects_manager'].includes(currentUser.roleKey);
+  const isExec = canApproveExecutiveStage(currentUser);
+  const isWarehouseOrAdmin = canApproveWarehouseStage(currentUser);
+  const isAccountantOrExec = canApproveOrderAccounts(currentUser);
+  const canIssueOrders = canIssuePrepOrders(currentUser);
+  const canEditFin = canEditFinancialAndClientRecords(currentUser);
 
   return `
     <!-- Workflow Stepper Banner -->
@@ -6586,11 +6731,13 @@ function renderProduction() {
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          ${isAccountantOrExec ? `
+          ${canIssueOrders ? `
             <button class="btn btn-primary" onclick="openNewClientOrderPrepModal()">➕ إنشاء أمر تجهيز طلبية للعميل (بيان جديد)</button>
             ${isExec ? `
               <button class="btn" style="background:#0f766e;color:#fff;font-weight:800;" onclick="openNewClientOrderPrepModal('', true)">📜 تنفيذ طلبية قديمة لعميل (بعد الرصيد الافتتاحي)</button>
             ` : ''}
+          ` : ''}
+          ${canEditFin ? `
             <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="openFactoryStampModal()">💮 ختم الشركة والحسابات البنكية</button>
           ` : ''}
           <button class="btn btn-outline" onclick="printAllProductionOrdersReportPdf()">🖨️ طباعة سجل أوامر التجهيز PDF</button>
@@ -6694,7 +6841,7 @@ function renderProduction() {
                     <td>
                       <div style="display:flex;flex-direction:column;gap:4px;">
                         <button class="btn btn-sm btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="openClientOrderStatementModal('${ord.id}')">
-                          ${canSeeFinancialPrices() ? '📄 بيان العميل / تعديل' : '📄 بيان الكميات للتجهيز'}
+                          ${canSeeFinancialPrices() ? (canEditExistingOrderStatement(currentUser, ord) ? '📄 بيان العميل / تعديل' : '👁️ اطلاع وطباعة بيان العميل') : '📄 بيان الكميات للتجهيز'}
                         </button>
                         ${canSeeFinancialPrices() ? `
                           <button class="btn btn-sm btn-accent" style="font-weight:800;" onclick="printClientOrderStatement('${ord.id}')">
@@ -6769,9 +6916,9 @@ function renderProduction() {
 // 4. MULTI-STAGE APPROVAL WORKFLOW & VEHICLE DISPATCH VOUCHERS (اعتماد أذون الصرف وصرف السيارات)
 // ============================================================================
 function renderApprovals() {
-  const isExec = isFullAdmin(currentUser);
-  const isWarehouseOrAdmin = currentUser.roleKey === 'admin_manager' || currentUser.roleKey === 'warehouse_keeper' || isExec;
-  const isAccountantOrExec = ['accountant', 'accounts_manager', 'accounting_manager', 'ceo', 'projects_manager'].includes(currentUser.roleKey);
+  const isExec = canApproveExecutiveStage(currentUser);
+  const isWarehouseOrAdmin = canApproveWarehouseStage(currentUser);
+  const isAccountantOrExec = canApproveOrderAccounts(currentUser);
 
   // Orders that reached Stage 2 (pending_warehouse_prep for warehouse/admin), Stage 3 (pending_accountant_release), Stage 4 (ready_for_car_dispatch), or Completed
   const releaseOrders = (state.productionOrders || []).filter(o => {
@@ -7022,6 +7169,9 @@ function renderAccounting() {
   const collectedChecksList = allChecks.filter(c => c.status === 'collected');
   const totalPendingChecksAmount = pendingChecksList.reduce((s, c) => s + Number(c.amount || 0), 0);
   const totalCollectedChecksAmount = collectedChecksList.reduce((s, c) => s + Number(c.amount || 0), 0);
+  const canEditFin = canEditFinancialAndClientRecords(currentUser);
+  const canCodeClient = canCodeNewClients(currentUser);
+  const canIssueOrders = canIssuePrepOrders(currentUser);
 
   return `
     <!-- Top Financial, Checks Under Collection & Pallets Summary Cards -->
@@ -7035,9 +7185,11 @@ function renderAccounting() {
       <div class="stat-card" style="border-right:4px solid #f59e0b;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">
           <span class="stat-title">📝 شيكات تحت التحصيل طرف المصنع/البنك</span>
-          <button type="button" class="btn btn-sm btn-primary" style="padding:2px 8px;font-size:0.7rem;" onclick="openNewCheckUnderCollectionModal()">
-            ➕ تسجيل شيك
-          </button>
+          ${canEditFin ? `
+            <button type="button" class="btn btn-sm btn-primary" style="padding:2px 8px;font-size:0.7rem;" onclick="openNewCheckUnderCollectionModal()">
+              ➕ تسجيل شيك
+            </button>
+          ` : ''}
         </div>
         <div class="stat-value" style="color:#d97706;">${fmtMoney(totalPendingChecksAmount)}</div>
         <div class="stat-sub">
@@ -7048,14 +7200,16 @@ function renderAccounting() {
       <div class="stat-card accent" style="border-right:4px solid #7c3aed;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">
           <span class="stat-title" style="color:#6d28d9;font-weight:800;">🛡️ حساب تأمين البالتات الخشبية للعملاء</span>
-          <div style="display:flex;gap:4px;flex-wrap:wrap;">
-            <button type="button" class="btn btn-sm btn-primary" style="padding:2px 8px;font-size:0.68rem;background:#7c3aed;border-color:#7c3aed;" onclick="openPalletDepositAccountModal()">
-              🛡️ تسجيل تأمين بالتات
-            </button>
-            <button type="button" class="btn btn-sm btn-outline" style="padding:2px 7px;font-size:0.68rem;border-color:var(--accent);color:var(--accent);font-weight:800;" onclick="openSetDefaultPalletPriceModal()">
-              💰 البالتة (${fmtNum(defaultPalletPrice, 0)} ج)
-            </button>
-          </div>
+          ${canEditFin ? `
+            <div style="display:flex;gap:4px;flex-wrap:wrap;">
+              <button type="button" class="btn btn-sm btn-primary" style="padding:2px 8px;font-size:0.68rem;background:#7c3aed;border-color:#7c3aed;" onclick="openPalletDepositAccountModal()">
+                🛡️ تسجيل تأمين بالتات
+              </button>
+              <button type="button" class="btn btn-sm btn-outline" style="padding:2px 7px;font-size:0.68rem;border-color:var(--accent);color:var(--accent);font-weight:800;" onclick="openSetDefaultPalletPriceModal()">
+                💰 البالتة (${fmtNum(defaultPalletPrice, 0)} ج)
+              </button>
+            </div>
+          ` : ''}
         </div>
         <div class="stat-value">${fmtNum(totalNetPalletsOut, 0)} بالتة | <span style="color:var(--primary);font-size:1.1rem;">${fmtMoney(totalNetPalletsOutValue)}</span></div>
         <div class="stat-sub">
@@ -7076,20 +7230,22 @@ function renderAccounting() {
         <div>
           <div class="card-title">🤝 حسابات ومبيعات العملاء (الأكواد، الطلبيات، المديونيات، الشيكات تحت التحصيل، وحساب تأمين البالتات)</div>
           <small style="color:var(--text-muted);">
-            اضغط على <strong>"📂 كشف الحساب"</strong> أو <strong>"🛡️ تأمين البالتات"</strong> لأي عميل لمراجعة طلبياته، المديونية، الشيكات تحت التحصيل، وحساب تأمين البالتات
+            اضغط على <strong>"📂 كشف الحساب"</strong> لأي عميل لمراجعة طلبياته، المديونية، الشيكات تحت التحصيل، وحساب تأمين البالتات والطباعة وإرسال الواتساب
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <button class="btn btn-primary" onclick="openNewPartnerModal()">➕ إضافة عميل جديد بالكود</button>
-          <button class="btn btn-accent" onclick="openNewClientOrderPrepModal()">📋 إنشاء أمر تجهيز طلبية لعميل</button>
+          ${canCodeClient ? `<button class="btn btn-primary" onclick="openNewPartnerModal()">➕ إضافة عميل جديد بالكود</button>` : ''}
+          ${canIssueOrders ? `<button class="btn btn-accent" onclick="openNewClientOrderPrepModal()">📋 إنشاء أمر تجهيز طلبية لعميل</button>` : ''}
           ${isFullAdmin(currentUser) ? `
             <button class="btn" style="background:#0f766e;color:#fff;font-weight:800;" onclick="openNewClientOrderPrepModal('', true)">📜 تنفيذ طلبية قديمة لعميل (بعد الرصيد الافتتاحي)</button>
             <button class="btn" style="background:#dc2626;color:#fff;font-weight:800;" onclick="openClientPiecePriceAdjustmentModal()">💲 تعديل الحسابات والرصيد الافتتاحي وأسعار القطع والدفعات</button>
           ` : ''}
-          <button class="btn" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal()">🛡️ حساب تأمين البالتات (تحصيل / رد تأمين)</button>
-          <button class="btn" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal()">📝 تسجيل شيك تحت التحصيل</button>
-          <button class="btn btn-outline" style="border-color:#d97706;color:#b45309;font-weight:800;" onclick="openSetDefaultPalletPriceModal()">🪵 تحديد قيمة البالتة (${fmtMoney(defaultPalletPrice)})</button>
-          <button class="btn btn-outline" onclick="openNewFinancialTxModal()">💵 تسجيل سند مالي عام بالخزينة</button>
+          ${canEditFin ? `
+            <button class="btn" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal()">🛡️ حساب تأمين البالتات (تحصيل / رد تأمين)</button>
+            <button class="btn" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal()">📝 تسجيل شيك تحت التحصيل</button>
+            <button class="btn btn-outline" style="border-color:#d97706;color:#b45309;font-weight:800;" onclick="openSetDefaultPalletPriceModal()">🪵 تحديد قيمة البالتة (${fmtMoney(defaultPalletPrice)})</button>
+            <button class="btn btn-outline" onclick="openNewFinancialTxModal()">💵 تسجيل سند مالي عام بالخزينة</button>
+          ` : ''}
           <button class="btn btn-outline" onclick="printAllClientsAccountingReportPdf()">🖨️ طباعة كشف حسابات جميع العملاء PDF</button>
           <button class="btn" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsAppImage(printAllClientsAccountingReportPdf)">${getWhatsAppSvgIconHtml(18)}<span>🖼️ إرسال واتساب صورة</span></button>
           <button class="btn" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsApp(printAllClientsAccountingReportPdf)">${getWhatsAppSvgIconHtml(18)}<span>📄 إرسال واتساب PDF</span></button>
@@ -7213,18 +7369,20 @@ function renderAccounting() {
                       <button class="btn btn-sm btn-primary" onclick="openClientFullHistoryModal('${pt.id}', 'all')">
                         📂 كشف الحساب
                       </button>
-                      <button class="btn btn-sm btn-success" onclick="openClientPaymentModal('${pt.id}')">
-                        💵 تحصيل
-                      </button>
-                      <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}')" title="تسجيل تحصيل أو رد تأمين بالتات في حساب تأمين البالتات">
-                        🛡️ تأمين البالتات
-                      </button>
-                      <button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal('${pt.id}')">
-                        📝 شيك
-                      </button>
-                      <button class="btn btn-sm btn-accent" onclick="openClientPalletMovementModal('${pt.id}')">
-                        🪵 بالتات
-                      </button>
+                      ${canEditFin ? `
+                        <button class="btn btn-sm btn-success" onclick="openClientPaymentModal('${pt.id}')">
+                          💵 تحصيل
+                        </button>
+                        <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}')" title="تسجيل تحصيل أو رد تأمين بالتات في حساب تأمين البالتات">
+                          🛡️ تأمين البالتات
+                        </button>
+                        <button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal('${pt.id}')">
+                          📝 شيك
+                        </button>
+                        <button class="btn btn-sm btn-accent" onclick="openClientPalletMovementModal('${pt.id}')">
+                          🪵 بالتات
+                        </button>
+                      ` : ''}
                       <button class="btn btn-sm btn-outline" onclick="printClientFullStatement('${pt.id}')">
                         🖨️ طباعة
                       </button>
@@ -7264,12 +7422,14 @@ function renderAccounting() {
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal()">
-            🛡️ تسجيل تحصيل / رد تأمين بالتات
-          </button>
-          <button class="btn btn-sm btn-outline" style="border-color:#7c3aed;color:#6d28d9;font-weight:800;" onclick="openSetDefaultPalletPriceModal()">
-            💰 تحديد قيمة تأمين البالتة (${fmtNum(defaultPalletPrice, 0)} ج)
-          </button>
+          ${canEditFin ? `
+            <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal()">
+              🛡️ تسجيل تحصيل / رد تأمين بالتات
+            </button>
+            <button class="btn btn-sm btn-outline" style="border-color:#7c3aed;color:#6d28d9;font-weight:800;" onclick="openSetDefaultPalletPriceModal()">
+              💰 تحديد قيمة تأمين البالتة (${fmtNum(defaultPalletPrice, 0)} ج)
+            </button>
+          ` : ''}
           <button class="btn btn-sm btn-outline" onclick="printPalletDepositAccountReportPdf()">
             🖨️ طباعة كشف حساب تأمين البالتات PDF
           </button>
@@ -7328,17 +7488,19 @@ function renderAccounting() {
                 </td>
                 <td>
                   <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
-                    <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}', 'pallet_deposit_payment')">
-                      🛡️ تحصيل تأمين
-                    </button>
-                    ${m.netPalletDepositPaid > 0 ? `
-                      <button class="btn btn-sm btn-success" style="font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}', 'pallet_deposit_refund')">
-                        🔄 رد تأمين
+                    ${canEditFin ? `
+                      <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}', 'pallet_deposit_payment')">
+                        🛡️ تحصيل تأمين
                       </button>
-                    ` : ''}
-                    <button class="btn btn-sm btn-accent" onclick="openClientPalletMovementModal('${pt.id}')">
-                      🪵 حركة بالتات
-                    </button>
+                      ${m.netPalletDepositPaid > 0 ? `
+                        <button class="btn btn-sm btn-success" style="font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}', 'pallet_deposit_refund')">
+                          🔄 رد تأمين
+                        </button>
+                      ` : ''}
+                      <button class="btn btn-sm btn-accent" onclick="openClientPalletMovementModal('${pt.id}')">
+                        🪵 حركة بالتات
+                      </button>
+                    ` : '<span style="font-size:0.75rem;color:var(--text-muted);font-weight:700;">👁️ اطلاع فقط</span>'}
                   </div>
                 </td>
               </tr>
@@ -7411,7 +7573,7 @@ function renderAccounting() {
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <button class="btn btn-sm btn-primary" onclick="openNewCheckUnderCollectionModal()">➕ تسجيل شيك جديد تحت التحصيل</button>
+          ${canEditFin ? `<button class="btn btn-sm btn-primary" onclick="openNewCheckUnderCollectionModal()">➕ تسجيل شيك جديد تحت التحصيل</button>` : ''}
           <button class="btn btn-sm btn-outline" onclick="printChecksUnderCollectionReportPdf()">🖨️ طباعة سجل الشيكات PDF</button>
           <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printChecksUnderCollectionReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>🖼️ واتساب صورة</span></button>
           <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printChecksUnderCollectionReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>📄 واتساب PDF</span></button>
@@ -7466,19 +7628,21 @@ function renderAccounting() {
                   </td>
                   <td>
                     <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
-                      ${isPending ? `
-                        <button class="btn btn-sm btn-success" style="font-weight:800;" onclick="openCollectCheckModal('${chk.id}')">
-                          ✅ تم التحصيل (إضافة لمدفوعات العميل)
-                        </button>
-                        <button class="btn btn-sm btn-outline" style="border-color:var(--danger);color:var(--danger);" onclick="markCheckReturned('${chk.id}')">
-                          ❌ مرتد
-                        </button>
-                      ` : !isCollected ? `
-                        <button class="btn btn-sm btn-success" onclick="openCollectCheckModal('${chk.id}')">
-                          ✅ تحصيل الآن
-                        </button>
-                      ` : ''}
-                      <button class="btn btn-sm btn-outline" onclick="openEditCheckModal('${chk.id}')" title="تعديل بيانات الشيك">✏️</button>
+                      ${canEditFin ? `
+                        ${isPending ? `
+                          <button class="btn btn-sm btn-success" style="font-weight:800;" onclick="openCollectCheckModal('${chk.id}')">
+                            ✅ تم التحصيل (إضافة لمدفوعات العميل)
+                          </button>
+                          <button class="btn btn-sm btn-outline" style="border-color:var(--danger);color:var(--danger);" onclick="markCheckReturned('${chk.id}')">
+                            ❌ مرتد
+                          </button>
+                        ` : !isCollected ? `
+                          <button class="btn btn-sm btn-success" onclick="openCollectCheckModal('${chk.id}')">
+                            ✅ تحصيل الآن
+                          </button>
+                        ` : ''}
+                        <button class="btn btn-sm btn-outline" onclick="openEditCheckModal('${chk.id}')" title="تعديل بيانات الشيك">✏️</button>
+                      ` : '<span style="font-size:0.75rem;color:var(--text-muted);font-weight:700;">👁️ اطلاع فقط</span>'}
                       ${isFullAdmin(currentUser) ? `
                         <button class="btn btn-sm btn-danger" onclick="deleteCheckRecord('${chk.id}')" title="حذف الشيك">🗑️</button>
                       ` : ''}
@@ -7551,7 +7715,7 @@ function renderAccounting() {
         <div class="card-header">
           <div class="card-title">🪵 سجل حركة البالتات المسلمة للعملاء والمستلمة منهم (العدد + قيمة البالتة + الإجمالي)</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <button class="btn btn-sm btn-outline" style="border-color:#d97706;color:#b45309;font-weight:800;" onclick="openSetDefaultPalletPriceModal()">💰 قيمة البالتة (${fmtNum(defaultPalletPrice, 0)} ج)</button>
+            ${canEditFin ? `<button class="btn btn-sm btn-outline" style="border-color:#d97706;color:#b45309;font-weight:800;" onclick="openSetDefaultPalletPriceModal()">💰 قيمة البالتة (${fmtNum(defaultPalletPrice, 0)} ج)</button>` : ''}
             <button class="btn btn-sm btn-outline" onclick="printAllPalletMovementsReportPdf()">🖨️ طباعة سجل البالتات PDF</button>
             <button class="btn btn-sm" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printAllPalletMovementsReportPdf)">🖼️ واتساب صورة</button>
             <button class="btn btn-sm" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printAllPalletMovementsReportPdf)">📄 واتساب PDF</button>
@@ -7784,13 +7948,14 @@ function renderSettings() {
 }
 
 function renderCatalogSettings() {
+  const canEditCatalog = canEditWarehouseAndCatalog(currentUser);
   return `
     <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(400px, 1fr));gap:20px;">
       <!-- Wood Types -->
       <div class="card">
         <div class="card-header">
           <div class="card-title">🌳 أنواع الأخشاب المعتمدة بالمصنع</div>
-          <button class="btn btn-sm btn-primary" onclick="addWoodTypePrompt()">➕ إضافة نوع خشب</button>
+          ${canEditCatalog ? `<button class="btn btn-sm btn-primary" onclick="addWoodTypePrompt()">➕ إضافة نوع خشب</button>` : ''}
         </div>
         <table>
           <thead>
@@ -7812,7 +7977,7 @@ function renderCatalogSettings() {
       <div class="card">
         <div class="card-header">
           <div class="card-title">📏 تخانات القشرة الخشبية واتجاهها (قص / سدا)</div>
-          <button class="btn btn-sm btn-primary" onclick="openAddThicknessModal()">➕ إضافة تخانة (قص / سدا)</button>
+          ${canEditCatalog ? `<button class="btn btn-sm btn-primary" onclick="openAddThicknessModal()">➕ إضافة تخانة (قص / سدا)</button>` : ''}
         </div>
         <table>
           <thead>
@@ -7839,7 +8004,7 @@ function renderCatalogSettings() {
       <div class="card">
         <div class="card-header">
           <div class="card-title">⭐ درجات جودة وفرز القشرة</div>
-          <button class="btn btn-sm btn-primary" onclick="addGradePrompt()">➕ إضافة درجة جودة</button>
+          ${canEditCatalog ? `<button class="btn btn-sm btn-primary" onclick="addGradePrompt()">➕ إضافة درجة جودة</button>` : ''}
         </div>
         <table>
           <thead>
@@ -7861,7 +8026,7 @@ function renderCatalogSettings() {
       <div class="card">
         <div class="card-header">
           <div class="card-title">📐 مقاسات القشرة (المقاس المعتمد 125×250 سم + مقاسات الشركات الخاصة)</div>
-          <button class="btn btn-sm btn-primary" onclick="openCustomDimensionsModal()">➕ إدارة وإضافة مقاس خاص</button>
+          ${canEditCatalog ? `<button class="btn btn-sm btn-primary" onclick="openCustomDimensionsModal()">➕ إدارة وإضافة مقاس خاص</button>` : ''}
         </div>
         <table>
           <thead>
@@ -7892,13 +8057,15 @@ function renderCatalogSettings() {
 function renderUsersPermissionsSettings() {
   const permKeys = [
     { key: 'warehouses', label: 'عرض المخازن' },
-    { key: 'warehouseIssueReceive', label: 'استلام وصرف مخزني' },
-    { key: 'production', label: 'أوامر تجهيز طلبية للعميل' },
-    { key: 'approveFinancial', label: 'اعتماد مالي (حسابات)' },
-    { key: 'approveWarehouse', label: 'تنفيذ صرف (أمين مخزن)' },
-    { key: 'approveExecutive', label: 'اعتماد تنفيذي شامل' },
-    { key: 'salesAccounting', label: 'حسابات ومبيعات العملاء' },
-    { key: 'reports', label: 'التقارير' }
+    { key: 'warehouseIssueReceive', label: 'إضافة وصرف وتعديل المخازن' },
+    { key: 'production', label: 'إصدار أوامر التجهيز' },
+    { key: 'clientsSuppliers', label: 'تكويد العملاء' },
+    { key: 'approveFinancial', label: 'الموافقة على حسابات أوامر التجهيز' },
+    { key: 'salesAccounting', label: 'عرض حسابات العملاء والطباعة' },
+    { key: 'editFinancialRecords', label: 'تعديل الحسابات والدفعات والشيكات والبالتات' },
+    { key: 'approveWarehouse', label: 'موافقة تجهيز المخزن وإذن السيارة' },
+    { key: 'approveExecutive', label: 'اعتماد تنفيذي وتعديل شامل' },
+    { key: 'reports', label: 'التقارير والطباعة والواتساب' }
   ];
 
   const canManagePerms = isFullAdmin(currentUser);
@@ -7967,6 +8134,8 @@ function renderUsersPermissionsSettings() {
 }
 
 function renderBackupSettings() {
+  const canEditLogo = canEditFinancialAndClientRecords(currentUser);
+  const isExec = isFullAdmin(currentUser);
   return `
     <div class="card">
       <div class="card-header">
@@ -7976,10 +8145,12 @@ function renderBackupSettings() {
         <div style="background:#fff;border:1px solid var(--border-color);border-radius:10px;padding:8px 14px;">
           <img src="${getFactoryLogoSrc()}" alt="لوجو الشركة" style="height:56px;max-width:160px;object-fit:contain;display:block;" />
         </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;">
-          <button class="btn btn-primary" onclick="openFactoryLogoModal()">📤 رفع / تغيير لوجو الشركة</button>
-          ${state?.factoryInfo?.logoDataUrl ? `<button class="btn btn-outline" onclick="resetFactoryLogoToDefault()">🔄 استعادة اللوجو الافتراضي</button>` : ''}
-        </div>
+        ${canEditLogo ? `
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <button class="btn btn-primary" onclick="openFactoryLogoModal()">📤 رفع / تغيير لوجو الشركة</button>
+            ${state?.factoryInfo?.logoDataUrl ? `<button class="btn btn-outline" onclick="resetFactoryLogoToDefault()">🔄 استعادة اللوجو الافتراضي</button>` : ''}
+          </div>
+        ` : `<span style="color:var(--text-muted);font-weight:700;">👁️ وضع الاطلاع فقط</span>`}
       </div>
     </div>
 
@@ -7990,13 +8161,17 @@ function renderBackupSettings() {
       <div style="display:flex;gap:12px;flex-wrap:wrap;">
         <button class="btn btn-primary" onclick="downloadBackupJson()">⬇️ تحميل نسخة احتياطية كاملة (JSON)</button>
         <button class="btn btn-accent" onclick="exportPalletsCsv()">📊 تصدير جرد القشرة لملف إكسيل (CSV)</button>
-        <button class="btn btn-danger" onclick="resetAllFactoryData()">🗑️ تصفير وتفريغ النظام بالكامل (بدء من الصفر)</button>
+        ${isExec ? `<button class="btn btn-danger" onclick="resetAllFactoryData()">🗑️ تصفير وتفريغ النظام بالكامل (بدء من الصفر)</button>` : ''}
       </div>
     </div>
   `;
 }
 
 function resetAllFactoryData() {
+  if (!isFullAdmin(currentUser)) {
+    alert('⛔ هذه الصلاحية مخصصة للمدير التنفيذي ومدير المشروعات فقط!');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) {
     executeFactoryDataReset('full');
@@ -8188,6 +8363,10 @@ function closeModal() {
 
 // 1. Add Finished Veneer Pallet Modal
 function openAddPalletModal() {
+  if (!canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط في المخازن — غير مسموح بالتعديل أو الإضافة في المخازن.');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   const nextNum = (state.pallets?.length || 0) + 1;
   const defaultCode = `PLT-2026-00${nextNum}`;
@@ -8633,11 +8812,17 @@ function openNewDispatchRequestModal() {
 }
 
 function openNewClientOrderPrepModal(preselectedClientId = '', isOldOrderMode = false) {
+  if (!canIssuePrepOrders(currentUser)) {
+    alert('⛔ عفواً، غير مسموح لحسابك بإصدار أوامر التجهيز.');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   const nextNo = getNextUniqueOrderNumber();
   const clients = (state.partners || []).filter(pt => pt.type !== 'supplier');
   const defaultClient = clients.find(c => c.id === preselectedClientId) || clients[0] || null;
   const isExec = isFullAdmin(currentUser);
+  const canEditFin = canEditFinancialAndClientRecords(currentUser);
+  const canCodeClient = canCodeNewClients(currentUser);
   const cm = defaultClient ? computeClientMetrics(defaultClient) : null;
   const defaultVeneerDebt = defaultClient ? computeClientLivePreviousBalance(defaultClient) : 0;
   const defaultOldPalletsCnt = 0;
@@ -8672,9 +8857,11 @@ function openNewClientOrderPrepModal(preselectedClientId = '', isOldOrderMode = 
             </small>
           </div>
           <div style="display:flex;gap:6px;align-items:center;">
-            <button type="button" class="btn btn-sm btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="openFactoryStampModal()">
-              💮 ختم الشركة والحسابات البنكية
-            </button>
+            ${canEditFin ? `
+              <button type="button" class="btn btn-sm btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="openFactoryStampModal()">
+                💮 ختم الشركة والحسابات البنكية
+              </button>
+            ` : ''}
             <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
           </div>
         </div>
@@ -8692,9 +8879,11 @@ function openNewClientOrderPrepModal(preselectedClientId = '', isOldOrderMode = 
             <div class="form-group" style="grid-column: span 2;">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:6px;">
                 <label style="margin:0;">العميل المطلوب تنفيذ / تجهيز الطلبية لصالحه (بالكود والاسم)</label>
-                <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.73rem;" onclick="openNewPartnerModal(true)">
-                  ➕ إضافة عميل جديد بالكود
-                </button>
+                ${canCodeClient ? `
+                  <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.73rem;" onclick="openNewPartnerModal(true)">
+                    ➕ إضافة عميل جديد بالكود
+                  </button>
+                ` : ''}
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:5px;align-items:center;">
                 <input id="ord-client-code-search" type="text" class="form-control" style="max-width:240px;" placeholder="🔍 ابحث بكود العميل كامل (مثل CL-101)..." oninput="handleOrderModalClientSearch(this.value)" />
@@ -9439,6 +9628,10 @@ function previewDraftOrderStatementPdf() {
 
 function submitNewClientOrderPrep(e, andPrintPdf = false, explicitExitMode = '') {
   if (e) e.preventDefault();
+  if (!canIssuePrepOrders(currentUser)) {
+    alert('⛔ عفواً، غير مسموح لحسابك بإصدار أوامر التجهيز.');
+    return;
+  }
   const createdByExec = isFullAdmin(currentUser);
   const now = getMonotonicIso();
 
@@ -9651,9 +9844,10 @@ function openClientOrderStatementModal(orderId) {
   if (!ord) return;
   const modalRoot = document.getElementById('modal-root');
   const items = Array.isArray(ord.items) ? ord.items : [];
-  const isExec = isFullAdmin(currentUser);
-  const isWarehouseOrAdmin = isExec || isWarehouseKeeperOnly(currentUser) || ['admin_manager', 'warehouse_keeper'].includes(currentUser?.roleKey);
-  const canEditQuantities = isExec || canSeeFinancialPrices() || (isWarehouseOrAdmin && ord.stage === 'pending_warehouse_prep');
+  const isExec = canApproveExecutiveStage(currentUser);
+  const isWarehouseOrAdmin = canApproveWarehouseStage(currentUser);
+  const canEditQuantities = canEditExistingOrderStatement(currentUser, ord);
+  const canEditPricesAndTerms = isExec || canEditFinancialAndClientRecords(currentUser);
   const thicknesses = getSortedThicknesses();
   const grades = state.catalog?.grades || [];
   const clientObj = (state.partners || []).find(p => p.id === ord.clientId || p.name === ord.clientName);
@@ -9677,13 +9871,13 @@ function openClientOrderStatementModal(orderId) {
       <div class="modal-box" style="max-width:1020px;">
         <div class="card-header">
           <div>
-            <div class="card-title">${canSeeFinancialPrices() ? `📄 بيان طلبية للعميل (${ord.orderNumber}) — تعديل وطباعة وتصدير البيان PDF` : `📄 بيان كميات ومقاسات الطلبية للتجهيز بالمخزن (${ord.orderNumber}) — كميات فقط`}</div>
+            <div class="card-title">${canSeeFinancialPrices() ? `📄 بيان طلبية للعميل (${ord.orderNumber}) — ${canEditPricesAndTerms ? 'تعديل وطباعة وتصدير البيان PDF' : 'اطلاع وطباعة وإرسال واتساب'}` : `📄 بيان كميات ومقاسات الطلبية للتجهيز بالمخزن (${ord.orderNumber}) — كميات فقط`}</div>
             <small style="color:var(--text-muted);">
               العميل: <strong>${ord.clientName} (${ord.clientCode || 'CL'})</strong> | التاريخ: <strong>${ord.date}</strong> | الحالة: ${getOrderStageBadge(ord)}
             </small>
           </div>
           <div style="display:flex;gap:6px;align-items:center;">
-            ${canSeeFinancialPrices() ? `
+            ${canEditPricesAndTerms ? `
               <button type="button" class="btn btn-sm btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="openFactoryStampModal()">
                 💮 ختم الشركة والحسابات البنكية
               </button>
@@ -9806,12 +10000,12 @@ function openClientOrderStatementModal(orderId) {
                   <tr>
                     <td><strong>${idx + 1}</strong></td>
                     <td>
-                      ${isExec || canSeeFinancialPrices() ? `
+                      ${canEditPricesAndTerms ? `
                         <input id="stmt-desc-${idx}" type="text" class="form-control" style="min-width:110px;padding:3px 6px;font-size:0.75rem;font-weight:700;" value="${descVal}" />
                       ` : `<strong>${descVal}</strong>`}
                     </td>
                     <td>
-                      ${isExec || canSeeFinancialPrices() ? `
+                      ${canEditPricesAndTerms ? `
                         <div style="display:flex;align-items:center;gap:3px;">
                           <input id="stmt-wid-${idx}" type="number" step="0.5" min="10" class="form-control" style="width:55px;padding:3px 4px;font-weight:800;text-align:center;" value="${wid}" oninput="recalcStatementModalLive('${ord.id}')" title="العرض (سم)" />
                           <span>×</span>
@@ -9821,7 +10015,7 @@ function openClientOrderStatementModal(orderId) {
                       ` : getVeneerDimensionBadgeHtml(len, wid)}
                     </td>
                     <td>
-                      ${isExec || canSeeFinancialPrices() ? `
+                      ${canEditPricesAndTerms ? `
                         <div style="display:flex;gap:3px;align-items:center;">
                           <input id="stmt-thk-mm-${idx}" type="number" step="0.05" min="0.1" class="form-control" style="width:60px;padding:3px 5px;font-weight:800;" value="${it.thicknessMm}" oninput="recalcStatementModalLive('${ord.id}', ${idx})" title="التخانة بالـ مم" />
                           <select id="stmt-thk-dir-${idx}" class="form-control" style="padding:3px 5px;font-size:0.74rem;font-weight:700;" onchange="recalcStatementModalLive('${ord.id}', ${idx})">
@@ -9844,13 +10038,13 @@ function openClientOrderStatementModal(orderId) {
                       ` : `<strong>${it.gradeName}</strong>`}
                     </td>
                     <td>
-                      <input id="stmt-sheets-${idx}" type="number" min="0" class="form-control" style="width:80px;padding:4px 6px;font-weight:800;" value="${it.sheetsCount}" oninput="recalcStatementModalLive('${ord.id}')" ${canEditQuantities ? '' : 'readonly'} required />
+                      <input id="stmt-sheets-${idx}" type="number" min="0" class="form-control" style="width:80px;padding:4px 6px;font-weight:800;" value="${it.sheetsCount}" oninput="recalcStatementModalLive('${ord.id}')" ${canEditQuantities ? '' : 'readonly disabled'} required />
                     </td>
                     <td id="stmt-vol-${idx}" style="font-size:0.75rem;">${fmtNum(it.volumeM3, 3)} م³</td>
                     ${canSeeFinancialPrices() ? `
                     <td>
                       <div style="display:flex;flex-direction:column;gap:2px;">
-                        <input id="stmt-price-${idx}" type="number" step="0.5" min="0" class="form-control" style="width:90px;padding:4px 6px;font-weight:800;border-color:var(--primary);" value="${it.unitPrice}" oninput="recalcStatementModalLive('${ord.id}')" required />
+                        <input id="stmt-price-${idx}" type="number" step="0.5" min="0" class="form-control" style="width:90px;padding:4px 6px;font-weight:800;border-color:var(--primary);" value="${it.unitPrice}" oninput="recalcStatementModalLive('${ord.id}')" ${canEditPricesAndTerms ? '' : 'readonly disabled'} required />
                         <small id="stmt-tbl-price-hint-${idx}" style="font-size:0.66rem;color:var(--text-muted);">
                           الجدول: <strong>${fmtNum(getCellUnitPrice(curThkId, it.gradeId, it.thicknessMm, it.direction), 2)} ج</strong>
                         </small>
@@ -9870,19 +10064,19 @@ function openClientOrderStatementModal(orderId) {
           <div class="form-grid" style="background:var(--bg-elevated);padding:14px;border-radius:12px;margin-bottom:14px;">
             <div class="form-group">
               <label>نوع الخصم في بيان العميل</label>
-              <select id="stmt-disc-type" class="form-control" onchange="recalcStatementModalLive('${ord.id}')">
+              <select id="stmt-disc-type" class="form-control" onchange="recalcStatementModalLive('${ord.id}')" ${canEditPricesAndTerms ? '' : 'disabled'}>
                 <option value="amount" ${ord.discountType !== 'percent' ? 'selected' : ''}>💵 خصم مبلغ نقدي (ج.م)</option>
                 <option value="percent" ${ord.discountType === 'percent' ? 'selected' : ''}>📉 خصم نسبة مئوية (%)</option>
               </select>
             </div>
             <div class="form-group">
               <label>قيمة / نسبة الخصم</label>
-              <input id="stmt-disc-val" type="number" step="0.5" min="0" class="form-control" value="${ord.discountValue || 0}" oninput="recalcStatementModalLive('${ord.id}')" />
+              <input id="stmt-disc-val" type="number" step="0.5" min="0" class="form-control" value="${ord.discountValue || 0}" oninput="recalcStatementModalLive('${ord.id}')" ${canEditPricesAndTerms ? '' : 'readonly disabled'} />
             </div>
 
             <div class="form-group">
               <label style="color:var(--danger);font-weight:800;">📒 الرصيد السابق لحساب القشرة للعميل (مديونية عليه [+] أو له مبلغ مسدد [-])</label>
-              <input id="stmt-old-veneer-debt" type="number" step="0.5" class="form-control" value="${defaultVeneerDebt}" oninput="this.dataset.manual='1'; recalcStatementModalLive('${ord.id}', null, 'veneer')" style="font-weight:800;border-color:var(--danger);" title="موجب = مديونية قشرة سابقة على العميل | سالب = مبلغ مسدد لصالح العميل" />
+              <input id="stmt-old-veneer-debt" type="number" step="0.5" class="form-control" value="${defaultVeneerDebt}" oninput="this.dataset.manual='1'; recalcStatementModalLive('${ord.id}', null, 'veneer')" style="font-weight:800;border-color:var(--danger);" title="موجب = مديونية قشرة سابقة على العميل | سالب = مبلغ مسدد لصالح العميل" ${canEditPricesAndTerms ? '' : 'readonly disabled'} />
               <input id="stmt-old-pallets-cnt" type="hidden" value="0" />
               <input id="stmt-pallet-unit-price" type="hidden" value="500" />
               <input id="stmt-ret-pallets-cnt" type="hidden" value="0" />
@@ -9891,17 +10085,17 @@ function openClientOrderStatementModal(orderId) {
 
             <div class="form-group">
               <label style="color:var(--danger);font-weight:800;">💰 صافي الرصيد السابق لحساب القشرة (موجب = عليه / سالب = له)</label>
-              <input id="stmt-old-debt" type="number" step="0.5" class="form-control" value="${defaultOldDebt}" oninput="this.dataset.manual='1'; recalcStatementModalLive('${ord.id}', null, 'total_debt')" style="font-weight:800;border-color:var(--danger);" />
+              <input id="stmt-old-debt" type="number" step="0.5" class="form-control" value="${defaultOldDebt}" oninput="this.dataset.manual='1'; recalcStatementModalLive('${ord.id}', null, 'total_debt')" style="font-weight:800;border-color:var(--danger);" ${canEditPricesAndTerms ? '' : 'readonly disabled'} />
             </div>
 
             <div class="form-group" style="grid-column: 1 / -1;">
               <label style="font-weight:800;color:#991b1b;">📝 نص سطر المديونية السابقة في جدول البيان:</label>
-              <input id="stmt-old-debt-label" class="form-control" value="${defaultOldDebtLabel}" oninput="this.dataset.manual='1'" style="font-weight:700;" />
+              <input id="stmt-old-debt-label" class="form-control" value="${defaultOldDebtLabel}" oninput="this.dataset.manual='1'" style="font-weight:700;" ${canEditPricesAndTerms ? '' : 'readonly disabled'} />
             </div>
 
             <div class="form-group">
               <label style="color:var(--primary);font-weight:800;">🚚 مكان التسليم وطريقة التوصيل</label>
-              <select id="stmt-delivery-mode" class="form-control" style="font-weight:800;border-color:var(--primary);" onchange="const cBox=document.getElementById('stmt-delivery-cost'); if(this.value!=='paid_delivery'){cBox.value=0;} recalcStatementModalLive('${ord.id}');">
+              <select id="stmt-delivery-mode" class="form-control" style="font-weight:800;border-color:var(--primary);" onchange="const cBox=document.getElementById('stmt-delivery-cost'); if(this.value!=='paid_delivery'){cBox.value=0;} recalcStatementModalLive('${ord.id}');" ${canEditPricesAndTerms ? '' : 'disabled'}>
                 <option value="ex_factory" ${(!ord.deliveryMode || ord.deliveryMode === 'ex_factory') ? 'selected' : ''}>🏭 تسليم أرض المصنع (بدون نقل)</option>
                 <option value="included" ${ord.deliveryMode === 'included' ? 'selected' : ''}>🚛 شامل التوصيل لمقر العميل (مشمول في السعر)</option>
                 <option value="paid_delivery" ${ord.deliveryMode === 'paid_delivery' ? 'selected' : ''}>🚚 توصيل لمقر العميل (مع إضافة سعر التوصيل)</option>
@@ -9911,34 +10105,34 @@ function openClientOrderStatementModal(orderId) {
             <div class="form-group">
               <label>💰 سعر التوصيل / النولون (ج.م) + مكان التسليم</label>
               <div style="display:flex;gap:6px;">
-                <input id="stmt-delivery-cost" type="number" step="10" min="0" class="form-control" style="max-width:120px;font-weight:800;" value="${ord.deliveryCost || 0}" oninput="if(Number(this.value)>0){document.getElementById('stmt-delivery-mode').value='paid_delivery';} recalcStatementModalLive('${ord.id}');" />
-                <input id="stmt-delivery-place" class="form-control" value="${defaultDelivPlace}" placeholder="مكان التسليم..." />
+                <input id="stmt-delivery-cost" type="number" step="10" min="0" class="form-control" style="max-width:120px;font-weight:800;" value="${ord.deliveryCost || 0}" oninput="if(Number(this.value)>0){document.getElementById('stmt-delivery-mode').value='paid_delivery';} recalcStatementModalLive('${ord.id}');" ${canEditPricesAndTerms ? '' : 'readonly disabled'} />
+                <input id="stmt-delivery-place" class="form-control" value="${defaultDelivPlace}" placeholder="مكان التسليم..." ${canEditPricesAndTerms ? '' : 'readonly disabled'} />
               </div>
             </div>
 
             <div class="form-group">
               <label style="color:var(--success);font-weight:800;">💵 شروط الدفع (الدفعة المقدمة - اختياري)</label>
-              <input id="stmt-payment-advance" class="form-control" value="${ord.paymentAdvanceTerms || ''}" placeholder="اختياري..." />
+              <input id="stmt-payment-advance" class="form-control" value="${ord.paymentAdvanceTerms || ''}" placeholder="اختياري..." ${canEditPricesAndTerms ? '' : 'readonly disabled'} />
             </div>
 
             <div class="form-group">
               <label style="color:#b45309;font-weight:800;">⏳ شروط الدفع (الدفعة الآجلة - اختياري)</label>
-              <input id="stmt-payment-deferred" class="form-control" value="${ord.paymentDeferredTerms || ''}" placeholder="اختياري..." />
+              <input id="stmt-payment-deferred" class="form-control" value="${ord.paymentDeferredTerms || ''}" placeholder="اختياري..." ${canEditPricesAndTerms ? '' : 'readonly disabled'} />
             </div>
 
             <div class="form-group" style="grid-column: 1 / -1;">
               <label style="font-weight:800;color:var(--primary);">🏦 أرقام الحسابات البنكية الخاصة بمصنع العاصمة (لتحويل المبلغ عليها):</label>
-              <textarea id="stmt-bank-accounts" rows="2" class="form-control" style="font-size:0.82rem;">${sanitizeBankAccountsText(ord.bankAccountsText)}</textarea>
+              <textarea id="stmt-bank-accounts" rows="2" class="form-control" style="font-size:0.82rem;" ${canEditPricesAndTerms ? '' : 'readonly disabled'}>${sanitizeBankAccountsText(ord.bankAccountsText)}</textarea>
             </div>
 
             <div class="form-group" style="grid-column: 1 / -1;">
               <label style="font-weight:800;">✍️ إجمالي المبلغ المطلوب بالحروف:</label>
-              <input id="stmt-amount-words" class="form-control" value="${ord.totalRequiredInWords || ''}" style="font-weight:800;color:var(--primary);background:var(--bg-surface);" />
+              <input id="stmt-amount-words" class="form-control" value="${ord.totalRequiredInWords || ''}" style="font-weight:800;color:var(--primary);background:var(--bg-surface);" ${canEditPricesAndTerms ? '' : 'readonly disabled'} />
             </div>
 
             <div class="form-group" style="grid-column: 1 / -1;">
               <label>ملاحظات البيان للعميل</label>
-              <input id="stmt-notes" class="form-control" value="${ord.notes || ''}" placeholder="شروط التسليم أو ملاحظات البيان..." />
+              <input id="stmt-notes" class="form-control" value="${ord.notes || ''}" placeholder="شروط التسليم أو ملاحظات البيان..." ${canEditPricesAndTerms ? '' : 'readonly disabled'} />
             </div>
           </div>
           ` : `
@@ -10168,7 +10362,8 @@ function applyStmtPalletDepositMode(orderId, mode) {
 }
 
 function saveAndPrintClientOrderStatement(orderId) {
-  if (canSeeFinancialPrices() && document.getElementById('stmt-disc-type')) {
+  const ord = (state.productionOrders || []).find(o => o.id === orderId);
+  if (ord && canEditExistingOrderStatement(currentUser, ord) && canSeeFinancialPrices() && document.getElementById('stmt-disc-type')) {
     saveClientOrderStatementChanges(null, orderId, false, false, true);
   } else {
     printClientOrderStatement(orderId);
@@ -10179,6 +10374,14 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
   if (e) e.preventDefault();
   const ord = (state.productionOrders || []).find(o => o.id === orderId);
   if (!ord) return;
+  if (!canEditExistingOrderStatement(currentUser, ord)) {
+    if (alsoPrintPdf) {
+      printClientOrderStatement(orderId);
+      return;
+    }
+    alert('⛔ حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط على الطلبيات القائمة — غير مسموح بتعديل طلبية بعد إصدارها.');
+    return;
+  }
 
   const isExec = isFullAdmin(currentUser);
   const oldOrderNumber = ord.orderNumber;
@@ -10504,7 +10707,7 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
 
 // STAGE 1 -> STAGE 2: CEO or Projects Manager approves Statement so Admin Manager & Warehouse Keeper can see it
 function approveOrderExecutive(orderId) {
-  if (!isFullAdmin(currentUser)) {
+  if (!canApproveExecutiveStage(currentUser)) {
     alert('⛔ الموافقة على هذه المرحلة مسموحة فقط للمدير التنفيذي أو مدير المشروعات!');
     return;
   }
@@ -10589,6 +10792,10 @@ function ensureOrderStockDeducted(ord, performedBy = '', opDate = '', allowNegat
 // STAGE 2 -> STAGE 3: Admin Manager or Warehouse Keeper approves preparation/exit from warehouse -> Immediately deducts from Quantities Table & transfers to Accountant
 // RULE: If order items are NOT available in the warehouse, warehouse keeper is NOT allowed to approve unless stock is covered first OR placed in the warehouse in negative balance until added!
 function approveOrderWarehousePrep(orderId) {
+  if (!canApproveWarehouseStage(currentUser)) {
+    alert('⛔ هذه المرحلة مخصصة لأمين المخزن أو المدير الإداري أو الإدارة!');
+    return;
+  }
   const ord = (state.productionOrders || []).find(o => o.id === orderId);
   if (!ord) return;
 
@@ -10840,6 +11047,10 @@ function resolveOrderShortageByNegativeStock(orderId, alsoApprove = true) {
 
 // STAGE 3 -> STAGE 4: Accountant completes Client Accounting & Approves Dispatch Voucher -> Alerts Warehouse Keeper & Admin Manager to dispatch Car
 function openAccountantReleaseModal(orderId) {
+  if (!canApproveOrderAccounts(currentUser)) {
+    alert('⛔ عفواً، غير مسموح لحسابك بالموافقة على حسابات أوامر التجهيز.');
+    return;
+  }
   const ord = (state.productionOrders || []).find(o => o.id === orderId);
   if (!ord) return;
   const clientObj = state.partners.find(p => p.id === ord.clientId || p.name === ord.clientName);
@@ -10936,6 +11147,10 @@ function updateAccountantReleasePreview(orderNet, prevDebt) {
 
 function submitAccountantRelease(e, orderId) {
   e.preventDefault();
+  if (!canApproveOrderAccounts(currentUser)) {
+    alert('⛔ عفواً، غير مسموح لحسابك بالموافقة على حسابات أوامر التجهيز.');
+    return;
+  }
   const ord = (state.productionOrders || []).find(o => o.id === orderId);
   if (!ord) return;
 
@@ -11001,6 +11216,10 @@ function submitAccountantRelease(e, orderId) {
 
 // STAGE 4 -> COMPLETED: Warehouse Keeper / Admin Manager issues Vehicle Dispatch Voucher & Deducts Stock & Records Pallets
 function openVehicleDispatchVoucherModal(orderId) {
+  if (!canApproveWarehouseStage(currentUser)) {
+    alert('⛔ إصدار إذن صرف وتحميل السيارة مخصص لأمين المخزن أو المدير الإداري أو الإدارة!');
+    return;
+  }
   const ord = (state.productionOrders || []).find(o => o.id === orderId);
   if (!ord) return;
   const modalRoot = document.getElementById('modal-root');
@@ -11249,6 +11468,10 @@ function submitVehicleDispatchVoucher(e, orderId) {
 
 // Raw Materials, Scrap & Spare Parts Quick Stock Actions (Mobile-Friendly HTML Modals)
 function adjustRawMaterialStock(rmId, dir) {
+  if (!canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط في المخازن — غير مسموح بالتعديل في المخازن.');
+    return;
+  }
   const item = state.rawMaterials.find(r => r.id === rmId);
   if (!item) return;
   const modalRoot = document.getElementById('modal-root');
@@ -11317,6 +11540,10 @@ function submitAdjustRawMaterialStock(e, rmId, dir) {
 }
 
 function openAddRawMaterialModal() {
+  if (!canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط في المخازن — غير مسموح بالتعديل في المخازن.');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) return;
   modalRoot.innerHTML = `
@@ -11393,6 +11620,10 @@ function submitAddRawMaterialModal(e) {
 }
 
 function openAddScrapModal() {
+  if (!canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط في المخازن — غير مسموح بالتعديل في المخازن.');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) return;
   modalRoot.innerHTML = `
@@ -11467,6 +11698,10 @@ function submitAddScrapModal(e) {
 }
 
 function dispatchScrapItem(scId) {
+  if (!canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط في المخازن — غير مسموح بالتعديل في المخازن.');
+    return;
+  }
   const item = state.scrapItems.find(s => s.id === scId);
   if (!item) return;
   const modalRoot = document.getElementById('modal-root');
@@ -11509,6 +11744,10 @@ function submitDispatchScrapItem(e, scId) {
 }
 
 function openAddSparePartModal() {
+  if (!canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط في المخازن — غير مسموح بالتعديل في المخازن.');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) return;
   modalRoot.innerHTML = `
@@ -11579,6 +11818,10 @@ function submitAddSparePartModal(e) {
 }
 
 function adjustSparePartStock(spId, dir) {
+  if (!canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط في المخازن — غير مسموح بالتعديل في المخازن.');
+    return;
+  }
   const sp = state.spareParts.find(x => x.id === spId);
   if (!sp) return;
   const modalRoot = document.getElementById('modal-root');
@@ -11622,6 +11865,10 @@ function submitAdjustSparePartStock(e, spId, dir) {
 
 // Financial & Partners Modals
 function openNewFinancialTxModal() {
+  if (!canEditFinancialAndClientRecords(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب وتكويد العملاء والموافقة على حسابات أوامر التجهيز فقط — غير مسموح بتسجيل أو تعديل سندات الخزينة.');
+    return;
+  }
   const desc = prompt('بيان الفاتورة أو المعاملة المالية:');
   if (!desc) return;
   const amount = Number(prompt('إجمالي المبلغ بالجنيه:', '25000') || 0);
@@ -11649,6 +11896,10 @@ function openNewFinancialTxModal() {
 }
 
 function openNewPartnerModal(returnToOrderModal = false) {
+  if (!canCodeNewClients(currentUser)) {
+    alert('⛔ عفواً، غير مسموح لحسابك بتكويد عملاء جدد.');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   const nextCode = getNextUniquePartnerCode('CL');
 
@@ -11730,6 +11981,10 @@ function openNewPartnerModal(returnToOrderModal = false) {
 
 function submitNewPartnerModal(e, returnToOrderModal = false) {
   e.preventDefault();
+  if (!canCodeNewClients(currentUser)) {
+    alert('⛔ عفواً، غير مسموح لحسابك بتكويد عملاء جدد.');
+    return;
+  }
   const code = (document.getElementById('pt-code')?.value || '').trim();
   const name = (document.getElementById('pt-name')?.value || '').trim();
   const phone = (document.getElementById('pt-phone')?.value || '').trim();
@@ -11790,6 +12045,8 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
   if (!pt) return;
   const m = computeClientMetrics(pt);
   const modalRoot = document.getElementById('modal-root');
+  const canEditFin = canEditFinancialAndClientRecords(currentUser);
+  const canIssueOrders = canIssuePrepOrders(currentUser);
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
@@ -11844,15 +12101,17 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
         </div>
 
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
-          <button class="btn btn-sm btn-primary" onclick="closeModal(); openNewClientOrderPrepModal('${pt.id}');">📋 إنشاء طلبية جديدة لهذا العميل</button>
+          ${canIssueOrders ? `<button class="btn btn-sm btn-primary" onclick="closeModal(); openNewClientOrderPrepModal('${pt.id}');">📋 إنشاء طلبية جديدة لهذا العميل</button>` : ''}
           ${isFullAdmin(currentUser) ? `
             <button class="btn btn-sm" style="background:#0f766e;color:#fff;font-weight:800;" onclick="closeModal(); openNewClientOrderPrepModal('${pt.id}', true);">📜 تنفيذ طلبية قديمة لهذا العميل (بعد الرصيد الافتتاحي)</button>
             <button class="btn btn-sm" style="background:#dc2626;color:#fff;font-weight:800;" onclick="openClientPiecePriceAdjustmentModal('${pt.id}')">💲 تعديل الرصيد الافتتاحي وأسعار القطع والدفعات والحسابات</button>
           ` : ''}
-          <button class="btn btn-sm btn-success" onclick="openClientPaymentModal('${pt.id}')">💵 تسجيل تحصيل دفعة مالية / تسوية مديونية</button>
-          <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}')">🛡️ تسجيل تحصيل / رد في حساب تأمين البالتات</button>
-          <button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal('${pt.id}')">📝 تسجيل شيك تحت التحصيل</button>
-          <button class="btn btn-sm btn-accent" onclick="openClientPalletMovementModal('${pt.id}')">🪵 تسجيل تسليم / استلام بالتات خشبية</button>
+          ${canEditFin ? `
+            <button class="btn btn-sm btn-success" onclick="openClientPaymentModal('${pt.id}')">💵 تسجيل تحصيل دفعة مالية / تسوية مديونية</button>
+            <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}')">🛡️ تسجيل تحصيل / رد في حساب تأمين البالتات</button>
+            <button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal('${pt.id}')">📝 تسجيل شيك تحت التحصيل</button>
+            <button class="btn btn-sm btn-accent" onclick="openClientPalletMovementModal('${pt.id}')">🪵 تسجيل تسليم / استلام بالتات خشبية</button>
+          ` : ''}
         </div>
 
         <div style="max-height:58vh;overflow-y:auto;padding-left:4px;">
@@ -11973,7 +12232,7 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
           <div style="margin-bottom:18px;">
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
               <h4 style="margin:0;color:#b45309;">📝 شيكات العميل تحت التحصيل والمحصلة (${m.checks.length} شيك):</h4>
-              <button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal('${pt.id}')">➕ تسجيل شيك تحت التحصيل</button>
+              ${canEditFin ? `<button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal('${pt.id}')">➕ تسجيل شيك تحت التحصيل</button>` : ''}
             </div>
             ${m.checks.length === 0 ? `<p style="color:var(--text-muted);font-size:0.86rem;">لا توجد شيكات مسجلة لهذا العميل حتى الآن.</p>` : `
               <div class="table-responsive">
@@ -12006,10 +12265,12 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
                           </td>
                           <td>
                             <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
-                              ${isPending ? `
-                                <button class="btn btn-sm btn-success" style="font-weight:800;" onclick="openCollectCheckModal('${chk.id}')">✅ تم التحصيل (إضافة للمدفوعات)</button>
-                              ` : ''}
-                              <button class="btn btn-sm btn-outline" onclick="openEditCheckModal('${chk.id}')">✏️</button>
+                              ${canEditFin ? `
+                                ${isPending ? `
+                                  <button class="btn btn-sm btn-success" style="font-weight:800;" onclick="openCollectCheckModal('${chk.id}')">✅ تم التحصيل (إضافة للمدفوعات)</button>
+                                ` : ''}
+                                <button class="btn btn-sm btn-outline" onclick="openEditCheckModal('${chk.id}')">✏️</button>
+                              ` : '<span style="font-size:0.75rem;color:var(--text-muted);">👁️ اطلاع فقط</span>'}
                               ${isFullAdmin(currentUser) ? `<button class="btn btn-sm btn-danger" onclick="deleteCheckRecord('${chk.id}')">🗑️</button>` : ''}
                             </div>
                           </td>
@@ -12026,9 +12287,11 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
           <div>
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
               <h4 style="margin:0;color:#6d28d9;">3️⃣ حساب البالتات الخشبية المستقل للعميل (منفصل تماماً عن حساب القشرة — رصيد نهائي غير قابل للإضافة أو الخصم):</h4>
-              <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                <button class="btn btn-sm btn-accent" style="font-weight:800;" onclick="openClientPalletMovementModal('${pt.id}')">🔒 تعديل الرصيد النهائي للبالتات</button>
-              </div>
+              ${canEditFin ? `
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <button class="btn btn-sm btn-accent" style="font-weight:800;" onclick="openClientPalletMovementModal('${pt.id}')">🔒 تعديل الرصيد النهائي للبالتات</button>
+                </div>
+              ` : ''}
             </div>
 
             <div class="table-responsive">
@@ -12050,7 +12313,7 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
                     <td><strong>${fmtMoney(m.palletUnitPrice)}</strong></td>
                     <td><strong style="color:var(--primary);font-size:0.98rem;">${fmtMoney(m.netPalletsValue)}</strong></td>
                     <td><span class="badge" style="background:#6d28d9;color:#fff;">🔒 رصيد نهائي ثابت (غير قابل للإضافة أو الخصم)</span></td>
-                    <td><button class="btn btn-sm btn-outline" onclick="openClientPalletMovementModal('${pt.id}')">✏️ تعديل الرصيد النهائي</button></td>
+                    <td>${canEditFin ? `<button class="btn btn-sm btn-outline" onclick="openClientPalletMovementModal('${pt.id}')">✏️ تعديل الرصيد النهائي</button>` : '<span style="font-size:0.75rem;color:var(--text-muted);">👁️ اطلاع فقط</span>'}</td>
                   </tr>
                 </tbody>
               </table>
@@ -12064,6 +12327,10 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
 
 // CLIENT PAYMENT / DEBT SETTLEMENT MODAL
 function openClientPaymentModal(clientId) {
+  if (!canEditFinancialAndClientRecords(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب وتكويد العملاء والموافقة على حسابات أوامر التجهيز فقط — غير مسموح بتسجيل أو تعديل الدفعات المالية.');
+    return;
+  }
   const pt = (state.partners || []).find(p => p.id === clientId);
   if (!pt) return;
   const m = computeClientMetrics(pt);
@@ -12275,6 +12542,10 @@ function submitClientPayment(e, clientId) {
 // DEDICATED PALLET DEPOSIT ACCOUNT MODAL (حساب تأمين البالتات للعملاء)
 // ============================================================================
 function openPalletDepositAccountModal(preselectedClientId = '', defaultOpType = 'pallet_deposit_payment') {
+  if (!canEditFinancialAndClientRecords(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بتعديل حساب تأمين البالتات.');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) return;
   const clients = (state.partners || []).filter(p => p.type !== 'supplier');
@@ -12586,6 +12857,10 @@ function printPalletDepositAccountReportPdf() {
 // CHECKS UNDER COLLECTION MODALS & COLLECTION INTO CLIENT PAYMENTS
 // ============================================================================
 function openNewCheckUnderCollectionModal(preselectedClientId = '') {
+  if (!canEditFinancialAndClientRecords(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بتسجيل أو تعديل الشيكات.');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) return;
   const clients = (state.partners || []).filter(p => p.type !== 'supplier');
@@ -12744,6 +13019,10 @@ function submitNewCheckUnderCollection(e) {
 }
 
 function openCollectCheckModal(checkId) {
+  if (!canEditFinancialAndClientRecords(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بتحصيل أو تعديل الشيكات.');
+    return;
+  }
   const chk = (state.checksUnderCollection || []).find(c => c.id === checkId);
   if (!chk) return;
   const pt = (state.partners || []).find(p => p.id === chk.clientId || p.name === chk.clientName);
@@ -12859,6 +13138,10 @@ function submitCollectCheckModal(e, checkId) {
 }
 
 function markCheckReturned(checkId) {
+  if (!canEditFinancialAndClientRecords(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بتعديل الشيكات.');
+    return;
+  }
   const chk = (state.checksUnderCollection || []).find(c => c.id === checkId);
   if (!chk) return;
   if (!confirm(`هل تريد تسجيل الشيك رقم (${chk.checkNumber}) للعميل (${chk.clientName}) كـ "شيك مرتد / مرفوض"؟`)) return;
@@ -12868,6 +13151,10 @@ function markCheckReturned(checkId) {
 }
 
 function openEditCheckModal(checkId) {
+  if (!canEditFinancialAndClientRecords(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بتعديل الشيكات.');
+    return;
+  }
   const chk = (state.checksUnderCollection || []).find(c => c.id === checkId);
   if (!chk) return;
   const modalRoot = document.getElementById('modal-root');
@@ -13043,6 +13330,10 @@ function printChecksUnderCollectionReportPdf() {
 
 // CLIENT WOODEN PALLETS FINAL ACCOUNT EDITOR MODAL (حساب البالتات المستقل والنهائي للعميل)
 function openClientPalletMovementModal(clientId) {
+  if (!canEditFinancialAndClientRecords(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بتعديل أرصدة البالتات.');
+    return;
+  }
   const pt = (state.partners || []).find(p => p.id === clientId);
   if (!pt) return;
   const m = computeClientMetrics(pt);
@@ -13151,6 +13442,10 @@ function submitClientPalletMovement(e, clientId) {
 }
 
 function openSetDefaultPalletPriceModal() {
+  if (!canEditFinancialAndClientRecords(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بتعديل قيمة البالتة.');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) return;
   const curPrice = getWoodenPalletUnitPrice();
@@ -13234,6 +13529,10 @@ function submitSetDefaultPalletPriceModal(e) {
 
 // Dynamic Catalog & Users Permissions Actions
 function addWoodTypePrompt() {
+  if (!canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بتعديل الكتالوج.');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) return;
   modalRoot.innerHTML = `
@@ -13294,6 +13593,10 @@ function submitAddWoodTypeModal(e) {
 
 // Modal to manage and add Custom Company Dimensions (المقاس المعتمد 125×250 سم + مقاسات الشركات الخاصة)
 function openCustomDimensionsModal() {
+  if (!canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بتعديل المقاسات.');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   const dims = getPresetVeneerDimensions();
   modalRoot.innerHTML = `
@@ -13389,6 +13692,10 @@ function deleteCustomDimension(dimId) {
 
 // Modal to add Thickness asking whether it is Cut (قص) or Warp (سدا) or Both
 function openAddThicknessModal() {
+  if (!canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بإضافة أو تعديل التخانات.');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
@@ -13513,6 +13820,10 @@ function submitAddThicknessModal(e) {
 }
 
 function deleteThicknessFromMatrix(thkIdOrMm) {
+  if (!canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بإلغاء أو تعديل التخانات.');
+    return;
+  }
   const target = state.catalog.thicknesses.find(
     t => t.id === thkIdOrMm || String(t.mm) === String(thkIdOrMm)
   );
@@ -13538,6 +13849,11 @@ function deleteThicknessFromMatrix(thkIdOrMm) {
 }
 
 function updateCellUnitPrice(thkId, gradeId, priceVal) {
+  if (!canEditWarehousePrices(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بتعديل أسعار جدول المخزن.');
+    render();
+    return;
+  }
   const price = Math.max(0, Number(priceVal || 0));
   state.catalog.cellPrices = state.catalog.cellPrices || {};
   const key = getCellPriceKey(thkId, gradeId);
@@ -13563,6 +13879,10 @@ function updateCellUnitPrice(thkId, gradeId, priceVal) {
 }
 
 function addGradePrompt() {
+  if (!canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بإضافة أو تعديل درجات الجودة.');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) return;
   modalRoot.innerHTML = `
@@ -13633,6 +13953,10 @@ function submitAddGradeModal(e) {
 }
 
 function deleteGradeFromMatrix(gradeId) {
+  if (!canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بإلغاء أو تعديل درجات الجودة.');
+    return;
+  }
   const gradeObj = state.catalog.grades.find(g => g.id === gradeId);
   if (!gradeObj) return;
 
@@ -13656,6 +13980,10 @@ function deleteGradeFromMatrix(gradeId) {
 let activeCellContext = null;
 
 function openWarehouseOpShortcut(opType = 'in') {
+  if (!canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط في المخازن — غير مسموح بالتعديل في المخازن.');
+    return;
+  }
   const thicknesses = getSortedThicknesses();
   const grades = state.catalog?.grades || [];
 
@@ -13701,6 +14029,10 @@ function switchMatrixModalCell(newThkId, newGradeId) {
 }
 
 function openMatrixCellModal(thkIdOrMm, gradeId, defaultOp = 'in') {
+  if (!canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط في المخازن — غير مسموح بالتعديل في المخازن.');
+    return;
+  }
   const thkObj = state.catalog.thicknesses.find(
     t => t.id === thkIdOrMm || String(t.mm) === String(thkIdOrMm)
   ) || state.catalog.thicknesses[0] || {
@@ -14748,6 +15080,16 @@ function toggleUserPerm(userId, permKey, checked) {
   }
   user.permissions = user.permissions || {};
   user.permissions[permKey] = Boolean(checked);
+  user.permInitializedV76 = true;
+  if (checked && (permKey === 'approveFinancial' || permKey === 'approveWarehouse' || permKey === 'approveExecutive')) {
+    user.permissions.approvals = true;
+  }
+  if (checked && (permKey === 'clientsSuppliers' || permKey === 'editFinancialRecords')) {
+    user.permissions.salesAccounting = true;
+  }
+  if (checked && permKey === 'warehouseIssueReceive') {
+    user.permissions.warehouses = true;
+  }
   user.updatedAt = new Date().toISOString();
   saveState(`تعديل صلاحية (${permKey}) للمستخدم ${user.name} بواسطة ${currentUser.name}`);
 }
@@ -21469,9 +21811,11 @@ function renderLogContainersAndSerialsSection() {
                           <button type="button" class="btn btn-sm ${activeLogContainerFilter === c.id ? 'btn-primary' : 'btn-outline'}" style="padding:3px 7px;" onclick="activeLogContainerFilter = (activeLogContainerFilter === '${c.id}' ? 'all' : '${c.id}'); render();" title="تصفية الجذوع لهذه الحاوية">
                             🔍 جذوع الحاوية
                           </button>
-                          <button type="button" class="btn btn-sm btn-accent" style="padding:3px 7px;" onclick="openContainerYieldDensityModal('${c.id}')" title="تعديل الكثافة ونسبة الاستخراج وحساب فرق المنتج التام والهالك بالطن">
-                            ⚖️ الكثافة والاستخراج
-                          </button>
+                          ${(canOperateLogs || hasPerm('warehouseIssueReceive')) ? `
+                            <button type="button" class="btn btn-sm btn-accent" style="padding:3px 7px;" onclick="openContainerYieldDensityModal('${c.id}')" title="تعديل الكثافة ونسبة الاستخراج وحساب فرق المنتج التام والهالك بالطن">
+                              ⚖️ الكثافة والاستخراج
+                            </button>
+                          ` : ''}
                           ${isFullAdmin(currentUser) ? `
                             <button type="button" class="btn btn-sm btn-danger" style="padding:3px 7px;" onclick="deleteLogContainerRecord('${c.id}')" title="حذف الحاوية وجذوعها">🗑️</button>
                           ` : ''}
@@ -22636,6 +22980,10 @@ function submitAllDraftContainersBatch() {
 }
 
 function openImportLogContainerPdfModal(prefilledContainersBatch = null) {
+  if (!canManageLogSerialsAndProduction(currentUser) && !canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط في المخازن — غير مسموح باستيراد أو تعديل الحاويات.');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) return;
 
@@ -23255,6 +23603,10 @@ function openQuickLogSerialDispatchModal() {
 
 // Modal to Edit a Single Log (Serial, Dimensions, Volume, Status)
 function openEditSingleLogModal(logId) {
+  if (!canManageLogSerialsAndProduction(currentUser) && !canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بتعديل الجذوع.');
+    return;
+  }
   const l = (state.logItems || []).find(x => x.id === logId);
   if (!l) return;
   const modalRoot = document.getElementById('modal-root');
@@ -23363,6 +23715,10 @@ function deleteLogContainerRecord(containerId) {
 
 // Modal for Container Density, Expected Yield %, Actual Finished Veneer, and Scrap in Tons Comparison
 function openContainerYieldDensityModal(containerId) {
+  if (!canManageLogSerialsAndProduction(currentUser) && !canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بتعديل الكثافة ونسب الاستخراج.');
+    return;
+  }
   const c = (state.logContainers || []).find(x => x.id === containerId);
   if (!c) return;
   const cm = getContainerMetrics(c);
@@ -24152,6 +24508,10 @@ function openMultiProductionEntryModal() {
 }
 
 function openAiLogToMultiPalletProductionModal(preselectedLogs = '', prefilledPallets = null) {
+  if (!canManageLogSerialsAndProduction(currentUser) && !canEditWarehouseAndCatalog(currentUser)) {
+    alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط في المخازن — غير مسموح بتشغيل الجذوع أو إضافة إنتاج للمخازن.');
+    return;
+  }
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) return;
 
