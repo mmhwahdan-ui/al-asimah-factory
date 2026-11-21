@@ -4095,13 +4095,13 @@ function renderDashboard() {
       <div class="stat-card">
         <span class="stat-title">رصيد كميات مخزن القشرة التامة (250×125)</span>
         <div class="stat-value">${fmtNum(totalSheets, 0)} فرخ</div>
-        <div class="stat-sub"><strong>${fmtNum(totalVolumeM3, 3)}</strong> م³ | <strong>${totalPallets}</strong> بالتة | <strong>${fmtNum(totalAreaM2, 1)}</strong> م²</div>
+        <div class="stat-sub"><strong>${fmtNum(totalVolumeM3, 3)}</strong> م³ | <strong>${totalPallets}</strong> بالتة</div>
       </div>
 
       <div class="stat-card accent">
-        <span class="stat-title">${canSeeFinancialPrices() ? 'قيمة البالتة وإجمالي قيمة مخزون البالتات' : 'إجمالي المساحة والحجم للقشرة بالمخزن'}</span>
-        <div class="stat-value">${canSeeFinancialPrices() ? fmtMoney(totalVeneerValue) : fmtNum(totalAreaM2, 2) + ' م²'}</div>
-        <div class="stat-sub">${canSeeFinancialPrices() ? `عدد البالتات: <strong>${totalPallets} بالتة</strong> | متوسط قيمة البالتة: <strong>${fmtMoney(avgPalletStockValue)}</strong>` : 'مصنفة حسب التخانة (قص / سدا) ودرجة الجودة (A, B, C)'}</div>
+        <span class="stat-title">${canSeeFinancialPrices() ? 'قيمة البالتة وإجمالي قيمة مخزون البالتات' : 'إجمالي حجم وبالتات القشرة بالمخزن'}</span>
+        <div class="stat-value">${canSeeFinancialPrices() ? fmtMoney(totalVeneerValue) : fmtNum(totalVolumeM3, 3) + ' م³'}</div>
+        <div class="stat-sub">${canSeeFinancialPrices() ? `عدد البالتات: <strong>${totalPallets} بالتة</strong> | متوسط قيمة البالتة: <strong>${fmtMoney(avgPalletStockValue)}</strong>` : `عدد البالتات: <strong>${totalPallets} بالتة</strong> | مصنفة حسب التخانة (قص / سدا) والجودة`}</div>
       </div>
 
       <div class="stat-card info">
@@ -4151,11 +4151,11 @@ function renderDashboard() {
     <div class="card">
       <div class="card-header" style="flex-wrap:wrap;gap:8px;">
         <div>
-          <div class="card-title">📐 حاسبة القشرة الخشبية الفورية (تحويل البالتة والأفرخ إلى م² و م³)</div>
+          <div class="card-title">📐 حاسبة القشرة الخشبية الفورية (تحويل البالتة والأفرخ إلى المتر المكعب م³)</div>
           <small style="color:var(--text-muted);">اكتب أي أرقام بحرية (بالعربي أو الإنجليزي والكسور العشرية) وسيتم الحساب تلقائياً وفوراً</small>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-          <span class="badge badge-info">المقاس المعتمد: 125 سم × 250 سم = 3.125 م² للفرخ</span>
+          <span class="badge badge-info">المقاس المعتمد: 125 سم × 250 سم</span>
           <button type="button" class="btn btn-sm btn-outline" onclick="resetQuickCalcValues()">🔄 استعادة الافتراضي</button>
         </div>
       </div>
@@ -4231,16 +4231,12 @@ function renderDashboard() {
         </div>
         ` : ''}
         <div class="calc-preview-item">
-          <span>مساحة وحجم الفرخ الواحد</span>
-          <strong>${fmtNum(qcMetrics.sheetAreaM2, 4)} م² <small style="color:var(--text-muted);">(${fmtNum(qcSingleSheetVolM3, 6)} م³)</small></strong>
+          <span>حجم الفرخ الواحد (م³)</span>
+          <strong>${fmtNum(qcSingleSheetVolM3, 6)} م³</strong>
         </div>
         <div class="calc-preview-item">
           <span>عدد البالتات × الأفرخ للبالتات</span>
           <strong>${fmtNum(quickCalc.palletsCount, 0)} بالتة (${fmtNum(qcTotalSheets, 0)} فرخ)</strong>
-        </div>
-        <div class="calc-preview-item">
-          <span>إجمالي المساحة (م²)</span>
-          <strong>${fmtNum(qcMetrics.totalAreaM2, 2)} م²</strong>
         </div>
         <div class="calc-preview-item">
           <span>إجمالي الحجم الفعلي (م³)</span>
@@ -4275,7 +4271,7 @@ function renderDashboard() {
                   <tr>
                     <td><strong>${o.orderNumber}</strong><br/><small>${o.date || ''}</small></td>
                     <td><strong>${o.clientName}</strong></td>
-                    <td><strong>${fmtNum(o.totalSheetsCount || 0, 0)} قطعة</strong> (${fmtNum(o.totalVolumeM3 || 0, 3)} م³)</td>
+                    <td><strong>${fmtNum(o.totalSheetsCount || 0, 0)} قطعة</strong></td>
                     <td>${getOrderStageBadge(o)}</td>
                     <td>
                       <div style="display:flex;gap:4px;flex-wrap:wrap;">
@@ -4316,8 +4312,7 @@ function renderDashboard() {
                 <th>التخانة</th>
                 <th>درجة الجودة</th>
                 <th>عدد البالتات</th>
-                <th>عدد الأفرخ</th>
-                <th>الحجم (م³)</th>
+                <th>عدد الأفرخ (القطع)</th>
               </tr>
             </thead>
             <tbody>
@@ -4327,8 +4322,7 @@ function renderDashboard() {
                   <td><span class="badge badge-info">${p.thicknessMm} مم</span></td>
                   <td>${p.gradeName}</td>
                   <td>1 بالتة (${p.palletCode})</td>
-                  <td>${fmtNum(p.sheetsCount, 0)} فرخ</td>
-                  <td><strong>${fmtNum(p.volumeM3, 4)} م³</strong></td>
+                  <td><strong>${fmtNum(p.sheetsCount, 0)} فرخ</strong></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -4479,16 +4473,12 @@ function updateQuickCalcPreview(syncSheetPriceInput = true, syncPalletValInput =
       </div>
       ` : ''}
       <div class="calc-preview-item">
-        <span>مساحة وحجم الفرخ الواحد</span>
-        <strong>${fmtNum(qcMetrics.sheetAreaM2, 4)} م² <small style="color:var(--text-muted);">(${fmtNum(qcSingleSheetVolM3, 6)} م³)</small></strong>
+        <span>حجم الفرخ الواحد (م³)</span>
+        <strong>${fmtNum(qcSingleSheetVolM3, 6)} م³</strong>
       </div>
       <div class="calc-preview-item">
         <span>عدد البالتات × الأفرخ للبالتات</span>
         <strong>${fmtNum(quickCalc.palletsCount, 0)} بالتة (${fmtNum(qcTotalSheets, 0)} فرخ)</strong>
-      </div>
-      <div class="calc-preview-item">
-        <span>إجمالي المساحة (م²)</span>
-        <strong>${fmtNum(qcMetrics.totalAreaM2, 2)} م²</strong>
       </div>
       <div class="calc-preview-item">
         <span>إجمالي الحجم الفعلي (م³)</span>
@@ -4792,9 +4782,10 @@ function renderFinishedVeneerWarehouse() {
 
       ${veneerViewMode === 'matrix' ? `
         <!-- TABLE 1: 2D WAREHOUSE STOCK MATRIX (THICKNESS [QAS/SADA] x GRADE) -->
-        <div style="margin-bottom:6px;font-weight:800;font-size:0.9rem;color:var(--primary);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
-          <span>1️⃣ جدول أرصدة كميات القشرة بالقطعة (الفرخ) والمتر المكعب (م³) — يدعم المقاس المعتمد (125×250 سم) والمقاسات الخاصة</span>
-          <div style="display:flex;align-items:center;gap:6px;">
+        <div style="margin-bottom:8px;font-weight:800;font-size:0.9rem;color:var(--primary);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+          <span>1️⃣ جدول أرصدة كميات القشرة بالقطعة (الفرخ) — يدعم المقاس المعتمد (125×250 سم) والمقاسات الخاصة</span>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            ${renderReportMetricsToggleBarHtml(false)}
             <button class="btn btn-sm btn-outline" style="padding:3px 9px;font-size:0.74rem;border-color:var(--primary);color:var(--primary);" onclick="printVeneerQuantitiesMatrixPdf()">
               🖨️ طباعة / تصدير جدول الكميات PDF
             </button>
@@ -4875,11 +4866,11 @@ function renderFinishedVeneerWarehouse() {
                         ${canEditWh ? `onclick="openMatrixCellModal('${t.id}', '${g.id}')"` : ''}>
                       ${hasStock ? `
                         <div class="cell-main-qty" style="color:var(--primary);">${fmtNum(cell.sheets, 0)} قطعة</div>
-                        <div class="cell-sub-metrics">
-                          <strong style="color:var(--text-main);">${fmtNum(cell.volumeM3, 3)} م³</strong>
-                          <span>(${fmtNum(cell.areaM2, 0)} م²)</span>
-                          ${canSeeFinancialPrices() && cell.unitPiecePrice > 0 ? `<span style="color:var(--success);font-weight:700;">${fmtNum(cell.unitPiecePrice, 1)} ج</span>` : ''}
-                        </div>
+                        ${canSeeFinancialPrices() && cell.unitPiecePrice > 0 ? `
+                          <div class="cell-sub-metrics">
+                            <span style="color:var(--success);font-weight:700;">${fmtNum(cell.unitPiecePrice, 1)} ج</span>
+                          </div>
+                        ` : ''}
                         ${cell.customDimBreakdown && cell.customDimBreakdown.length > 0 ? `
                           <div style="margin-top:2px;font-size:0.62rem;background:#fef3c7;color:#b45309;border:1px solid #f59e0b;border-radius:4px;padding:1px 4px;font-weight:800;">
                             📐 خاص: ${cell.customDimBreakdown.join(' | ')}
@@ -4889,10 +4880,6 @@ function renderFinishedVeneerWarehouse() {
                         <div class="cell-main-qty" style="color:var(--danger);font-weight:900;direction:ltr;">${fmtNum(cell.sheets, 0)} قطعة</div>
                         <div style="margin-top:2px;font-size:0.62rem;background:#fee2e2;color:#b91c1c;border:1px solid #ef4444;border-radius:4px;padding:1px 4px;font-weight:800;">
                           📉 بالسالب (لحين الإضافة)
-                        </div>
-                        <div class="cell-sub-metrics" style="margin-top:2px;">
-                          <strong style="color:var(--danger);direction:ltr;">${fmtNum(cell.volumeM3, 3)} م³</strong>
-                          <span>(${fmtNum(cell.areaM2, 0)} م²)</span>
                         </div>
                       ` : `
                         <div style="color:var(--text-muted);font-size:0.74rem;font-weight:600;">0</div>
@@ -4934,8 +4921,7 @@ function renderFinishedVeneerWarehouse() {
 
                     <!-- Row Total -->
                     <td class="matrix-total-cell">
-                      <div style="color:var(--primary);font-size:0.82rem;font-weight:800;">${fmtNum(rowSheets, 0)} ق</div>
-                      <div style="font-size:0.7rem;color:var(--text-muted);">${fmtNum(rowM3, 3)} م³</div>
+                      <div style="color:var(--primary);font-size:0.84rem;font-weight:900;">${fmtNum(rowSheets, 0)} ق</div>
                     </td>
                   </tr>
                 `;
@@ -4950,18 +4936,14 @@ function renderFinishedVeneerWarehouse() {
                 ${grades.map(g => {
                   const colPallets = inStockPallets.filter(p => matchPalletToGrade(p, g.id));
                   const colSheets = colPallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
-                  const colM3 = colPallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
                   return `
                     <td class="matrix-total-cell">
-                      <div style="color:var(--accent);font-size:0.84rem;font-weight:800;">${fmtNum(colSheets, 0)} ق</div>
-                      <div style="font-size:0.7rem;">${fmtNum(colM3, 3)} م³</div>
+                      <div style="color:var(--accent);font-size:0.86rem;font-weight:900;">${fmtNum(colSheets, 0)} ق</div>
                     </td>
                   `;
                 }).join('')}
                 <td class="matrix-total-cell" style="background:var(--primary-light) !important;">
-                  <div style="color:var(--primary);font-size:0.9rem;font-weight:900;">${fmtNum(grandSheets, 0)} ق</div>
-                  <div style="font-size:0.74rem;">${fmtNum(grandM3, 3)} م³</div>
-                  <small style="color:var(--text-muted);font-size:0.66rem;">${fmtNum(grandM2, 0)} م²</small>
+                  <div style="color:var(--primary);font-size:0.92rem;font-weight:900;">${fmtNum(grandSheets, 0)} قطعة</div>
                 </td>
               </tr>
             </tfoot>
@@ -5094,7 +5076,8 @@ function renderFinishedVeneerWarehouse() {
         ` : ''}
       ` : `
         <!-- Detailed Pallets List View -->
-        <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+          ${renderReportMetricsToggleBarHtml(false)}
           <button class="btn btn-sm btn-primary" onclick="printPalletsInventoryPdf()">🖨️ طباعة سجل البالتات PDF</button>
         </div>
         <div class="table-responsive">
@@ -5109,7 +5092,6 @@ function renderFinishedVeneerWarehouse() {
                 <th>الجودة / الفرز</th>
                 <th>عدد القطع (الأفرخ)</th>
                 ${canSeeFinancialPrices() ? '<th>سعر القطعة</th><th>إجمالي القيمة</th>' : ''}
-                <th>الحجم (م³)</th>
                 <th>إجراءات وطباعة</th>
               </tr>
             </thead>
@@ -5135,7 +5117,6 @@ function renderFinishedVeneerWarehouse() {
                   <td><strong>${p.gradeName}</strong></td>
                   <td><strong style="${isNeg ? 'color:var(--danger);direction:ltr;display:inline-block;' : ''}">${fmtNum(p.sheetsCount, 0)} قطعة</strong></td>
                   ${canSeeFinancialPrices() ? `<td>${fmtMoney(p.unitSheetPrice || 0)}</td><td><strong style="${isNeg ? 'color:var(--danger);' : ''}">${fmtMoney(p.totalValue || 0)}</strong></td>` : ''}
-                  <td><strong style="${isNeg ? 'color:var(--danger);direction:ltr;display:inline-block;' : ''}">${fmtNum(p.volumeM3, 4)} م³</strong></td>
                   <td>
                     <div style="display:flex;gap:6px;flex-wrap:wrap;">
                       ${isNeg ? (canEditWh ? `
@@ -5227,8 +5208,7 @@ function renderSalesReturnsSection() {
                       <span class="badge" style="background:#0f766e;color:#fff;">${r.gradeName || ''}</span>
                     </td>
                     <td>
-                      <strong style="font-size:0.98rem;color:var(--primary);">${fmtNum(r.sheetsCount || 0, 0)} قطعة (فرخ)</strong><br/>
-                      <small style="color:var(--text-muted);">${fmtNum(r.volumeM3 || 0, 4)} م³ | ${fmtNum(r.areaM2 || 0, 2)} م²</small>
+                      <strong style="font-size:0.98rem;color:var(--primary);">${fmtNum(r.sheetsCount || 0, 0)} قطعة (فرخ)</strong>
                     </td>
                     ${showPrices ? `
                       <td>
@@ -6047,7 +6027,7 @@ function renderProductionLogTableSection() {
         <div class="stat-card success">
           <span class="stat-title">إجمالي كمية الإنتاج الداخلة للمخزن</span>
           <div class="stat-value">${fmtNum(data.totalSheets, 0)} قطعة (فرخ)</div>
-          <div class="stat-sub">إجمالي المساحة: <strong>${fmtNum(data.totalAreaM2, 2)} م²</strong></div>
+          <div class="stat-sub">أصناف التخانات المعروضة: <strong>${thkCols.length} تخانة</strong></div>
         </div>
 
         <div class="stat-card accent">
@@ -6065,6 +6045,10 @@ function renderProductionLogTableSection() {
             ${showPrices ? `إجمالي القيمة التقديرية للإنتاج: <strong style="color:var(--success);">${fmtMoney(data.totalValue)}</strong>` : 'متابعة كميات الإنتاج حسب المستخدم'}
           </div>
         </div>
+      </div>
+
+      <div style="margin-bottom:8px;display:flex;justify-content:flex-end;">
+        ${renderReportMetricsToggleBarHtml(false)}
       </div>
 
       <!-- 3. MATRIX TABLE: Right = Date (التاريخ), Row = Grade (الجودة), Columns = Thickness & Quantity (التخانة والكمية) + User (المستخدم المنفذ) -->
@@ -6089,7 +6073,7 @@ function renderProductionLogTableSection() {
               `).join('')}
               <th class="matrix-grade-th" style="min-width:105px;background:rgba(15,118,110,0.10);text-align:center;">
                 <div style="font-weight:900;color:var(--primary);">إجمالي الجودة</div>
-                <small style="font-size:0.66rem;color:var(--text-muted);">بالقطعة و م³</small>
+                <small style="font-size:0.66rem;color:var(--text-muted);">بالقطعة (الفرخ)</small>
               </th>
               <th class="matrix-grade-th" style="min-width:130px;background:rgba(124,58,237,0.10);text-align:center;">
                 <div style="font-weight:900;color:#6d28d9;">👤 قام بتنزيل الإنتاج</div>
@@ -6112,7 +6096,6 @@ function renderProductionLogTableSection() {
                     <td rowspan="${rowSpanCount}" style="background:var(--bg-elevated);font-weight:900;text-align:center;vertical-align:middle;border-left:2px solid var(--primary);padding:8px 6px;">
                       <div style="font-size:0.88rem;color:var(--primary);">📅 ${dg.dateStr}</div>
                       <div style="font-size:0.72rem;color:var(--success);margin-top:4px;">إجمالي اليوم:<br/><strong>${fmtNum(dg.dayTotalSheets, 0)} قطعة</strong></div>
-                      <div style="font-size:0.66rem;color:var(--text-muted);">(${fmtNum(dg.dayTotalVolumeM3, 3)} م³)</div>
                     </td>
                   ` : ''}
                   <td style="background:rgba(15,118,110,0.06);font-weight:800;text-align:center;vertical-align:middle;padding:6px;">
@@ -6127,15 +6110,13 @@ function renderProductionLogTableSection() {
                     const usersArr = Array.from(cell.usersSet);
                     return `
                       <td style="text-align:center;vertical-align:middle;background:rgba(16,185,129,0.07);padding:5px 4px;">
-                        <div style="font-weight:900;font-size:0.88rem;color:var(--success);">${fmtNum(cell.sheets, 0)} ق</div>
-                        <div style="font-size:0.66rem;color:var(--text-main);font-weight:700;">${fmtNum(cell.volumeM3, 3)} م³</div>
+                        <div style="font-weight:900;font-size:0.9rem;color:var(--success);">${fmtNum(cell.sheets, 0)} ق</div>
                         <div style="font-size:0.63rem;color:#6d28d9;font-weight:800;margin-top:2px;">👤 ${usersArr.join(' ، ')}</div>
                       </td>
                     `;
                   }).join('')}
                   <td class="matrix-total-cell" style="text-align:center;vertical-align:middle;">
-                    <div style="font-weight:900;font-size:0.86rem;color:var(--primary);">${fmtNum(gRow.rowTotalSheets, 0)} قطعة</div>
-                    <div style="font-size:0.68rem;color:var(--text-muted);">${fmtNum(gRow.rowTotalVolumeM3, 3)} م³</div>
+                    <div style="font-weight:900;font-size:0.88rem;color:var(--primary);">${fmtNum(gRow.rowTotalSheets, 0)} قطعة</div>
                   </td>
                   <td style="text-align:center;vertical-align:middle;padding:6px;">
                     <div style="display:flex;flex-direction:column;gap:3px;align-items:center;">
@@ -6159,14 +6140,12 @@ function renderProductionLogTableSection() {
                 ${thkCols.map(col => `
                   <td class="matrix-total-cell" style="text-align:center;">
                     ${col.totalSheets > 0 ? `
-                      <div style="color:var(--primary);font-weight:900;font-size:0.84rem;">${fmtNum(col.totalSheets, 0)} ق</div>
-                      <div style="font-size:0.66rem;color:var(--text-muted);">${fmtNum(col.totalVolumeM3, 3)} م³</div>
+                      <div style="color:var(--primary);font-weight:900;font-size:0.86rem;">${fmtNum(col.totalSheets, 0)} ق</div>
                     ` : `<span style="color:var(--text-muted);">-</span>`}
                   </td>
                 `).join('')}
                 <td class="matrix-total-cell" style="background:var(--primary-light) !important;text-align:center;">
-                  <div style="color:var(--primary);font-size:0.92rem;font-weight:900;">${fmtNum(data.totalSheets, 0)} قطعة</div>
-                  <div style="font-size:0.72rem;">${fmtNum(data.totalVolumeM3, 4)} م³</div>
+                  <div style="color:var(--primary);font-size:0.94rem;font-weight:900;">${fmtNum(data.totalSheets, 0)} قطعة</div>
                 </td>
                 <td style="text-align:center;font-size:0.72rem;color:#6d28d9;">
                   ${data.userSummaryList.map(u => `<div>👤 ${u.userName}: <strong>${fmtNum(u.sheets, 0)} ق</strong></div>`).join('')}
@@ -6196,7 +6175,6 @@ function renderProductionLogTableSection() {
                 <th>📏 التخانة والاتجاه</th>
                 <th>⭐ الجودة</th>
                 <th>📦 الكمية (قطعة)</th>
-                <th>الحجم (م³)</th>
                 <th>👤 المستخدم المنفذ</th>
                 <th>إجراءات</th>
               </tr>
@@ -6211,7 +6189,6 @@ function renderProductionLogTableSection() {
                   <td><strong>${r.thkMm} مم (${r.direction === 'sada' ? 'سدا' : 'قص'})</strong></td>
                   <td><strong>${r.gradeCode}</strong></td>
                   <td><strong style="color:var(--success);">+${fmtNum(r.sheetsCount, 0)} قطعة</strong></td>
-                  <td>${fmtNum(r.volumeM3, 4)} م³</td>
                   <td><strong>👤 ${r.performedBy}</strong></td>
                   <td>
                     <div style="display:flex;gap:4px;">
@@ -6235,20 +6212,30 @@ function renderProductionLogTableSection() {
 }
 
 function printProductionLogReportPdf() {
+  _lastActiveReportGeneratorFn = printProductionLogReportPdf;
   const data = getFilteredProductionLogData();
   const thkCols = data.thicknessColumns;
+  const showM3 = Boolean(reportShowVolumeM3);
+  const showM2 = Boolean(reportShowAreaM2);
+
+  const subMetrics = [
+    `إجمالي الحركات: ${data.totalEntriesCount} حركة`,
+    `إجمالي القطع: ${fmtNum(data.totalSheets, 0)} قطعة`,
+    showM3 ? `إجمالي الحجم: ${fmtNum(data.totalVolumeM3, 4)} م³` : '',
+    showM2 ? `إجمالي المساحة: ${fmtNum(data.totalAreaM2, 2)} م²` : ''
+  ].filter(Boolean).join(' | ');
 
   const html = `
     <div class="pdf-report-wrap">
       ${buildStandardPdfHeaderHtml(
         `جدول الإنتاج — ${data.periodLabel}`,
-        `إجمالي الحركات: ${data.totalEntriesCount} حركة | إجمالي القطع: ${fmtNum(data.totalSheets, 0)} قطعة | إجمالي الحجم: ${fmtNum(data.totalVolumeM3, 4)} م³ (${fmtNum(data.totalAreaM2, 2)} م²)`
+        subMetrics
       )}
 
       ${data.userSummaryList.length > 0 ? `
         <div style="margin-bottom:10px;padding:6px 10px;border:1px solid #334155;border-radius:6px;background:#f8fafc;font-size:11.5px;">
           <strong>👤 إجمالي الإنتاج المنزّل حسب المستخدم:</strong>
-          ${data.userSummaryList.map(u => `${u.userName}: ${fmtNum(u.sheets, 0)} قطعة (${fmtNum(u.volumeM3, 3)} م³ — ${u.entriesCount} حركة)`).join(' &nbsp;|&nbsp; ')}
+          ${data.userSummaryList.map(u => `${u.userName}: ${fmtNum(u.sheets, 0)} قطعة (${showM3 ? fmtNum(u.volumeM3, 3) + ' م³ — ' : ''}${u.entriesCount} حركة)`).join(' &nbsp;|&nbsp; ')}
         </div>
       ` : ''}
 
@@ -6285,14 +6272,16 @@ function printProductionLogReportPdf() {
                   return `
                     <td>
                       <strong>${fmtNum(cell.sheets, 0)} ق</strong>
-                      <div style="font-size:9px;">${fmtNum(cell.volumeM3, 3)} م³</div>
+                      ${showM3 ? `<div style="font-size:9px;">${fmtNum(cell.volumeM3, 3)} م³</div>` : ''}
+                      ${showM2 ? `<div style="font-size:8.5px;color:#475569;">${fmtNum(cell.areaM2, 1)} م²</div>` : ''}
                       <div style="font-size:8.5px;color:#334155;">${Array.from(cell.usersSet).join('، ')}</div>
                     </td>
                   `;
                 }).join('')}
                 <td style="font-weight:900;background:#f1f5f9;">
                   <div>${fmtNum(gRow.rowTotalSheets, 0)} ق</div>
-                  <div style="font-size:9px;">${fmtNum(gRow.rowTotalVolumeM3, 3)} م³</div>
+                  ${showM3 ? `<div style="font-size:9px;">${fmtNum(gRow.rowTotalVolumeM3, 3)} م³</div>` : ''}
+                  ${showM2 ? `<div style="font-size:8.5px;color:#475569;">${fmtNum(gRow.rowTotalAreaM2, 1)} م²</div>` : ''}
                 </td>
                 <td style="font-weight:800;">${Array.from(gRow.usersSet).join(' ، ')}</td>
               </tr>
@@ -6304,10 +6293,10 @@ function printProductionLogReportPdf() {
             <td colspan="2">إجمالي التخانة</td>
             ${thkCols.map(col => `
               <td>
-                ${col.totalSheets > 0 ? `${fmtNum(col.totalSheets, 0)} ق<br/><span style="font-size:9px;">${fmtNum(col.totalVolumeM3, 3)} م³</span>` : '-'}
+                ${col.totalSheets > 0 ? `${fmtNum(col.totalSheets, 0)} ق${showM3 ? `<br/><span style="font-size:9px;">${fmtNum(col.totalVolumeM3, 3)} م³</span>` : ''}${showM2 ? `<br/><span style="font-size:8.5px;">${fmtNum(col.totalAreaM2, 1)} م²</span>` : ''}` : '-'}
               </td>
             `).join('')}
-            <td>${fmtNum(data.totalSheets, 0)} ق<br/><span style="font-size:9px;">${fmtNum(data.totalVolumeM3, 4)} م³</span></td>
+            <td>${fmtNum(data.totalSheets, 0)} ق${showM3 ? `<br/><span style="font-size:9px;">${fmtNum(data.totalVolumeM3, 4)} م³</span>` : ''}${showM2 ? `<br/><span style="font-size:8.5px;">${fmtNum(data.totalAreaM2, 2)} م²</span>` : ''}</td>
             <td>${data.totalEntriesCount} حركة</td>
           </tr>
         </tfoot>
@@ -6812,7 +6801,7 @@ function renderProduction() {
                             <strong>${idx + 1}.</strong> <strong>${it.thicknessMm} مم (${it.direction === 'sada' ? 'سدا' : 'قص'})</strong> × <strong>${it.gradeName}</strong>
                             ${getVeneerDimensionBadgeHtml(it.lengthCm, it.widthCm)}
                             — <strong>${fmtNum(it.sheetsCount, 0)} ق</strong>
-                            ${canSeeFinancialPrices() ? `× ${fmtNum(it.unitPrice, 2)} ج = <strong>${fmtMoney(it.totalItemAmount)}</strong>` : `(${fmtNum(it.volumeM3 || 0, 3)} م³)`}
+                            ${canSeeFinancialPrices() ? `× ${fmtNum(it.unitPrice, 2)} ج = <strong>${fmtMoney(it.totalItemAmount)}</strong>` : ''}
                             ${itSt && !itSt.alreadyDeducted ? (
                               itSt.isCovered
                                 ? `<span class="badge badge-success" style="font-size:0.64rem;padding:1px 5px;margin-right:4px;">متوفر (${fmtNum(itSt.availSheets, 0)} ق)</span>`
@@ -6822,7 +6811,7 @@ function renderProduction() {
                         `;}).join('')}
                       </div>
                       <small style="color:var(--text-muted);display:block;margin-top:2px;font-size:0.7rem;">
-                        الإجمالي: <strong>${fmtNum(ord.totalSheetsCount || items.reduce((s, i) => s + Number(i.sheetsCount || 0), 0), 0)} قطعة</strong> (${fmtNum(ord.totalVolumeM3 || 0, 3)} م³)
+                        الإجمالي: <strong>${fmtNum(ord.totalSheetsCount || items.reduce((s, i) => s + Number(i.sheetsCount || 0), 0), 0)} قطعة</strong>
                       </small>
                     </td>
                     ${canSeeFinancialPrices() ? `
@@ -7044,7 +7033,7 @@ function renderApprovals() {
                       <strong style="font-size:0.8rem;">${ord.clientName}</strong>
                     </td>
                     <td>
-                      <strong>${items.length} بنود</strong> (${fmtNum(ord.totalSheetsCount || 0, 0)} ق | ${fmtNum(ord.totalVolumeM3 || 0, 3)} م³)<br/>
+                      <strong>${items.length} بنود</strong> (${fmtNum(ord.totalSheetsCount || 0, 0)} ق)<br/>
                       <small style="color:var(--text-muted);font-size:0.7rem;">
                         ${items.map(i => `${i.thicknessMm}مم (${i.direction === 'sada' ? 'سدا' : 'قص'}) ${i.gradeName} [${formatVeneerDimensions(i.lengthCm, i.widthCm, false)}]: ${i.sheetsCount} ق`).join(' + ')}
                       </small>
@@ -7793,11 +7782,12 @@ function renderReports() {
 
     <!-- Central PDF Print & WhatsApp Share Hub for All Factory Reports -->
     <div class="card" style="border:2px solid var(--primary);background:linear-gradient(135deg, rgba(15,118,110,0.06), rgba(217,119,6,0.06));">
-      <div class="card-header">
+      <div class="card-header" style="flex-wrap:wrap;gap:10px;">
         <div>
           <div class="card-title">🖨️📲 مركز طباعة وتصدير وإرسال جميع التقارير والجداول بصيغة PDF وعبر الواتساب لجميع المستخدمين</div>
           <small style="color:var(--text-muted);">اضغط على أي تقرير لفتحه في وضع الطباعة الرسمي أو تحميله كملف PDF أو إرساله عبر الواتساب لجميع المستخدمين (بدون تداخل حروف أو أرقام)</small>
         </div>
+        ${renderReportMetricsToggleBarHtml(false)}
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;">
         <button class="btn btn-success" style="font-weight:800;" onclick="printProductionLogReportPdf()">🖨️ جدول الإنتاج (يومي / أسبوعي / شهري) PDF</button>
@@ -7858,8 +7848,7 @@ function renderReports() {
             <tr>
               <th>نوع الخشب</th>
               <th>عدد البالتات المتاحة</th>
-              <th>إجمالي عدد الأفرخ (250×125)</th>
-              <th>إجمالي الحجم بالمتر المكعب (م³)</th>
+              <th>إجمالي عدد الأفرخ (القطع)</th>
               ${canSeeFinancialPrices() ? '<th>القيمة السوقية التقديرية</th>' : ''}
             </tr>
           </thead>
@@ -7868,8 +7857,7 @@ function renderReports() {
               <tr>
                 <td><strong>${ws.name}</strong></td>
                 <td>${ws.palletsCount} بالتة</td>
-                <td>${fmtNum(ws.sheets, 0)} فرخ</td>
-                <td><strong>${fmtNum(ws.m3, 4)} م³</strong></td>
+                <td><strong>${fmtNum(ws.sheets, 0)} فرخ</strong></td>
                 ${canSeeFinancialPrices() ? `<td><strong>${fmtMoney(ws.val)}</strong></td>` : ''}
               </tr>
             `).join('')}
@@ -8496,7 +8484,6 @@ function recalcModalPallet() {
   if (box) {
     box.innerHTML = `
       <div class="calc-preview-item"><span>المقاس والتخانة</span><strong>${formatVeneerDimensions(len, wid, true)} | ${thk} مم</strong></div>
-      <div class="calc-preview-item"><span>المساحة الإجمالية</span><strong>${fmtNum(m.totalAreaM2, 2)} م² (${fmtNum(m.sheetAreaM2, 4)} م²/فرخ)</strong></div>
       <div class="calc-preview-item"><span>الحجم الفعلي للبالتة</span><strong>${fmtNum(m.totalVolumeM3, 4)} م³</strong></div>
       ${canSeeFinancialPrices() ? `<div class="calc-preview-item"><span>القيمة بسعر القطعة (${fmtNum(piecePrice, 2)} ج)</span><strong>${fmtMoney(totalVal)}</strong></div>` : ''}
     `;
@@ -9371,7 +9358,6 @@ function renderDraftOrderItemsTable() {
               </td>
               <td>
                 <strong id="draft-item-total-${idx}" style="color:var(--primary);font-size:0.78rem;">${fmtMoney(itemTotal)}</strong>
-                <div id="draft-item-vol-${idx}" style="font-size:0.66rem;color:var(--text-muted);"></div>
               </td>
               <td>
                 <button type="button" class="btn btn-sm btn-danger" style="padding:2px 6px;" onclick="removeDraftOrderItemRow(${idx})">✕</button>
@@ -9413,8 +9399,6 @@ function recalcDraftOrderTotals(triggerSource = '') {
 
     const rowTotalEl = document.getElementById(`draft-item-total-${idx}`);
     if (rowTotalEl) rowTotalEl.textContent = fmtMoney(rowAmt);
-    const rowVolEl = document.getElementById(`draft-item-vol-${idx}`);
-    if (rowVolEl) rowVolEl.textContent = `${fmtNum(m.totalVolumeM3, 3)} م³ (${wid}×${len} سم)`;
   });
 
   subtotal = +subtotal.toFixed(2);
@@ -9986,7 +9970,6 @@ function openClientOrderStatementModal(orderId) {
                   <th>الاتجاه والتخانة</th>
                   <th>الجودة</th>
                   <th>الكمية (قطعة)</th>
-                  <th>الحجم (م³)</th>
                   ${canSeeFinancialPrices() ? '<th>💰 السعر</th><th>الإجمالي</th>' : ''}
                 </tr>
               </thead>
@@ -10040,7 +10023,6 @@ function openClientOrderStatementModal(orderId) {
                     <td>
                       <input id="stmt-sheets-${idx}" type="number" min="0" class="form-control" style="width:80px;padding:4px 6px;font-weight:800;" value="${it.sheetsCount}" oninput="recalcStatementModalLive('${ord.id}')" ${canEditQuantities ? '' : 'readonly disabled'} required />
                     </td>
-                    <td id="stmt-vol-${idx}" style="font-size:0.75rem;">${fmtNum(it.volumeM3, 3)} م³</td>
                     ${canSeeFinancialPrices() ? `
                     <td>
                       <div style="display:flex;flex-direction:column;gap:2px;">
@@ -14366,7 +14348,7 @@ function updateMatrixCellModalPreview(updateM3Box = true) {
     previewEl.innerHTML = `
       <div class="calc-preview-item">
         <span>كمية الحركة (${formatVeneerDimensions(len, wid, true)})</span>
-        <strong>${fmtNum(sheets, 0)} قطعة (${fmtNum(m.totalAreaM2, 2)} م² | ${fmtNum(m.totalVolumeM3, 4)} م³)</strong>
+        <strong>${fmtNum(sheets, 0)} قطعة (${fmtNum(m.totalVolumeM3, 4)} م³)</strong>
       </div>
       ${canSeeFinancialPrices() ? `
       <div class="calc-preview-item">
@@ -15427,6 +15409,64 @@ let _cachedGeneratedImageSafeName = '';
 let _cachedGeneratedImageForDocTitle = '';
 let _waSharePreferredFormat = 'pdf';
 let _captureMutexPromise = Promise.resolve();
+let _lastActiveReportGeneratorFn = null;
+
+// Optional Report Metrics Display Flags (على حسب الاختيار في التقارير — الافتراضي: بدون م³ وبدون م²)
+let reportShowVolumeM3 = (function () {
+  try {
+    return localStorage.getItem('al_asimah_report_show_m3') === '1';
+  } catch (_) {
+    return false;
+  }
+})();
+
+let reportShowAreaM2 = (function () {
+  try {
+    return localStorage.getItem('al_asimah_report_show_m2') === '1';
+  } catch (_) {
+    return false;
+  }
+})();
+
+function toggleReportMetricOption(metric, isChecked) {
+  const val = Boolean(isChecked);
+  if (metric === 'm3') {
+    reportShowVolumeM3 = val;
+    try { localStorage.setItem('al_asimah_report_show_m3', val ? '1' : '0'); } catch (_) {}
+  } else if (metric === 'm2') {
+    reportShowAreaM2 = val;
+    try { localStorage.setItem('al_asimah_report_show_m2', val ? '1' : '0'); } catch (_) {}
+  }
+  _cachedGeneratedPdfFile = null;
+  _cachedGeneratedForDocTitle = '';
+  _cachedGeneratedImageFile = null;
+  _cachedGeneratedImageForDocTitle = '';
+  if (window._isPrintingActive && typeof _lastActiveReportGeneratorFn === 'function') {
+    _lastActiveReportGeneratorFn();
+  } else if (typeof render === 'function') {
+    render();
+  }
+}
+
+function renderReportMetricsToggleBarHtml(isDarkBar = false) {
+  const bgStyle = isDarkBar
+    ? 'background:rgba(255,255,255,0.10);border:1px solid rgba(255,255,255,0.28);color:#ffffff;'
+    : 'background:rgba(15,118,110,0.08);border:1.5px dashed var(--primary);color:var(--text-main);';
+  const titleColor = isDarkBar ? '#fbbf24' : 'var(--primary)';
+  return `
+    <div style="display:inline-flex;align-items:center;gap:12px;flex-wrap:wrap;padding:6px 12px;border-radius:8px;${bgStyle}font-size:0.78rem;">
+      <strong style="color:${titleColor};">⚙️ خيارات إضافية عند طباعة أو إرسال التقارير (على حسب الاختيار):</strong>
+      <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-weight:800;margin:0;">
+        <input type="checkbox" ${reportShowVolumeM3 ? 'checked' : ''} onchange="toggleReportMetricOption('m3', this.checked)" />
+        <span>📐 إظهار المتر المكعب (م³) في التقرير</span>
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-weight:800;margin:0;">
+        <input type="checkbox" ${reportShowAreaM2 ? 'checked' : ''} onchange="toggleReportMetricOption('m2', this.checked)" />
+        <span>📏 إظهار المتر المسطح (م²) في التقرير</span>
+      </label>
+    </div>
+  `;
+}
 
 function runExclusiveCaptureTask(taskFn) {
   const next = _captureMutexPromise.then(() => taskFn()).catch((err) => {
@@ -16591,7 +16631,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '75');
+  urlObj.searchParams.set('v', '78');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
@@ -16784,6 +16824,9 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
       <div>
         <strong style="font-size:15px;color:#fbbf24;">🖨️ معاينة التقرير والطباعة الرسمية: ${docTitle}</strong>
         <div style="font-size:12px;color:#cbd5e1;">المستند جاهز للإرسال عبر الواتساب كـ (صورة PNG) أو (ملف PDF) أو الطباعة الفورية أو التحميل المباشر</div>
+        <div style="margin-top:6px;">
+          ${renderReportMetricsToggleBarHtml(true)}
+        </div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
         <button type="button" id="top-wa-img-btn" onclick="openWhatsAppPdfShareModal('', '', 'image')" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#ffffff;border:2px solid #ffffff;padding:8px 18px;border-radius:50px;font-weight:900;font-size:13.5px;cursor:pointer;font-family:'Cairo',sans-serif;box-shadow:0 4px 14px rgba(2,132,199,0.5);display:inline-flex;align-items:center;gap:7px;">
@@ -16854,8 +16897,11 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
 // OFFICIAL PRINT TEMPLATES (بطاقة البالتة بالباركود + أذون الصرف + الفواتير)
 // ============================================================================
 function printPalletTag(palletId) {
+  _lastActiveReportGeneratorFn = () => printPalletTag(palletId);
   const p = state.pallets.find(x => x.id === palletId);
   if (!p) return;
+  const showM3 = Boolean(reportShowVolumeM3);
+  const showM2 = Boolean(reportShowAreaM2);
   const html = `
     <div style="border:4px solid #000;border-radius:12px;padding:24px;max-width:650px;margin:0 auto;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #000;padding-bottom:12px;margin-bottom:16px;">
@@ -16882,15 +16928,21 @@ function printPalletTag(palletId) {
         <tr>
           <td style="border:1px solid #000;padding:10px;font-weight:700;background:#f1f5f9;">عدد الأفرخ بالبالتة:</td>
           <td style="border:1px solid #000;padding:10px;font-weight:800;font-size:20px;">${p.sheetsCount} فرخ</td>
-          <td style="border:1px solid #000;padding:10px;font-weight:700;background:#f1f5f9;">إجمالي المساحة:</td>
-          <td style="border:1px solid #000;padding:10px;font-weight:800;">${p.areaM2} م²</td>
-        </tr>
-        <tr>
-          <td style="border:1px solid #000;padding:10px;font-weight:700;background:#f1f5f9;">إجمالي الحجم (م³):</td>
-          <td style="border:1px solid #000;padding:10px;font-weight:800;font-size:22px;">${p.volumeM3} م³</td>
           <td style="border:1px solid #000;padding:10px;font-weight:700;background:#f1f5f9;">رقم التشغيلة / التاريخ:</td>
           <td style="border:1px solid #000;padding:10px;">${sanitizeTextForWarehouseKeeper(p.batchNumber || '-')} | ${fmtDate(p.createdAt)}</td>
         </tr>
+        ${(showM3 || showM2) ? `
+        <tr>
+          ${showM3 ? `
+            <td style="border:1px solid #000;padding:10px;font-weight:700;background:#f1f5f9;">إجمالي الحجم (م³):</td>
+            <td style="border:1px solid #000;padding:10px;font-weight:800;font-size:20px;" ${!showM2 ? 'colspan="3"' : ''}>${p.volumeM3} م³</td>
+          ` : ''}
+          ${showM2 ? `
+            <td style="border:1px solid #000;padding:10px;font-weight:700;background:#f1f5f9;">إجمالي المساحة (م²):</td>
+            <td style="border:1px solid #000;padding:10px;font-weight:800;" ${!showM3 ? 'colspan="3"' : ''}>${p.areaM2} م²</td>
+          ` : ''}
+        </tr>
+        ` : ''}
       </table>
 
       <!-- Visual Barcode representation -->
@@ -16910,8 +16962,11 @@ function printPalletTag(palletId) {
 }
 
 function printApprovalDispatchOrder(reqId) {
+  _lastActiveReportGeneratorFn = () => printApprovalDispatchOrder(reqId);
   const r = state.approvalRequests.find(x => x.id === reqId);
   if (!r) return;
+  const showM3 = Boolean(reportShowVolumeM3);
+  const showM2 = Boolean(reportShowAreaM2);
   const html = `
     <div style="border:2px solid #000;padding:28px;font-family:'Cairo',sans-serif;direction:rtl;background:#fff;color:#000;">
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #000;padding-bottom:14px;margin-bottom:20px;">
@@ -16937,8 +16992,8 @@ function printApprovalDispatchOrder(reqId) {
             <th style="border:1px solid #000;padding:10px;">المقاس والتخانة</th>
             <th style="border:1px solid #000;padding:10px;">الجودة</th>
             <th style="border:1px solid #000;padding:10px;">عدد الأفرخ</th>
-            <th style="border:1px solid #000;padding:10px;">المساحة (م²)</th>
-            <th style="border:1px solid #000;padding:10px;">الحجم (م³)</th>
+            ${showM2 ? `<th style="border:1px solid #000;padding:10px;">المساحة (م²)</th>` : ''}
+            ${showM3 ? `<th style="border:1px solid #000;padding:10px;">الحجم (م³)</th>` : ''}
           </tr>
         </thead>
         <tbody>
@@ -16947,9 +17002,9 @@ function printApprovalDispatchOrder(reqId) {
             <td style="border:1px solid #000;padding:10px;">${r.woodTypeName}</td>
             <td style="border:1px solid #000;padding:10px;">${r.dimensions} — ${r.thicknessMm} مم</td>
             <td style="border:1px solid #000;padding:10px;">${r.gradeName}</td>
-            <td style="border:1px solid #000;padding:10px;">${r.sheetsCount} فرخ</td>
-            <td style="border:1px solid #000;padding:10px;">${r.areaM2} م²</td>
-            <td style="border:1px solid #000;padding:10px;font-weight:800;">${r.volumeM3} م³</td>
+            <td style="border:1px solid #000;padding:10px;font-weight:800;">${r.sheetsCount} فرخ</td>
+            ${showM2 ? `<td style="border:1px solid #000;padding:10px;">${r.areaM2} م²</td>` : ''}
+            ${showM3 ? `<td style="border:1px solid #000;padding:10px;font-weight:800;">${r.volumeM3} م³</td>` : ''}
           </tr>
         </tbody>
       </table>
@@ -17443,6 +17498,8 @@ function buildVehicleDispatchVoucherPrintHtml(ord, movFallback = null) {
 
   const car = ord.carDispatchVoucher || {};
   const items = Array.isArray(ord.items) ? ord.items : [];
+  const showM3 = Boolean(reportShowVolumeM3);
+  const showM2 = Boolean(reportShowAreaM2);
   const totalSheets = items.reduce((s, i) => s + Number(i.sheetsCount || 0), 0) || Number(ord.totalSheetsCount || 0);
   const totalAreaM2 = items.reduce((s, i) => {
     const sh = Number(i.sheetsCount || 0);
@@ -17496,8 +17553,8 @@ function buildVehicleDispatchVoucherPrintHtml(ord, movFallback = null) {
             <th style="border:1px solid #000;padding:7px;">درجة الجودة</th>
             <th style="border:1px solid #000;padding:7px;">المقاس (العرض × الطول)</th>
             <th style="border:1px solid #000;padding:7px;">الكمية المحملة (قطعة)</th>
-            <th style="border:1px solid #000;padding:7px;">المساحة (م²)</th>
-            <th style="border:1px solid #000;padding:7px;">الحجم (م³)</th>
+            ${showM2 ? `<th style="border:1px solid #000;padding:7px;">المساحة (م²)</th>` : ''}
+            ${showM3 ? `<th style="border:1px solid #000;padding:7px;">الحجم (م³)</th>` : ''}
           </tr>
         </thead>
         <tbody>
@@ -17514,8 +17571,8 @@ function buildVehicleDispatchVoucherPrintHtml(ord, movFallback = null) {
                 <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.gradeName || '-'}</td>
                 <td style="border:1px solid #000;padding:7px;font-weight:700;">${formatVeneerDimensions(len, wid, true)}</td>
                 <td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtNum(sh, 0)} قطعة</td>
-                <td style="border:1px solid #000;padding:7px;">${fmtNum(area, 2)} م²</td>
-                <td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtNum(vol, 4)} م³</td>
+                ${showM2 ? `<td style="border:1px solid #000;padding:7px;">${fmtNum(area, 2)} م²</td>` : ''}
+                ${showM3 ? `<td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtNum(vol, 4)} م³</td>` : ''}
               </tr>
             `;
           }).join('')}
@@ -17524,8 +17581,8 @@ function buildVehicleDispatchVoucherPrintHtml(ord, movFallback = null) {
           <tr style="background:#f1f5f9;font-weight:900;">
             <td colspan="4" style="border:1px solid #000;padding:8px;text-align:center;">الإجمالي الكلي المحمل على السيارة</td>
             <td style="border:1px solid #000;padding:8px;text-align:center;">${fmtNum(totalSheets, 0)} قطعة</td>
-            <td style="border:1px solid #000;padding:8px;text-align:center;">${fmtNum(totalAreaM2, 2)} م²</td>
-            <td style="border:1px solid #000;padding:8px;text-align:center;">${fmtNum(totalVolM3, 4)} م³</td>
+            ${showM2 ? `<td style="border:1px solid #000;padding:8px;text-align:center;">${fmtNum(totalAreaM2, 2)} م²</td>` : ''}
+            ${showM3 ? `<td style="border:1px solid #000;padding:8px;text-align:center;">${fmtNum(totalVolM3, 4)} م³</td>` : ''}
           </tr>
         </tfoot>
       </table>
@@ -17547,6 +17604,7 @@ function buildVehicleDispatchVoucherPrintHtml(ord, movFallback = null) {
 }
 
 function printVehicleDispatchVoucher(orderId, movId = null) {
+  _lastActiveReportGeneratorFn = () => printVehicleDispatchVoucher(orderId, movId);
   let ord = (state.productionOrders || []).find(x => x.id === orderId || x.orderNumber === orderId);
   const mov = movId ? (state.warehouseMovements || []).find(x => x.id === movId) : null;
   if (!ord && mov) {
@@ -17561,6 +17619,8 @@ function printVehicleDispatchVoucher(orderId, movId = null) {
   const titleLabel = car.carPlateNumber || ord?.orderNumber || mov?.voucherNumber || '';
   const compactCarJson = ord ? {
     t: 'car',
+    sm3: Boolean(reportShowVolumeM3) ? 1 : 0,
+    sm2: Boolean(reportShowAreaM2) ? 1 : 0,
     fn: state.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة',
     vn: car.voucherNo || ('CAR-' + ord.orderNumber),
     on: ord.orderNumber || '',
@@ -17844,6 +17904,8 @@ function triggerOfficialReportPdf(title, subtitle, bodyHtml, landscape = false) 
 function buildVeneerQuantitiesMatrixPrintHtml() {
   const thicknesses = state.catalog?.thicknesses || [];
   const grades = state.catalog?.grades || [];
+  const showM3 = Boolean(reportShowVolumeM3);
+  const showM2 = Boolean(reportShowAreaM2);
   const inStockPallets = (state.pallets || []).filter(p =>
     p.status === 'in_stock' &&
     (veneerFilterWood === 'all' || p.woodTypeId === veneerFilterWood) &&
@@ -17852,13 +17914,15 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
 
   let grandSheets = 0;
   let grandM3 = 0;
+  let grandM2 = 0;
   const colTotals = {};
-  grades.forEach(g => { colTotals[g.id] = { sheets: 0, m3: 0 }; });
+  grades.forEach(g => { colTotals[g.id] = { sheets: 0, m3: 0, m2: 0 }; });
 
   const rowsHtml = thicknesses.map(t => {
     const isSada = t.direction === 'sada';
     let rowSheets = 0;
     let rowM3 = 0;
+    let rowM2 = 0;
 
     const cellsHtml = grades.map(g => {
       const matching = inStockPallets.filter(p => matchPalletToThicknessRow(p, t) && matchPalletToGrade(p, g.id));
@@ -17867,20 +17931,28 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
         if (Number(p.volumeM3) !== 0) return s + Number(p.volumeM3);
         return s + calculateVeneerMetrics(p.lengthCm || 250, p.widthCm || 125, t.mm, p.sheetsCount).totalVolumeM3;
       }, 0)).toFixed(4);
+      const m2 = +(matching.reduce((s, p) => {
+        if (Number(p.areaM2) !== 0) return s + Number(p.areaM2);
+        return s + calculateVeneerMetrics(p.lengthCm || 250, p.widthCm || 125, t.mm, p.sheetsCount).totalAreaM2;
+      }, 0)).toFixed(2);
       rowSheets += sheets;
       rowM3 += m3;
+      rowM2 += m2;
       colTotals[g.id].sheets += sheets;
       colTotals[g.id].m3 += m3;
+      colTotals[g.id].m2 += m2;
       return `
         <td style="background:${sheets > 0 ? '#f0fdf4' : sheets < 0 ? '#fef2f2' : '#ffffff'};">
           <div style="font-weight:900;font-size:12px;color:${sheets > 0 ? '#0f172a' : sheets < 0 ? '#dc2626' : '#94a3b8'};direction:ltr;">${fmtNum(sheets, 0)} ق</div>
-          <div style="font-size:9.5px;color:${sheets < 0 ? '#dc2626' : '#475569'};direction:ltr;">${fmtNum(m3, 3)} م³</div>
+          ${showM3 ? `<div style="font-size:9.5px;color:${sheets < 0 ? '#dc2626' : '#475569'};direction:ltr;">${fmtNum(m3, 3)} م³</div>` : ''}
+          ${showM2 ? `<div style="font-size:9px;color:${sheets < 0 ? '#dc2626' : '#64748b'};direction:ltr;">${fmtNum(m2, 1)} م²</div>` : ''}
         </td>
       `;
     }).join('');
 
     grandSheets += rowSheets;
     grandM3 += rowM3;
+    grandM2 += rowM2;
 
     return `
       <tr>
@@ -17890,7 +17962,8 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
         ${cellsHtml}
         <td style="background:#f1f5f9;font-weight:900;">
           <div>${fmtNum(rowSheets, 0)} ق</div>
-          <div style="font-size:9.5px;color:#0f766e;">${fmtNum(rowM3, 3)} م³</div>
+          ${showM3 ? `<div style="font-size:9.5px;color:#0f766e;">${fmtNum(rowM3, 3)} م³</div>` : ''}
+          ${showM2 ? `<div style="font-size:9px;color:#475569;">${fmtNum(rowM2, 1)} م²</div>` : ''}
         </td>
       </tr>
     `;
@@ -17914,12 +17987,14 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
           ${grades.map(g => `
             <td>
               <div>${fmtNum(colTotals[g.id].sheets, 0)} ق</div>
-              <div style="font-size:9.5px;color:#0f766e;">${fmtNum(colTotals[g.id].m3, 3)} م³</div>
+              ${showM3 ? `<div style="font-size:9.5px;color:#0f766e;">${fmtNum(colTotals[g.id].m3, 3)} م³</div>` : ''}
+              ${showM2 ? `<div style="font-size:9px;color:#475569;">${fmtNum(colTotals[g.id].m2, 1)} م²</div>` : ''}
             </td>
           `).join('')}
           <td style="background:#dcfce7;font-size:12px;">
             <div>${fmtNum(grandSheets, 0)} قطعة</div>
-            <div style="font-size:10px;color:#15803d;">${fmtNum(grandM3, 3)} م³</div>
+            ${showM3 ? `<div style="font-size:10px;color:#15803d;">${fmtNum(grandM3, 3)} م³</div>` : ''}
+            ${showM2 ? `<div style="font-size:9.5px;color:#334155;">${fmtNum(grandM2, 1)} م²</div>` : ''}
           </td>
         </tr>
       </tfoot>
@@ -18023,18 +18098,20 @@ function buildVeneerPricesMatrixPrintHtml() {
 }
 
 function printVeneerQuantitiesMatrixPdf() {
+  _lastActiveReportGeneratorFn = printVeneerQuantitiesMatrixPdf;
   const woodLabel = veneerFilterWood === 'all'
     ? 'جميع أنواع القشرة الخشبية (250×125 سم)'
     : ((state.catalog?.woodTypes || []).find(w => w.id === veneerFilterWood)?.name || 'قشرة خشبية');
   triggerOfficialReportPdf(
     '📊 جدول أرصدة كميات القشرة الخشبية بالمخزن (تخانات قص / سدا × درجات الجودة)',
-    `نطاق الفلتر: ${woodLabel} — مقاس الفرخ القياسي: 250×125 سم (3.125 م²)`,
+    `نطاق الفلتر: ${woodLabel} — مقاس الفرخ القياسي: 250×125 سم${reportShowAreaM2 ? ' (3.125 م²)' : ''}`,
     buildVeneerQuantitiesMatrixPrintHtml(),
     true
   );
 }
 
 function printVeneerPricesMatrixPdf() {
+  _lastActiveReportGeneratorFn = printVeneerPricesMatrixPdf;
   if (!canSeeFinancialPrices()) return;
   const woodLabel = veneerFilterWood === 'all'
     ? 'جميع أنواع القشرة الخشبية (250×125 سم)'
@@ -18048,6 +18125,7 @@ function printVeneerPricesMatrixPdf() {
 }
 
 function printBothMatricesPdf() {
+  _lastActiveReportGeneratorFn = printBothMatricesPdf;
   const qtyHtml = buildVeneerQuantitiesMatrixPrintHtml();
   const pricesHtml = canSeeFinancialPrices() ? `
     <div style="margin-top:12px;page-break-inside:avoid;">
@@ -18057,14 +18135,17 @@ function printBothMatricesPdf() {
   ` : '';
   triggerOfficialReportPdf(
     '📊 التقرير الشامل: جدول كميات القشرة + جدول الأسعار وتقييم المخزون',
-    'مقاس الفرخ القياسي: 250×125 سم (3.125 م²)',
-    `<h3 style="margin:0 0 6px;font-size:13px;color:#0f766e;">📦 أولاً: جدول أرصدة كميات القشرة الخشبية (بالقطعة والمتر المكعب)</h3>${qtyHtml}${pricesHtml}`,
+    `مقاس الفرخ القياسي: 250×125 سم${reportShowAreaM2 ? ' (3.125 م²)' : ''}`,
+    `<h3 style="margin:0 0 6px;font-size:13px;color:#0f766e;">📦 أولاً: جدول أرصدة كميات القشرة الخشبية (بالقطعة${reportShowVolumeM3 ? ' والمتر المكعب' : ''})</h3>${qtyHtml}${pricesHtml}`,
     true
   );
 }
 
 function printPalletsInventoryPdf() {
+  _lastActiveReportGeneratorFn = printPalletsInventoryPdf;
   const showPrices = canSeeFinancialPrices();
+  const showM3 = Boolean(reportShowVolumeM3);
+  const showM2 = Boolean(reportShowAreaM2);
   const pallets = (state.pallets || []).filter(p => p.status === 'in_stock' && Number(p.sheetsCount || 0) > 0);
   const bodyHtml = `
     <table class="pdf-report-table">
@@ -18077,8 +18158,8 @@ function printPalletsInventoryPdf() {
           <th>التخانة والاتجاه</th>
           <th>درجة الجودة</th>
           <th>عدد الأفرخ</th>
-          <th>المساحة (م²)</th>
-          <th>الحجم (م³)</th>
+          ${showM2 ? '<th>المساحة (م²)</th>' : ''}
+          ${showM3 ? '<th>الحجم (م³)</th>' : ''}
           ${showPrices ? '<th>سعر القطعة</th><th>إجمالي القيمة</th>' : ''}
           <th>التاريخ / البيان</th>
         </tr>
@@ -18093,8 +18174,8 @@ function printPalletsInventoryPdf() {
             <td><strong>${p.thicknessMm} مم (${p.direction === 'sada' ? 'سدا' : 'قص'})</strong></td>
             <td><strong>${p.gradeCode || p.gradeName}</strong></td>
             <td><strong>${fmtNum(p.sheetsCount, 0)} قطعة</strong></td>
-            <td>${fmtNum(p.areaM2, 2)} م²</td>
-            <td><strong>${fmtNum(p.volumeM3, 4)} م³</strong></td>
+            ${showM2 ? `<td>${fmtNum(p.areaM2, 2)} م²</td>` : ''}
+            ${showM3 ? `<td><strong>${fmtNum(p.volumeM3, 4)} م³</strong></td>` : ''}
             ${showPrices ? `<td>${fmtNum(p.unitSheetPrice || getCellUnitPrice(p.thicknessId, p.gradeId, p.thicknessMm, p.direction), 2)} ج</td><td><strong>${fmtMoney(p.totalValue)}</strong></td>` : ''}
             <td>${p.entryDate || fmtDate(p.createdAt)} — ${sanitizeTextForWarehouseKeeper(p.batchNumber || '')}</td>
           </tr>
@@ -18106,7 +18187,10 @@ function printPalletsInventoryPdf() {
 }
 
 function printSalesReturnsReportPdf() {
+  _lastActiveReportGeneratorFn = printSalesReturnsReportPdf;
   const showPrices = canSeeFinancialPrices();
+  const showM3 = Boolean(reportShowVolumeM3);
+  const showM2 = Boolean(reportShowAreaM2);
   const returns = state.salesReturns || [];
   const bodyHtml = `
     <table class="pdf-report-table">
@@ -18119,7 +18203,8 @@ function printSalesReturnsReportPdf() {
           <th>التخانة والاتجاه</th>
           <th>الجودة</th>
           <th>الكمية (قطعة)</th>
-          <th>الحجم (م³)</th>
+          ${showM2 ? '<th>المساحة (م²)</th>' : ''}
+          ${showM3 ? '<th>الحجم (م³)</th>' : ''}
           ${showPrices ? '<th>القيمة المالية</th>' : ''}
           <th>الحالة والاعتماد</th>
         </tr>
@@ -18134,7 +18219,8 @@ function printSalesReturnsReportPdf() {
             <td>${r.thkMm} مم (${r.direction === 'sada' ? 'سدا' : 'قص'})</td>
             <td>${r.gradeCode || r.gradeName}</td>
             <td><strong>${fmtNum(r.sheetsCount, 0)} قطعة</strong></td>
-            <td>${fmtNum(r.volumeM3, 4)} م³</td>
+            ${showM2 ? `<td>${fmtNum(r.areaM2 || 0, 2)} م²</td>` : ''}
+            ${showM3 ? `<td>${fmtNum(r.volumeM3, 4)} م³</td>` : ''}
             ${showPrices ? `<td><strong>${fmtMoney(r.totalReturnAmount || 0)}</strong></td>` : ''}
             <td>${r.status === 'approved' ? '✅ معتمد ودخل المخزن (' + (r.approvedBy || '') + ')' : r.status === 'rejected' ? '❌ مرفوض' : '⏳ بانتظار الموافقة'}</td>
           </tr>
@@ -18279,7 +18365,10 @@ function printWarehouseMovementsReportPdf() {
 }
 
 function printAllProductionOrdersReportPdf() {
+  _lastActiveReportGeneratorFn = printAllProductionOrdersReportPdf;
   const showPrices = canSeeFinancialPrices();
+  const showM3 = Boolean(reportShowVolumeM3);
+  const showM2 = Boolean(reportShowAreaM2);
   const orders = (state.productionOrders || []).filter(o => canUserSeeOrderInPrep(currentUser, o));
   const bodyHtml = `
     <table class="pdf-report-table">
@@ -18289,7 +18378,7 @@ function printAllProductionOrdersReportPdf() {
           <th>التاريخ</th>
           <th>العميل وكوده</th>
           <th>الأصناف والكميات (التخانة × الجودة × القطع)</th>
-          <th>إجمالي القطع والمتر المكعب</th>
+          <th>إجمالي القطع${showM3 ? ' والمتر المكعب' : ''}${showM2 ? ' والمتر المسطح' : ''}</th>
           ${showPrices ? '<th>الصافي المالي</th>' : ''}
           <th>المرحلة وحالة الصرف</th>
         </tr>
@@ -18303,7 +18392,11 @@ function printAllProductionOrdersReportPdf() {
             <td style="text-align:right;">
               ${(o.items || []).map(it => `${it.thicknessMm}مم (${it.direction === 'sada' ? 'سدا' : 'قص'}) × ${it.gradeName} [${formatVeneerDimensions(it.lengthCm, it.widthCm, false)}]: <strong>${it.sheetsCount} قطعة</strong>${showPrices ? ' × ' + fmtNum(it.unitPrice, 2) + ' ج' : ''}`).join('<br/>')}
             </td>
-            <td><strong>${fmtNum(o.totalSheetsCount || 0, 0)} قطعة</strong><br/>(${fmtNum(o.totalVolumeM3 || 0, 4)} م³)</td>
+            <td>
+              <strong>${fmtNum(o.totalSheetsCount || 0, 0)} قطعة</strong>
+              ${showM3 ? `<br/>(${fmtNum(o.totalVolumeM3 || 0, 4)} م³)` : ''}
+              ${showM2 ? `<br/>(${fmtNum(o.totalAreaM2 || 0, 2)} م²)` : ''}
+            </td>
             ${showPrices ? `<td><strong>${fmtMoney(o.netTotalAmount || 0)}</strong></td>` : ''}
             <td>${o.stage === 'completed' ? '✅ تم الصرف وتحميل السيارة' : o.stage === 'ready_for_car_dispatch' ? '🚚 جاهز لتحميل السيارة' : o.stage === 'pending_accountant_release' ? '💳 بانتظار اعتماد المحاسب' : o.stage === 'pending_warehouse_prep' ? '📦 قيد التجهيز بالمخزن' : '⏳ قيد موافقة الإدارة'}</td>
           </tr>
@@ -18315,7 +18408,10 @@ function printAllProductionOrdersReportPdf() {
 }
 
 function printAllApprovalsDispatchReportPdf() {
+  _lastActiveReportGeneratorFn = printAllApprovalsDispatchReportPdf;
   const showPrices = canSeeFinancialPrices();
+  const showM3 = Boolean(reportShowVolumeM3);
+  const showM2 = Boolean(reportShowAreaM2);
   const releaseOrders = (state.productionOrders || []).filter(o => {
     const st = o.stage || o.status;
     return st === 'pending_accountant_release' || st === 'ready_for_car_dispatch' || st === 'completed';
@@ -18347,7 +18443,11 @@ function printAllApprovalsDispatchReportPdf() {
               <td><strong>${o.orderNumber}</strong></td>
               <td>${o.date}</td>
               <td><strong>${o.clientName}</strong></td>
-              <td><strong>${fmtNum(o.totalSheetsCount || 0, 0)} قطعة</strong> (${fmtNum(o.totalVolumeM3 || 0, 4)} م³)</td>
+              <td>
+                <strong>${fmtNum(o.totalSheetsCount || 0, 0)} قطعة</strong>
+                ${showM3 ? ` (${fmtNum(o.totalVolumeM3 || 0, 4)} م³)` : ''}
+                ${showM2 ? ` (${fmtNum(o.totalAreaM2 || 0, 2)} م²)` : ''}
+              </td>
               ${showPrices ? `
                 <td><strong>${fmtMoney(o.netTotalAmount || 0)}</strong></td>
                 <td>مدفوع: ${fmtMoney(o.financialSettlement?.paidAmount || 0)}<br/>متبقي: ${fmtMoney(o.financialSettlement?.remainingDebt || 0)}</td>
@@ -18492,13 +18592,17 @@ function printAllPalletMovementsReportPdf() {
 }
 
 function printGeneralInventoryAndAuditReportPdf() {
+  _lastActiveReportGeneratorFn = printGeneralInventoryAndAuditReportPdf;
   const showPrices = canSeeFinancialPrices();
+  const showM3 = Boolean(reportShowVolumeM3);
+  const showM2 = Boolean(reportShowAreaM2);
   const woodSummary = (state.catalog?.woodTypes || []).map(wt => {
     const pallets = (state.pallets || []).filter(p => p.woodTypeId === wt.id && p.status === 'in_stock');
     const sheets = pallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
     const m3 = pallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
+    const m2 = pallets.reduce((s, p) => s + Number(p.areaM2 || 0), 0);
     const val = pallets.reduce((s, p) => s + Number(p.totalValue || 0), 0);
-    return { name: wt.name, palletsCount: pallets.length, sheets, m3, val };
+    return { name: wt.name, palletsCount: pallets.length, sheets, m3, m2, val };
   });
   const bodyHtml = `
     <h3 style="margin:0 0 6px;font-size:13px;color:#0f766e;">1️⃣ ملخص جرد القشرة الخشبية حسب النوع</h3>
@@ -18507,8 +18611,9 @@ function printGeneralInventoryAndAuditReportPdf() {
         <tr>
           <th>نوع الخشب</th>
           <th>عدد البالتات المتاحة</th>
-          <th>إجمالي عدد الأفرخ (250×125)</th>
-          <th>إجمالي الحجم (م³)</th>
+          <th>إجمالي عدد الأفرخ (القطع)</th>
+          ${showM2 ? '<th>إجمالي المساحة (م²)</th>' : ''}
+          ${showM3 ? '<th>إجمالي الحجم (م³)</th>' : ''}
           ${showPrices ? '<th>القيمة السوقية التقديرية</th>' : ''}
         </tr>
       </thead>
@@ -18518,7 +18623,8 @@ function printGeneralInventoryAndAuditReportPdf() {
             <td><strong>${ws.name}</strong></td>
             <td>${ws.palletsCount} بالتة</td>
             <td><strong>${fmtNum(ws.sheets, 0)} فرخ</strong></td>
-            <td><strong>${fmtNum(ws.m3, 4)} م³</strong></td>
+            ${showM2 ? `<td>${fmtNum(ws.m2, 2)} م²</td>` : ''}
+            ${showM3 ? `<td><strong>${fmtNum(ws.m3, 4)} م³</strong></td>` : ''}
             ${showPrices ? `<td><strong>${fmtMoney(ws.val)}</strong></td>` : ''}
           </tr>
         `).join('')}
@@ -24486,13 +24592,11 @@ function buildAiLogAndMultiPalletChatResponse(plan) {
                 <th>درجة الجودة</th>
                 <th>عدد البالتات</th>
                 <th>عدد القطع (الأفرخ)</th>
-                <th>التكعيب (م³)</th>
                 ${showPrices ? '<th>القيمة</th>' : ''}
               </tr>
             </thead>
             <tbody>
               ${rowsToUse.map((r, i) => {
-                const m = calculateVeneerMetrics(r.lengthCm, r.widthCm, r.thicknessMm, r.sheetsCount);
                 return `
                   <tr>
                     <td>${i + 1}</td>
@@ -24502,7 +24606,6 @@ function buildAiLogAndMultiPalletChatResponse(plan) {
                     <td><span class="badge badge-info">${r.gradeCode}</span></td>
                     <td><strong>${r.palletsCount} بالتة</strong></td>
                     <td><strong style="color:var(--success);">${fmtNum(r.sheetsCount, 0)} فرخ</strong></td>
-                    <td><strong>${fmtNum(m.totalVolumeM3, 4)} م³</strong></td>
                     ${showPrices ? `<td>${fmtMoney(r.sheetsCount * (r.unitPrice || 0))}</td>` : ''}
                   </tr>
                 `;
@@ -25182,14 +25285,12 @@ function renderAiLogProdPalletsTable() {
           <th>⭐ درجة الجودة</th>
           <th>🪵 عدد البالتات</th>
           <th>📦 عدد القطع (الأفرخ)</th>
-          <th>التكعيب (م³)</th>
           ${showPrices ? '<th>💰 سعر القطعة</th>' : ''}
           <th style="width:40px;">حذف</th>
         </tr>
       </thead>
       <tbody>
         ${draftAiLogProdRows.map((r, idx) => {
-          const m = calculateVeneerMetrics(r.lengthCm, r.widthCm, r.thicknessMm, r.sheetsCount);
           const dimKey = `${r.lengthCm}x${r.widthCm}`;
           return `
             <tr>
@@ -25225,9 +25326,6 @@ function renderAiLogProdPalletsTable() {
               </td>
               <td>
                 <input id="ailog-row-sheets-${idx}" type="number" min="1" class="form-control" style="padding:4px 8px;width:95px;font-weight:900;color:var(--success);border-color:var(--success);" value="${r.sheetsCount}" oninput="updateAiLogProdRowField(${idx}, 'sheetsCount', this.value)" required />
-              </td>
-              <td>
-                <input id="ailog-row-vol-${idx}" type="number" step="0.0001" min="0.0001" class="form-control" style="padding:4px 7px;width:95px;font-weight:800;color:var(--primary);" value="${m.totalVolumeM3}" oninput="updateAiLogProdRowField(${idx}, 'volumeM3', this.value)" title="يمكنك كتابة التكعيب بالمتر المكعب ليحسب عدد القطع تلقائياً" />
               </td>
               ${showPrices ? `
                 <td>
@@ -25295,8 +25393,8 @@ function recalcAiLogMultiPalletSummary() {
       <strong style="color:var(--success);">${totalPalletsCnt} بالتة | ${fmtNum(totalSheetsCnt, 0)} قطعة (${draftAiLogProdRows.length} صنف)</strong>
     </div>
     <div class="calc-preview-item">
-      <span>📐 إجمالي تكعيب ومساحة القشرة المنتجة</span>
-      <strong style="color:var(--primary);">${fmtNum(totalProdVolM3, 4)} م³ (${fmtNum(totalProdAreaM2, 2)} م²)</strong>
+      <span>📐 إجمالي تكعيب القشرة المنتجة (م³)</span>
+      <strong style="color:var(--primary);">${fmtNum(totalProdVolM3, 4)} م³</strong>
     </div>
     <div class="calc-preview-item">
       <span>📊 نسبة الاستخراج الفعلية من الجذع</span>

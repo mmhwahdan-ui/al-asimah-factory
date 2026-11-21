@@ -210,6 +210,8 @@
     function buildHtmlFromCompactCarJson(d) {
       const logoSrc = d.lg || DEFAULT_FACTORY_LOGO_DATA_URL;
       const items = Array.isArray(d.it) ? d.it : [];
+      const showM3 = Boolean(d.sm3 || (typeof localStorage !== 'undefined' && localStorage.getItem('al_asimah_report_show_m3') === '1'));
+      const showM2 = Boolean(d.sm2 || (typeof localStorage !== 'undefined' && localStorage.getItem('al_asimah_report_show_m2') === '1'));
       const totalSheets = items.reduce((s, i) => s + Number(i.sh || 0), 0);
       const totalArea = items.reduce((s, i) => s + Number(i.a || 0), 0);
       const totalVol = items.reduce((s, i) => s + Number(i.v || 0), 0);
@@ -261,8 +263,8 @@
                 <th style="border:1px solid #000;padding:7px;">درجة الجودة</th>
                 <th style="border:1px solid #000;padding:7px;">المقاس (العرض × الطول)</th>
                 <th style="border:1px solid #000;padding:7px;">الكمية المحملة (قطعة)</th>
-                <th style="border:1px solid #000;padding:7px;">المساحة (م²)</th>
-                <th style="border:1px solid #000;padding:7px;">الحجم (م³)</th>
+                ${showM2 ? `<th style="border:1px solid #000;padding:7px;">المساحة (م²)</th>` : ''}
+                ${showM3 ? `<th style="border:1px solid #000;padding:7px;">الحجم (م³)</th>` : ''}
               </tr>
             </thead>
             <tbody>
@@ -278,8 +280,8 @@
                     <td style="border:1px solid #000;padding:7px;font-weight:700;">${it.gr || '-'}</td>
                     <td style="border:1px solid #000;padding:7px;font-weight:700;">${dimLabel}</td>
                     <td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtNumAr(it.sh, 0)} قطعة</td>
-                    <td style="border:1px solid #000;padding:7px;">${fmtNumAr(it.a, 2)} م²</td>
-                    <td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtNumAr(it.v, 4)} م³</td>
+                    ${showM2 ? `<td style="border:1px solid #000;padding:7px;">${fmtNumAr(it.a, 2)} م²</td>` : ''}
+                    ${showM3 ? `<td style="border:1px solid #000;padding:7px;font-weight:800;">${fmtNumAr(it.v, 4)} م³</td>` : ''}
                   </tr>
                 `;
               }).join('')}
@@ -288,8 +290,8 @@
               <tr style="background:#f1f5f9;font-weight:900;">
                 <td colspan="4" style="border:1px solid #000;padding:8px;text-align:center;">الإجمالي الكلي المحمل على السيارة</td>
                 <td style="border:1px solid #000;padding:8px;text-align:center;">${fmtNumAr(totalSheets, 0)} قطعة</td>
-                <td style="border:1px solid #000;padding:8px;text-align:center;">${fmtNumAr(totalArea, 2)} م²</td>
-                <td style="border:1px solid #000;padding:8px;text-align:center;">${fmtNumAr(totalVol, 4)} م³</td>
+                ${showM2 ? `<td style="border:1px solid #000;padding:8px;text-align:center;">${fmtNumAr(totalArea, 2)} م²</td>` : ''}
+                ${showM3 ? `<td style="border:1px solid #000;padding:8px;text-align:center;">${fmtNumAr(totalVol, 4)} م³</td>` : ''}
               </tr>
             </tfoot>
           </table>
