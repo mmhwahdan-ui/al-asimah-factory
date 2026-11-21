@@ -431,6 +431,61 @@
       return base.replace(/[^A-Za-z0-9_.-]/g, '_').replace(/_+/g, '_') + '.pdf';
     }
 
+    function prepareRtlElementForFullA4Capture(container, isLandscape = false, extraPaddingPx = 0) {
+      const targetA4PxNum = isLandscape ? 1040 : 740;
+      const targetA4Px = `${targetA4PxNum}px`;
+      const saved = {
+        elCss: container.style.cssText || '',
+        elDir: container.getAttribute('dir'),
+        htmlDir: document.documentElement ? document.documentElement.getAttribute('dir') : 'rtl',
+        bodyDir: document.body ? document.body.getAttribute('dir') : 'rtl',
+        bodyCss: document.body ? (document.body.style.cssText || '') : ''
+      };
+
+      if (document.documentElement) {
+        document.documentElement.setAttribute('dir', 'ltr');
+        document.documentElement.style.setProperty('direction', 'ltr', 'important');
+      }
+      if (document.body) {
+        document.body.setAttribute('dir', 'ltr');
+        document.body.style.setProperty('direction', 'ltr', 'important');
+        document.body.style.setProperty('padding', '0px', 'important');
+        document.body.style.setProperty('margin', '0px', 'important');
+      }
+
+      container.setAttribute('dir', 'rtl');
+      container.style.setProperty('direction', 'rtl', 'important');
+      container.style.setProperty('position', 'fixed', 'important');
+      container.style.setProperty('left', '0px', 'important');
+      container.style.setProperty('top', '0px', 'important');
+      container.style.setProperty('right', 'auto', 'important');
+      container.style.setProperty('width', targetA4Px, 'important');
+      container.style.setProperty('min-width', targetA4Px, 'important');
+      container.style.setProperty('max-width', targetA4Px, 'important');
+      container.style.setProperty('margin', '0px', 'important');
+      container.style.setProperty('padding', extraPaddingPx ? `${extraPaddingPx}px` : '0px', 'important');
+      container.style.setProperty('background', '#ffffff', 'important');
+      container.style.setProperty('box-sizing', 'border-box', 'important');
+      container.style.setProperty('z-index', '-1', 'important');
+
+      const restore = () => {
+        container.style.cssText = saved.elCss;
+        if (saved.elDir) container.setAttribute('dir', saved.elDir);
+        else container.removeAttribute('dir');
+        if (document.documentElement) {
+          document.documentElement.setAttribute('dir', saved.htmlDir || 'rtl');
+          document.documentElement.style.removeProperty('direction');
+        }
+        if (document.body) {
+          document.body.style.cssText = saved.bodyCss;
+          if (saved.bodyDir) document.body.setAttribute('dir', saved.bodyDir);
+          else document.body.removeAttribute('dir');
+        }
+      };
+
+      return { targetA4PxNum, restore };
+    }
+
     async function generateStandaloneImageBlob() {
       const container = document.getElementById('standalone-print-body');
       if (!container || !container.innerHTML.trim()) return null;
@@ -438,38 +493,7 @@
       normalizeDomForHtml2CanvasArabic(container);
       const safeFile = buildCleanAsciiPdfFileName(_currentDocTitle || 'Report').replace(/\.pdf$/i, '.png');
 
-      const targetA4PxNum = window._isLandscapeDoc ? 1040 : 740;
-      const targetA4Px = `${targetA4PxNum}px`;
-      const prevCssText = container.style.cssText || '';
-      const prevDir = container.getAttribute('dir');
-      const prevHtmlDir = document.documentElement ? document.documentElement.getAttribute('dir') : 'rtl';
-      const prevBodyDir = document.body ? document.body.getAttribute('dir') : 'rtl';
-
-      if (document.documentElement) document.documentElement.setAttribute('dir', 'ltr');
-      if (document.body) {
-        document.body.setAttribute('dir', 'ltr');
-        document.body.style.setProperty('direction', 'ltr', 'important');
-      }
-      container.setAttribute('dir', 'rtl');
-      container.style.width = targetA4Px;
-      container.style.minWidth = targetA4Px;
-      container.style.maxWidth = targetA4Px;
-      container.style.margin = '0';
-      container.style.padding = '10px';
-      container.style.background = '#ffffff';
-      container.style.boxSizing = 'border-box';
-
-      const restoreWidths = () => {
-        container.style.cssText = prevCssText;
-        if (prevDir) container.setAttribute('dir', prevDir);
-        else container.removeAttribute('dir');
-        if (document.documentElement) document.documentElement.setAttribute('dir', prevHtmlDir || 'rtl');
-        if (document.body) {
-          if (prevBodyDir) document.body.setAttribute('dir', prevBodyDir);
-          else document.body.removeAttribute('dir');
-          document.body.style.setProperty('direction', 'rtl', 'important');
-        }
-      };
+      const { targetA4PxNum, restore } = prepareRtlElementForFullA4Capture(container, Boolean(window._isLandscapeDoc), 10);
 
       let canvasObj = null;
       try {
@@ -481,8 +505,9 @@
           scrollY: 0,
           scrollX: 0,
           x: 0,
+          y: 0,
           width: targetA4PxNum,
-          windowWidth: targetA4PxNum + 40
+          windowWidth: targetA4PxNum
         };
         if (typeof window.html2canvas === 'function') {
           canvasObj = await window.html2canvas(container, h2cOpts);
@@ -491,7 +516,7 @@
           canvasObj = await worker.get('canvas');
         }
       } finally {
-        restoreWidths();
+        restore();
       }
       if (!canvasObj) return null;
       const imgBlob = await new Promise(resolve => {
@@ -577,36 +602,7 @@
       const expectedMaxPages = isSinglePageStmt ? 1 : (explicitBreaksCount > 0 ? (explicitBreaksCount + 1) : 0);
       const safeFile = buildCleanAsciiPdfFileName(_currentDocTitle || 'Report');
 
-      const targetA4PxNum = window._isLandscapeDoc ? 1040 : 740;
-      const targetA4Px = `${targetA4PxNum}px`;
-      const prevCssText = container.style.cssText || '';
-      const prevDir = container.getAttribute('dir');
-      const prevHtmlDir = document.documentElement ? document.documentElement.getAttribute('dir') : 'rtl';
-      const prevBodyDir = document.body ? document.body.getAttribute('dir') : 'rtl';
-
-      if (document.documentElement) document.documentElement.setAttribute('dir', 'ltr');
-      if (document.body) {
-        document.body.setAttribute('dir', 'ltr');
-        document.body.style.setProperty('direction', 'ltr', 'important');
-      }
-      container.setAttribute('dir', 'rtl');
-      container.style.width = targetA4Px;
-      container.style.minWidth = targetA4Px;
-      container.style.maxWidth = targetA4Px;
-      container.style.margin = '0';
-      container.style.boxSizing = 'border-box';
-
-      const restoreWidths = () => {
-        container.style.cssText = prevCssText;
-        if (prevDir) container.setAttribute('dir', prevDir);
-        else container.removeAttribute('dir');
-        if (document.documentElement) document.documentElement.setAttribute('dir', prevHtmlDir || 'rtl');
-        if (document.body) {
-          if (prevBodyDir) document.body.setAttribute('dir', prevBodyDir);
-          else document.body.removeAttribute('dir');
-          document.body.style.setProperty('direction', 'rtl', 'important');
-        }
-      };
+      const { targetA4PxNum, restore } = prepareRtlElementForFullA4Capture(container, Boolean(window._isLandscapeDoc), 0);
 
       try {
         if (typeof window.html2pdf === 'function') {
@@ -623,14 +619,15 @@
               scrollY: 0,
               scrollX: 0,
               x: 0,
+              y: 0,
               width: targetA4PxNum,
-              windowWidth: targetA4PxNum + 40
+              windowWidth: targetA4PxNum
             },
             jsPDF: { unit: 'mm', format: 'a4', orientation: window._isLandscapeDoc ? 'landscape' : 'portrait' }
           }).from(container).toPdf();
 
           const pdfObj = await worker.get('pdf');
-          restoreWidths();
+          restore();
 
           if (expectedMaxPages > 0 && pdfObj && pdfObj.internal && typeof pdfObj.internal.getNumberOfPages === 'function') {
             while (pdfObj.internal.getNumberOfPages() > expectedMaxPages) {
@@ -693,7 +690,7 @@
           window.open(`https://wa.me/?text=${encodeURIComponent(msgText)}`, '_blank');
         }
       } catch (_) {
-        restoreWidths();
+        restore();
       }
       if (btn) btn.innerHTML = oldTxt;
     }
@@ -815,36 +812,7 @@
       const expectedMaxPages = isSinglePageStmt ? 1 : (explicitBreaksCount > 0 ? (explicitBreaksCount + 1) : 0);
       const safeFile = buildCleanAsciiPdfFileName(_currentDocTitle || 'Report');
 
-      const targetA4PxNum = window._isLandscapeDoc ? 1040 : 740;
-      const targetA4Px = `${targetA4PxNum}px`;
-      const prevCssText = container.style.cssText || '';
-      const prevDir = container.getAttribute('dir');
-      const prevHtmlDir = document.documentElement ? document.documentElement.getAttribute('dir') : 'rtl';
-      const prevBodyDir = document.body ? document.body.getAttribute('dir') : 'rtl';
-
-      if (document.documentElement) document.documentElement.setAttribute('dir', 'ltr');
-      if (document.body) {
-        document.body.setAttribute('dir', 'ltr');
-        document.body.style.setProperty('direction', 'ltr', 'important');
-      }
-      container.setAttribute('dir', 'rtl');
-      container.style.width = targetA4Px;
-      container.style.minWidth = targetA4Px;
-      container.style.maxWidth = targetA4Px;
-      container.style.margin = '0';
-      container.style.boxSizing = 'border-box';
-
-      const restoreWidths = () => {
-        container.style.cssText = prevCssText;
-        if (prevDir) container.setAttribute('dir', prevDir);
-        else container.removeAttribute('dir');
-        if (document.documentElement) document.documentElement.setAttribute('dir', prevHtmlDir || 'rtl');
-        if (document.body) {
-          if (prevBodyDir) document.body.setAttribute('dir', prevBodyDir);
-          else document.body.removeAttribute('dir');
-          document.body.style.setProperty('direction', 'rtl', 'important');
-        }
-      };
+      const { targetA4PxNum, restore } = prepareRtlElementForFullA4Capture(container, Boolean(window._isLandscapeDoc), 0);
 
       const worker = window.html2pdf().set({
         margin: isSinglePageStmt ? 4 : 6,
@@ -859,8 +827,9 @@
           scrollY: 0,
           scrollX: 0,
           x: 0,
+          y: 0,
           width: targetA4PxNum,
-          windowWidth: targetA4PxNum + 40
+          windowWidth: targetA4PxNum
         },
         jsPDF: { unit: 'mm', format: 'a4', orientation: window._isLandscapeDoc ? 'landscape' : 'portrait' }
       }).from(container).toPdf();
@@ -880,10 +849,10 @@
           });
         }
       }).then(() => worker.save()).then(() => {
-        restoreWidths();
+        restore();
         if (btn) btn.innerText = oldText;
       }).catch(() => {
-        restoreWidths();
+        restore();
         if (btn) btn.innerText = oldText;
         triggerBrowserPrintNow();
       });
