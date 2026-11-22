@@ -290,13 +290,45 @@ function sanitizeCellPricesMap(rawPrices = {}) {
   const clean = {};
   if (!rawPrices || typeof rawPrices !== 'object') return clean;
   for (const [k, v] of Object.entries(rawPrices)) {
+    if (v === undefined || v === null || v === '') continue;
     const safeKey = String(k).replace(/[.#$/\[\]]/g, '_dot_');
-    const val = (v && typeof v === 'object') ? Number(v.price || 0) : Number(v || 0);
-    if (val > 0 || !(safeKey in clean)) {
+    const val = Math.max(0, (v && typeof v === 'object') ? Number(v.price || 0) : Number(v || 0));
+    if (!isNaN(val)) {
       clean[safeKey] = val;
     }
   }
   return clean;
+}
+
+function mergeCellPricesMaps(curPrices = {}, incPrices = {}, curTs = {}, incTs = {}) {
+  const cMap = sanitizeCellPricesMap(curPrices);
+  const iMap = sanitizeCellPricesMap(incPrices);
+  const cTimes = (curTs && typeof curTs === 'object') ? curTs : {};
+  const iTimes = (incTs && typeof incTs === 'object') ? incTs : {};
+  const allKeys = new Set([...Object.keys(cMap), ...Object.keys(iMap)]);
+  const mergedPrices = {};
+  const mergedTs = {};
+  for (const k of allKeys) {
+    const safeKey = String(k).replace(/[.#$/\[\]]/g, '_dot_');
+    const tC = Number(cTimes[safeKey] || cTimes[k] || 0);
+    const tI = Number(iTimes[safeKey] || iTimes[k] || 0);
+    if (safeKey in cMap && safeKey in iMap) {
+      if (tC > tI) {
+        mergedPrices[safeKey] = cMap[safeKey];
+      } else if (tI > tC) {
+        mergedPrices[safeKey] = iMap[safeKey];
+      } else {
+        mergedPrices[safeKey] = iMap[safeKey];
+      }
+    } else if (safeKey in iMap) {
+      mergedPrices[safeKey] = iMap[safeKey];
+    } else if (safeKey in cMap) {
+      mergedPrices[safeKey] = cMap[safeKey];
+    }
+    const maxT = Math.max(tC, tI);
+    if (maxT > 0) mergedTs[safeKey] = maxT;
+  }
+  return { cellPrices: mergedPrices, cellPricesUpdatedAt: mergedTs };
 }
 
 function getSortedThicknesses() {
@@ -310,31 +342,34 @@ function getCellUnitPrice(thkId, gradeId, thkMm = null, direction = null) {
   if (!state || !state.catalog) return 0;
   state.catalog.cellPrices = sanitizeCellPricesMap(state.catalog.cellPrices || {});
 
-  // 1. Direct lookup by sanitized key (e.g. th-1_dot_5-qas__gr-...)
+  // 1. Direct lookup by sanitized key (e.g. th-0_dot_7-qas__gr-...) — respect explicit 0!
   const safeKey = getCellPriceKey(thkId, gradeId);
-  const directVal = Number(state.catalog.cellPrices[safeKey] || 0);
-  if (directVal > 0) return directVal;
+  if (safeKey in state.catalog.cellPrices) {
+    return Math.max(0, Number(state.catalog.cellPrices[safeKey] || 0));
+  }
 
-  // 2. Lookup by matching thickness row (mm + direction) in catalog.thicknesses
+  // 2. Lookup by matching thickness row (mm + direction) in catalog.thicknesses — respect explicit 0!
   const thkObj = (state.catalog.thicknesses || []).find(t =>
     t.id === thkId ||
     (thkMm !== null && Number(t.mm) === Number(thkMm) && (t.direction || 'qas') === (direction || 'qas'))
   );
   if (thkObj) {
     const altKey = getCellPriceKey(thkObj.id, gradeId);
-    const altVal = Number(state.catalog.cellPrices[altKey] || 0);
-    if (altVal > 0) return altVal;
+    if (altKey in state.catalog.cellPrices) {
+      return Math.max(0, Number(state.catalog.cellPrices[altKey] || 0));
+    }
 
     const canonicalId = `th-${Number(thkObj.mm)}-${thkObj.direction || 'qas'}`;
     const canonKey = getCellPriceKey(canonicalId, gradeId);
-    const canonVal = Number(state.catalog.cellPrices[canonKey] || 0);
-    if (canonVal > 0) return canonVal;
+    if (canonKey in state.catalog.cellPrices) {
+      return Math.max(0, Number(state.catalog.cellPrices[canonKey] || 0));
+    }
   }
 
-  // 3. Fallback: check pallets in this cell that have unitSheetPrice > 0
+  // 3. Fallback (only if cell has no price entry in catalog.cellPrices): check IN-STOCK pallets with positive stock
   if (thkObj) {
     const matchingPallet = (state.pallets || []).find(
-      p => matchPalletToThicknessRow(p, thkObj) && p.gradeId === gradeId && Number(p.unitSheetPrice || 0) > 0
+      p => p.status === 'in_stock' && Number(p.sheetsCount || 0) > 0 && matchPalletToThicknessRow(p, thkObj) && matchPalletToGrade(p, gradeId) && Number(p.unitSheetPrice || 0) > 0
     );
     if (matchingPallet) return Number(matchingPallet.unitSheetPrice);
   }
@@ -1176,44 +1211,112 @@ function normalizeState(s) {
       s.catalog.woodenPalletUnitPrice = 500;
     }
   }
+  // Ensure cellPrices of 0 clear stale unitSheetPrice on 0-sheet/dispatched pallets so they never resurrect old prices
+  for (const p of (s.pallets || [])) {
+    if (!p) continue;
+    if (Number(p.sheetsCount || 0) === 0 && p.status !== 'in_stock') {
+      const pKey = getCellPriceKey(p.thicknessId || `th-${p.thicknessMm}-${p.direction || 'qas'}`, p.gradeId);
+      if (s.catalog?.cellPrices && pKey in s.catalog.cellPrices && Number(s.catalog.cellPrices[pKey] || 0) === 0) {
+        p.unitSheetPrice = 0;
+        p.totalValue = 0;
+      }
+    }
+  }
+
+  // Ensure baseline opening pallet balances (settled on 2026-11-19) are preserved, and auto-sync post-baseline car dispatch pallet movements
+  s.palletMovements = Array.isArray(s.palletMovements) ? s.palletMovements : [];
+  const delIdsSetForPallets = new Set(Array.isArray(s.deletedIds) ? s.deletedIds : []);
+  // Historical orders up to 2026-11-19 were already included in the 2026-11-19 baseline openingPalletsDelivered counts (31, 36, 40, 12, 36, 3)
+  const preBaselineCarOrderIds = new Set([
+    'ord-mwgtlbn0-ve84', // ORD-2026-101 (2026-11-14)
+    'ord-mwhrvore-fqs1', // ORD-2026-102 (2026-11-15)
+    'ord-mwixer6l-vsg5', // ORD-2026-103 (2026-11-16)
+    'ord-mwl3t92n-h13u', // ORD-2026-105 (2026-11-17)
+    'ord-mwm0wzlj-d198', // ORD-2026-106 (2026-11-18)
+    'ord-mwm2d139-z29h', // ORD-2026-107 (2026-11-11)
+    'ord-mwnd26kc-s2ki'  // ORD-2026-109 (2026-11-19)
+  ]);
+
   for (const pt of (s.partners || [])) {
     if (!pt) continue;
     if (!Number(pt.palletUnitPrice) || Number(pt.palletUnitPrice) <= 0) {
       pt.palletUnitPrice = 500;
     }
-    // Fix duplicate +31+31 pallet addition on مصنع الفنيه (CL-101) and set محمد نفاد (CL-104) to 12 pallets
+    // Restore مصنع الفنيه (CL-101) baseline openingPalletsDelivered = 31 if it was accidentally zeroed when creating ORD-2026-111
     if (pt.id === 'pt-mwg51zbd-ajlh' || pt.code === 'CL-101') {
-      if (pt.finalNetPallets === undefined) {
-        pt.finalNetPallets = 31;
+      if (Number(pt.openingPalletsDelivered || 0) === 0 && Number(pt.openingPalletsReceived || 0) === 0 && (pt.finalNetPallets === undefined || Number(pt.finalNetPallets) === 31)) {
         pt.openingPalletsDelivered = 31;
         pt.openingPalletsReceived = 0;
-        pt.palletAccountFinalized = true;
       }
     } else if (pt.id === 'pt-mwncuwe6-unmn' || pt.code === 'CL-104') {
-      if (pt.finalNetPallets === undefined) {
-        pt.finalNetPallets = 12;
+      if (Number(pt.openingPalletsDelivered || 0) === 0 && Number(pt.openingPalletsReceived || 0) === 0 && (pt.finalNetPallets === undefined || Number(pt.finalNetPallets) === 12)) {
         pt.openingPalletsDelivered = 12;
         pt.openingPalletsReceived = 0;
-        pt.palletAccountFinalized = true;
       }
-    } else if (pt.finalNetPallets === undefined) {
-      const pMoves = (s.palletMovements || []).filter(
-        pm => pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim()))
-      );
-      const delSum = Number(pt.openingPalletsDelivered || 0) + pMoves.reduce((acc, pm) => acc + Number(pm.deliveredCount || 0), 0);
-      const recSum = Number(pt.openingPalletsReceived || 0) + pMoves.reduce((acc, pm) => acc + Number(pm.receivedCount || 0), 0);
-      pt.finalNetPallets = Math.max(0, delSum - recSum);
-      pt.openingPalletsDelivered = pt.finalNetPallets;
+    } else if (Number(pt.openingPalletsDelivered || 0) === 0 && Number(pt.openingPalletsReceived || 0) === 0 && Number(pt.finalNetPallets || 0) > 0) {
+      pt.openingPalletsDelivered = Number(pt.finalNetPallets);
       pt.openingPalletsReceived = 0;
-      pt.palletAccountFinalized = true;
     }
   }
+
+  // Backfill / sync palletMovements for all post-baseline car dispatches (e.g. ORD-2026-108, ORD-2026-110, ORD-2026-111 for مصنع الفنيه, and future orders)
+  for (const ord of (s.productionOrders || [])) {
+    if (!ord || !ord.carDispatchVoucher || preBaselineCarOrderIds.has(ord.id)) continue;
+    const car = ord.carDispatchVoucher;
+    const delCnt = Math.max(0, Number(car.palletsDeliveredCount || 0));
+    const recCnt = Math.max(0, Number(car.palletsReceivedCount || 0));
+    if (delCnt === 0 && recCnt === 0) continue;
+    const carVo = car.voucherNo || `CAR-${ord.orderNumber}`;
+    const detPmId = `plm-car-${ord.id}`;
+    if (delIdsSetForPallets.has(detPmId)) continue;
+    const existingPm = s.palletMovements.find(pm =>
+      pm && (pm.id === detPmId || pm.orderId === ord.id || (carVo && pm.voucherNo === carVo))
+    );
+    const clientObj = (s.partners || []).find(p =>
+      p && ((ord.clientId && p.id === ord.clientId) || (p.name && ord.clientName && p.name.trim() === ord.clientName.trim()))
+    );
+    const pPrice = Number(car.palletUnitPrice || clientObj?.palletUnitPrice || s.catalog?.woodenPalletUnitPrice || 500) || 500;
+    if (!existingPm) {
+      s.palletMovements.unshift({
+        id: detPmId,
+        voucherNo: carVo,
+        date: car.dispatchDate || ord.date || '2026-11-22',
+        clientId: ord.clientId || clientObj?.id || '',
+        clientCode: ord.clientCode || clientObj?.code || 'CL',
+        clientName: ord.clientName || clientObj?.name || '',
+        orderId: ord.id,
+        orderNumber: ord.orderNumber,
+        deliveredCount: delCnt,
+        receivedCount: recCnt,
+        palletUnitPrice: pPrice,
+        totalDeliveredValue: +(delCnt * pPrice).toFixed(2),
+        totalReceivedValue: +(recCnt * pPrice).toFixed(2),
+        carPlateNumber: car.carPlateNumber || '',
+        driverName: car.driverName || '',
+        notes: `مع تحميل وصرف الطلبية ${ord.orderNumber} — سيارة رقم (${car.carPlateNumber || '-'})${car.notes ? ' (' + car.notes + ')' : ''}`,
+        createdBy: car.dispatchedBy || ord.requestedBy || 'النظام',
+        updatedAt: car.dispatchedAt || ord.updatedAt || new Date().toISOString()
+      });
+    }
+  }
+
   for (const pm of (s.palletMovements || [])) {
     if (!pm) continue;
     const pPrice = Number(pm.palletUnitPrice) > 0 ? Number(pm.palletUnitPrice) : 500;
     pm.palletUnitPrice = pPrice;
     pm.totalDeliveredValue = +(Number(pm.deliveredCount || 0) * pPrice).toFixed(2);
     pm.totalReceivedValue = +(Number(pm.receivedCount || 0) * pPrice).toFixed(2);
+  }
+
+  // Dynamically sync finalNetPallets for every partner = openingPalletsDelivered - openingPalletsReceived + sum(deliveredCount - receivedCount)
+  for (const pt of (s.partners || [])) {
+    if (!pt) continue;
+    const pMoves = (s.palletMovements || []).filter(
+      pm => pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim()))
+    );
+    const delSum = Number(pt.openingPalletsDelivered || 0) + pMoves.reduce((acc, pm) => acc + Number(pm.deliveredCount || 0), 0);
+    const recSum = Number(pt.openingPalletsReceived || 0) + pMoves.reduce((acc, pm) => acc + Number(pm.receivedCount || 0), 0);
+    pt.finalNetPallets = Math.max(0, delSum - recSum);
   }
 
   // Fix duplicate order number collision on محمد نفاد (ord-mwnd26kc-s2ki) & deduplicate / purge orphaned sales_invoices
@@ -1466,7 +1569,7 @@ function smartMergeClientState(current, incoming) {
       grades: smartMergeListClient(current.catalog?.grades, incoming.catalog?.grades, delSet, 0),
       dimensions: smartMergeListClient(current.catalog?.dimensions, incoming.catalog?.dimensions, delSet, 0),
       customDimensions: smartMergeListClient(current.catalog?.customDimensions, incoming.catalog?.customDimensions, delSet, 0),
-      cellPrices: sanitizeCellPricesMap({ ...(current.catalog?.cellPrices || {}), ...(incoming.catalog?.cellPrices || {}) })
+      ...mergeCellPricesMaps(current.catalog?.cellPrices, incoming.catalog?.cellPrices, current.catalog?.cellPricesUpdatedAt, incoming.catalog?.cellPricesUpdatedAt)
     }
   };
   for (const key of listKeys) {
@@ -2801,17 +2904,12 @@ function computeClientLivePalletDepositInfo(clientObj, stateRef = null) {
       paid += amt;
     }
   }
-  let palletsCountAtClient = 0;
-  if (clientObj.palletAccountFinalized || clientObj.finalNetPallets !== undefined) {
-    palletsCountAtClient = Math.max(0, Number(clientObj.finalNetPallets ?? (Number(clientObj.openingPalletsDelivered || 0) - Number(clientObj.openingPalletsReceived || 0))));
-  } else {
-    const palletMoves = (sObj.palletMovements || []).filter(
-      pm => (pm.clientId && pm.clientId === clientObj.id) || (!pm.clientId && pm.clientName && pm.clientName.trim() === clientObj.name.trim())
-    );
-    const palletsDelivered = Number(clientObj.openingPalletsDelivered || 0) + palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0), 0);
-    const palletsReceived = Number(clientObj.openingPalletsReceived || 0) + palletMoves.reduce((s, pm) => s + Number(pm.receivedCount || 0), 0);
-    palletsCountAtClient = Math.max(0, palletsDelivered - palletsReceived);
-  }
+  const palletMoves = (sObj.palletMovements || []).filter(
+    pm => pm && ((pm.clientId && pm.clientId === clientObj.id) || (!pm.clientId && pm.clientName && clientObj.name && pm.clientName.trim() === clientObj.name.trim()))
+  );
+  const palletsDelivered = Number(clientObj.openingPalletsDelivered || 0) + palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0), 0);
+  const palletsReceived = Number(clientObj.openingPalletsReceived || 0) + palletMoves.reduce((s, pm) => s + Number(pm.receivedCount || 0), 0);
+  const palletsCountAtClient = Math.max(0, palletsDelivered - palletsReceived);
   const palletUnitPrice = Number(clientObj.palletUnitPrice || sObj.catalog?.woodenPalletUnitPrice || 500) || 500;
   return {
     palletDepositPaid: +paid.toFixed(2),
@@ -5039,7 +5137,7 @@ function renderFinishedVeneerWarehouse() {
                         <input type="number" step="0.5" min="0"
                           class="form-control"
                           style="width:68px;padding:2px 4px;text-align:center;font-weight:800;font-size:0.78rem;border-color:var(--accent);height:25px;"
-                          value="${cell.unitPiecePrice || ''}"
+                          value="${Number(cell.unitPiecePrice || 0)}"
                           placeholder="0"
                           title="سعر القطعة الواحدة بالجنيه"
                           ${canEditPrices ? `onchange="updateCellUnitPrice('${t.id}', '${g.id}', this.value)"` : 'readonly disabled'} />
@@ -6591,35 +6689,19 @@ function computeClientMetrics(pt) {
   const veneerNetDebt = +(veneerTotalDebit - veneerTotalCredit).toFixed(2);
 
   const palletUnitPrice = getWoodenPalletUnitPrice(pt);
-  let palletsDelivered = 0;
-  let palletsReceived = 0;
-  let netPalletsAtClient = 0;
-  let palletsDeliveredValue = 0;
-  let palletsReceivedValue = 0;
-  let netPalletsValue = 0;
-
-  if (pt.palletAccountFinalized || pt.finalNetPallets !== undefined) {
-    const finalNet = Math.max(0, Number(pt.finalNetPallets ?? (Number(pt.openingPalletsDelivered || 0) - Number(pt.openingPalletsReceived || 0))));
-    palletsDelivered = finalNet;
-    palletsReceived = 0;
-    netPalletsAtClient = finalNet;
-    palletsDeliveredValue = +(finalNet * palletUnitPrice).toFixed(2);
-    palletsReceivedValue = 0;
-    netPalletsValue = palletsDeliveredValue;
-  } else {
-    palletsDelivered = Number(pt.openingPalletsDelivered || 0) + palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0), 0);
-    palletsReceived = Number(pt.openingPalletsReceived || 0) + palletMoves.reduce((s, pm) => s + Number(pm.receivedCount || 0), 0);
-    netPalletsAtClient = palletsDelivered - palletsReceived;
-    palletsDeliveredValue = +(
-      Number(pt.openingPalletsDelivered || 0) * palletUnitPrice +
-      palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0) * getWoodenPalletUnitPrice(pt, pm), 0)
-    ).toFixed(2);
-    palletsReceivedValue = +(
-      Number(pt.openingPalletsReceived || 0) * palletUnitPrice +
-      palletMoves.reduce((s, pm) => s + Number(pm.receivedCount || 0) * getWoodenPalletUnitPrice(pt, pm), 0)
-    ).toFixed(2);
-    netPalletsValue = +(palletsDeliveredValue - palletsReceivedValue).toFixed(2);
-  }
+  const palletsDelivered = Number(pt.openingPalletsDelivered || 0) + palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0), 0);
+  const palletsReceived = Number(pt.openingPalletsReceived || 0) + palletMoves.reduce((s, pm) => s + Number(pm.receivedCount || 0), 0);
+  const netPalletsAtClient = Math.max(0, palletsDelivered - palletsReceived);
+  const palletsDeliveredValue = +(
+    Number(pt.openingPalletsDelivered || 0) * palletUnitPrice +
+    palletMoves.reduce((s, pm) => s + Number(pm.deliveredCount || 0) * getWoodenPalletUnitPrice(pt, pm), 0)
+  ).toFixed(2);
+  const palletsReceivedValue = +(
+    Number(pt.openingPalletsReceived || 0) * palletUnitPrice +
+    palletMoves.reduce((s, pm) => s + Number(pm.receivedCount || 0) * getWoodenPalletUnitPrice(pt, pm), 0)
+  ).toFixed(2);
+  const netPalletsValue = Math.max(0, +(palletsDeliveredValue - palletsReceivedValue).toFixed(2));
+  pt.finalNetPallets = netPalletsAtClient;
 
   palletDepositPaid = +palletDepositPaid.toFixed(2);
   palletDepositRefunded = +palletDepositRefunded.toFixed(2);
@@ -6632,7 +6714,7 @@ function computeClientMetrics(pt) {
     orders,
     txs: veneerTxs,
     allTxs: txs,
-    palletMoves: (pt.palletAccountFinalized || pt.finalNetPallets !== undefined) ? [] : palletMoves,
+    palletMoves,
     checks,
     pendingChecks,
     pendingChecksAmount,
@@ -9658,12 +9740,14 @@ function submitNewClientOrderPrep(e, andPrintPdf = false, explicitExitMode = '')
   if (createdByExec && existingClientObj && document.getElementById('ord-client-open-debit')) {
     const newOpenDebit = Math.max(0, Number(document.getElementById('ord-client-open-debit')?.value || 0));
     const newOpenCredit = Math.max(0, Number(document.getElementById('ord-client-open-credit')?.value || 0));
-    const newOpenPDel = Math.max(0, Number(document.getElementById('ord-client-open-pdel')?.value || 0));
-    const newOpenPRec = Math.max(0, Number(document.getElementById('ord-client-open-prec')?.value || 0));
     existingClientObj.openingDebit = newOpenDebit;
     existingClientObj.openingCredit = newOpenCredit;
-    existingClientObj.openingPalletsDelivered = newOpenPDel;
-    existingClientObj.openingPalletsReceived = newOpenPRec;
+    if (document.getElementById('ord-client-open-pdel')) {
+      existingClientObj.openingPalletsDelivered = Math.max(0, Number(document.getElementById('ord-client-open-pdel')?.value || 0));
+    }
+    if (document.getElementById('ord-client-open-prec')) {
+      existingClientObj.openingPalletsReceived = Math.max(0, Number(document.getElementById('ord-client-open-prec')?.value || 0));
+    }
     existingClientObj.balance = +(newOpenDebit - newOpenCredit).toFixed(2);
     existingClientObj.updatedAt = now;
   }
@@ -11416,12 +11500,16 @@ function submitVehicleDispatchVoucher(e, orderId) {
     });
   }
 
-  // Note: Client's pallet account is finalized and independent; car dispatch does not add or deduct from the client's finalized pallet account.
-  if (!clientObj?.palletAccountFinalized && clientObj?.finalNetPallets === undefined && (palletsDeliveredCount > 0 || palletsReceivedCount > 0)) {
-    state.palletMovements = state.palletMovements || [];
-    const existingPm = state.palletMovements.find(pm => pm.orderId === ord.id || pm.voucherNo === carVoucherNo);
+  // Automatically record / update client's pallet movement from car dispatch (adds delivered pallets & deducts returned pallets)
+  state.palletMovements = state.palletMovements || [];
+  const detPmId = `plm-car-${ord.id}`;
+  const existingPm = state.palletMovements.find(pm => pm && (pm.id === detPmId || pm.orderId === ord.id || pm.voucherNo === carVoucherNo));
+  if (palletsDeliveredCount > 0 || palletsReceivedCount > 0) {
     if (existingPm) {
       existingPm.date = dispatchDate;
+      existingPm.clientId = ord.clientId || clientObj?.id || existingPm.clientId;
+      existingPm.clientCode = ord.clientCode || clientObj?.code || existingPm.clientCode || 'CL';
+      existingPm.clientName = ord.clientName || clientObj?.name || existingPm.clientName;
       existingPm.deliveredCount = palletsDeliveredCount;
       existingPm.receivedCount = palletsReceivedCount;
       existingPm.palletUnitPrice = palletUnitPrice;
@@ -11429,16 +11517,16 @@ function submitVehicleDispatchVoucher(e, orderId) {
       existingPm.totalReceivedValue = palletsReceivedValue;
       existingPm.carPlateNumber = carPlateNumber;
       existingPm.driverName = driverName;
-      existingPm.notes = `مع تحميل الطلبية ${ord.orderNumber} — سيارة ${carPlateNumber} ${carNotes ? '(' + carNotes + ')' : ''}`;
+      existingPm.notes = `مع تحميل وصرف الطلبية ${ord.orderNumber} — سيارة رقم (${carPlateNumber || '-'})${carNotes ? ' (' + carNotes + ')' : ''}`;
       existingPm.updatedAt = now;
     } else {
       state.palletMovements.unshift({
-        id: uid('plm'),
+        id: detPmId,
         voucherNo: carVoucherNo,
         date: dispatchDate,
-        clientId: ord.clientId,
-        clientCode: ord.clientCode || 'CL',
-        clientName: ord.clientName,
+        clientId: ord.clientId || clientObj?.id || '',
+        clientCode: ord.clientCode || clientObj?.code || 'CL',
+        clientName: ord.clientName || clientObj?.name || '',
         orderId: ord.id,
         orderNumber: ord.orderNumber,
         deliveredCount: palletsDeliveredCount,
@@ -11448,11 +11536,24 @@ function submitVehicleDispatchVoucher(e, orderId) {
         totalReceivedValue: palletsReceivedValue,
         carPlateNumber,
         driverName,
-        notes: `مع تحميل الطلبية ${ord.orderNumber} — سيارة ${carPlateNumber} ${carNotes ? '(' + carNotes + ')' : ''}`,
+        notes: `مع تحميل وصرف الطلبية ${ord.orderNumber} — سيارة رقم (${carPlateNumber || '-'})${carNotes ? ' (' + carNotes + ')' : ''}`,
         createdBy: currentUser.name,
         updatedAt: now
       });
     }
+  } else if (existingPm) {
+    markRecordIdDeleted(existingPm.id);
+    state.palletMovements = state.palletMovements.filter(pm => pm && pm.id !== existingPm.id);
+  }
+
+  if (clientObj) {
+    const clientPms = (state.palletMovements || []).filter(
+      pm => pm && ((pm.clientId && pm.clientId === clientObj.id) || (!pm.clientId && pm.clientName && clientObj.name && pm.clientName.trim() === clientObj.name.trim()))
+    );
+    const delSum = Number(clientObj.openingPalletsDelivered || 0) + clientPms.reduce((acc, pm) => acc + Number(pm.deliveredCount || 0), 0);
+    const recSum = Number(clientObj.openingPalletsReceived || 0) + clientPms.reduce((acc, pm) => acc + Number(pm.receivedCount || 0), 0);
+    clientObj.finalNetPallets = Math.max(0, delSum - recSum);
+    clientObj.updatedAt = now;
   }
 
   ord.stage = 'completed';
@@ -12298,13 +12399,13 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
             `}
           </div>
 
-          <!-- 3. Independent Finalized Wooden Pallets Account -->
+          <!-- 3. Independent Wooden Pallets Account & Movements -->
           <div>
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
-              <h4 style="margin:0;color:#6d28d9;">3️⃣ حساب البالتات الخشبية المستقل للعميل (منفصل تماماً عن حساب القشرة — رصيد نهائي غير قابل للإضافة أو الخصم):</h4>
+              <h4 style="margin:0;color:#6d28d9;">3️⃣ حساب وسجل حركات البالتات الخشبية المستقل للعميل (منفصل عن حساب القشرة — يتحدث تلقائياً مع صرف البضاعة واسترجاع البالتات):</h4>
               ${canEditFin ? `
                 <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                  <button class="btn btn-sm btn-accent" style="font-weight:800;" onclick="openClientPalletMovementModal('${pt.id}')">🔒 تعديل الرصيد النهائي للبالتات</button>
+                  <button class="btn btn-sm btn-accent" style="font-weight:800;" onclick="openClientPalletMovementModal('${pt.id}')">🪵 تسجيل تسليم / استرجاع بالتات أو ضبط الرصيد</button>
                 </div>
               ` : ''}
             </div>
@@ -12313,22 +12414,61 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
               <table>
                 <thead>
                   <tr>
-                    <th>البيان</th>
-                    <th>الرصيد النهائي للبالتات طرف العميل</th>
-                    <th>قيمة البالتة الواحدة</th>
-                    <th>إجمالي قيمة البالتات النهائي (مستقل عن حساب القشرة)</th>
-                    <th>حالة حساب البالتات</th>
-                    <th>إجراء</th>
+                    <th>رقم المستند / الحركة</th>
+                    <th>التاريخ</th>
+                    <th>البيان / السيارة</th>
+                    <th>مسلم للعميل (+)</th>
+                    <th>مستلم من العميل (-)</th>
+                    <th>قيمة البالتة</th>
+                    <th>الإجمالي</th>
+                    ${isFullAdmin(currentUser) ? '<th>إجراء</th>' : ''}
                   </tr>
                 </thead>
                 <tbody>
-                  <tr style="background:var(--bg-elevated);font-weight:800;">
-                    <td>🔒 الرصيد النهائي المعتمد لحساب البالتات</td>
-                    <td><span class="badge ${m.netPalletsAtClient > 0 ? 'badge-warning' : 'badge-success'}" style="font-size:0.9rem;">🪵 ${m.netPalletsAtClient} بالتة</span></td>
-                    <td><strong>${fmtMoney(m.palletUnitPrice)}</strong></td>
-                    <td><strong style="color:var(--primary);font-size:0.98rem;">${fmtMoney(m.netPalletsValue)}</strong></td>
-                    <td><span class="badge" style="background:#6d28d9;color:#fff;">🔒 رصيد نهائي ثابت (غير قابل للإضافة أو الخصم)</span></td>
-                    <td>${canEditFin ? `<button class="btn btn-sm btn-outline" onclick="openClientPalletMovementModal('${pt.id}')">✏️ تعديل الرصيد النهائي</button>` : '<span style="font-size:0.75rem;color:var(--text-muted);">👁️ اطلاع فقط</span>'}</td>
+                  ${(Number(pt.openingPalletsDelivered || 0) > 0 || Number(pt.openingPalletsReceived || 0) > 0) ? `
+                    <tr style="background:var(--bg-elevated);font-weight:700;">
+                      <td><strong>OPEN-PLT</strong></td>
+                      <td>${pt.entryDate || '-'}</td>
+                      <td>رصيد البالتات السابق / الافتتاحي المعتمد للعميل</td>
+                      <td><span class="badge badge-warning">+${Number(pt.openingPalletsDelivered || 0)} بالتة</span></td>
+                      <td><span class="badge badge-success">-${Number(pt.openingPalletsReceived || 0)} بالتة</span></td>
+                      <td><strong>${fmtMoney(m.palletUnitPrice)}</strong></td>
+                      <td><strong>${fmtMoney(Math.max(0, Number(pt.openingPalletsDelivered || 0) - Number(pt.openingPalletsReceived || 0)) * m.palletUnitPrice)}</strong></td>
+                      ${isFullAdmin(currentUser) ? `<td><button class="btn btn-sm btn-outline" onclick="openClientPalletMovementModal('${pt.id}')">✏️ ضبط</button></td>` : ''}
+                    </tr>
+                  ` : ''}
+                  ${(m.palletMoves || []).map(pm => {
+                    const pmPrice = getWoodenPalletUnitPrice(pt, pm);
+                    const delCnt = Number(pm.deliveredCount || 0);
+                    const recCnt = Number(pm.receivedCount || 0);
+                    const netVal = Math.abs(delCnt - recCnt) * pmPrice;
+                    return `
+                      <tr>
+                        <td><strong>${pm.voucherNo || '-'}</strong></td>
+                        <td>${pm.date || '-'}</td>
+                        <td>${pm.notes || pm.carPlateNumber || '-'}</td>
+                        <td><span class="badge badge-warning">+${delCnt} بالتة</span></td>
+                        <td><span class="badge badge-success">-${recCnt} بالتة</span></td>
+                        <td><strong>${fmtMoney(pmPrice)}</strong></td>
+                        <td><strong>${fmtMoney(netVal)}</strong></td>
+                        ${isFullAdmin(currentUser) ? `
+                          <td>
+                            <div style="display:flex;gap:4px;">
+                              <button class="btn btn-sm btn-outline" style="padding:3px 7px;" onclick="openEditPalletMovementModal('${pm.id}')" title="تعديل حركة البالتات">✏️</button>
+                              <button class="btn btn-sm btn-danger" style="padding:3px 7px;" onclick="deletePalletMovementRecord('${pm.id}')" title="حذف حركة البالتات">🗑️</button>
+                            </div>
+                          </td>
+                        ` : ''}
+                      </tr>
+                    `;
+                  }).join('')}
+                  <tr style="background:rgba(124,58,237,0.08);font-weight:900;border-top:2px solid #7c3aed;">
+                    <td colspan="3" style="color:#6d28d9;">🪵 صافي رصيد البالتات الحالي طرف العميل (إجمالي المسلم - إجمالي المستلم)</td>
+                    <td><span class="badge badge-warning" style="font-size:0.86rem;">إجمالي مسلم: ${m.palletsDelivered}</span></td>
+                    <td><span class="badge badge-success" style="font-size:0.86rem;">إجمالي مستلم: ${m.palletsReceived}</span></td>
+                    <td><strong>الصافي: <span style="color:var(--primary);font-size:0.98rem;">${m.netPalletsAtClient} بالتة</span></strong></td>
+                    <td><strong style="color:#6d28d9;font-size:0.98rem;">${fmtMoney(m.netPalletsValue)}</strong></td>
+                    ${isFullAdmin(currentUser) ? `<td><button class="btn btn-sm btn-outline" onclick="openClientPalletMovementModal('${pt.id}')">✏️ تعديل</button></td>` : ''}
                   </tr>
                 </tbody>
               </table>
@@ -13343,7 +13483,7 @@ function printChecksUnderCollectionReportPdf() {
   openUniversalPrintDocument(html, 'سجل الشيكات تحت التحصيل والمحصلة', false);
 }
 
-// CLIENT WOODEN PALLETS FINAL ACCOUNT EDITOR MODAL (حساب البالتات المستقل والنهائي للعميل)
+// CLIENT WOODEN PALLETS MOVEMENT & BALANCE ADJUSTMENT MODAL (تسجيل تسليم / استلام بالتات أو ضبط الرصيد النهائي للعميل)
 function openClientPalletMovementModal(clientId) {
   if (!canEditFinancialAndClientRecords(currentUser)) {
     alert('⛔ عفواً، حسابك مخصص للاطلاع والطباعة وإرسال الواتساب فقط — غير مسموح بتعديل أرصدة البالتات.');
@@ -13358,38 +13498,62 @@ function openClientPalletMovementModal(clientId) {
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box" style="max-width:600px;">
+      <div class="modal-box" style="max-width:620px;">
         <div class="card-header">
           <div>
-            <div class="card-title">🪵 تعديل حساب البالتات النهائي المستقل للعميل: [${pt.code || 'CL'}] ${pt.name}</div>
+            <div class="card-title">🪵 إدارة حساب وحركات البالتات الخشبية للعميل: [${pt.code || 'CL'}] ${pt.name}</div>
             <small style="color:var(--text-muted);">
-              🔒 <strong>حساب البالتات منفصل تماماً عن حساب القشرة:</strong> أي رقم تكتبه هنا يصبح هو <strong>الرصيد النهائي المباشر للبالتات طرف العميل</strong> (غير قابل للإضافة أو الخصم التلقائي)
+              الرصيد الحالي طرف العميل: <strong style="color:var(--primary);">${currentFinalCount} بالتة</strong> (إجمالي المسلم: ${m.palletsDelivered} | إجمالي المستلم: ${m.palletsReceived})
             </small>
           </div>
           <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
         </div>
 
         <form onsubmit="submitClientPalletMovement(event, '${pt.id}')">
-          <div style="background:rgba(124,58,237,0.08);border:1.5px solid #7c3aed;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:0.84rem;">
-            🔒 <strong>نظام الرصيد النهائي للبالتات:</strong> اكتب العدد النهائي للبالتات الموجودة طرف العميل مباشرة (مثلاً: <strong>${currentFinalCount}</strong>). عند الحفظ يتم اعتماد هذا العدد كرصيد نهائي ثابت لا يُضاف عليه ولا يُخصم منه.
-          </div>
-
           <div class="form-grid">
             <div class="form-group" style="grid-column: 1 / -1;">
-              <label style="color:var(--primary);font-weight:900;font-size:0.95rem;">🪵 الرصيد النهائي لعدد البالتات طرف العميل (تعديل نهائي مباشر)</label>
-              <input id="pm-final-count" type="number" min="0" step="1" class="form-control" value="${currentFinalCount}" oninput="updatePalletModalLiveCalc()" required autofocus style="font-weight:900;font-size:1.15rem;border:2px solid var(--primary);color:var(--primary);" />
+              <label style="font-weight:900;color:#6d28d9;">نوع العملية في حساب البالتات</label>
+              <select id="pm-action-mode" class="form-control" onchange="togglePalletModalActionMode()" style="font-weight:800;border:2px solid #7c3aed;">
+                <option value="movement">🚚 تسجيل حركة تسليم أو استرجاع بالتات (تُضاف أو تُخصم من الرصيد الحالي ${currentFinalCount} بالتة)</option>
+                <option value="set_final">🎯 ضبط وتحديد صافي الرصيد النهائي الإجمالي للبالتات طرف العميل مباشرة</option>
+              </select>
             </div>
+
+            <div id="pm-movement-fields" style="grid-column: 1 / -1;display:grid;grid-template-columns:1fr 1fr;gap:12px;background:var(--bg-elevated);padding:12px;border-radius:10px;border:1px solid var(--border-color);">
+              <div class="form-group" style="margin:0;">
+                <label style="color:#d97706;font-weight:800;">➕ عدد البالتات المسلمة للعميل (منصرف)</label>
+                <input id="pm-del-count" type="number" min="0" step="1" class="form-control" value="0" oninput="updatePalletModalLiveCalc('${pt.id}')" style="font-weight:900;border-color:#d97706;" />
+              </div>
+              <div class="form-group" style="margin:0;">
+                <label style="color:var(--success);font-weight:800;">➖ عدد البالتات المستلمة من العميل (مرتجع)</label>
+                <input id="pm-rec-count" type="number" min="0" step="1" class="form-control" value="0" oninput="updatePalletModalLiveCalc('${pt.id}')" style="font-weight:900;border-color:var(--success);" />
+              </div>
+              <div class="form-group" style="margin:0;">
+                <label>تاريخ الحركة</label>
+                <input id="pm-move-date" type="date" class="form-control" value="${todayStr()}" />
+              </div>
+              <div class="form-group" style="margin:0;">
+                <label>رقم السيارة / السند (اختياري)</label>
+                <input id="pm-car-plate" class="form-control" placeholder="مثال: سيارة 4153..." />
+              </div>
+            </div>
+
+            <div id="pm-final-fields" style="grid-column: 1 / -1;display:none;">
+              <label style="color:var(--primary);font-weight:900;font-size:0.95rem;">🪵 صافي الرصيد النهائي المطلوب للبالتات طرف العميل</label>
+              <input id="pm-final-count" type="number" min="0" step="1" class="form-control" value="${currentFinalCount}" oninput="updatePalletModalLiveCalc('${pt.id}')" style="font-weight:900;font-size:1.15rem;border:2px solid var(--primary);color:var(--primary);" />
+            </div>
+
             <div class="form-group">
               <label style="color:#b45309;font-weight:800;">💰 قيمة البالتة الواحدة (ج.م)</label>
-              <input id="pm-price" type="number" step="1" min="0" class="form-control" value="${defaultUnitPrice}" oninput="updatePalletModalLiveCalc()" style="font-weight:800;border-color:#d97706;" required />
+              <input id="pm-price" type="number" step="1" min="0" class="form-control" value="${defaultUnitPrice}" oninput="updatePalletModalLiveCalc('${pt.id}')" style="font-weight:800;border-color:#d97706;" required />
             </div>
             <div class="form-group">
-              <label style="color:#7c3aed;font-weight:800;">💎 إجمالي قيمة البالتات النهائي طرف العميل</label>
+              <label style="color:#7c3aed;font-weight:800;">💎 إجمالي قيمة البالتات طرف العميل بعد العملية</label>
               <input id="pm-total-readonly" type="text" class="form-control" value="${fmtMoney(currentFinalCount * defaultUnitPrice)}" readonly style="font-weight:900;color:#7c3aed;background:rgba(124,58,237,0.08);border-color:#7c3aed;" />
             </div>
             <div class="form-group" style="grid-column: 1 / -1;">
-              <label>ملاحظات حساب البالتات (اختياري)</label>
-              <input id="pm-notes" class="form-control" value="${pt.palletAccountNotes || ''}" placeholder="مثال: رصيد بالتات نهائي معتمد طرف العميل..." />
+              <label>ملاحظات / بيان الحركة (اختياري)</label>
+              <input id="pm-notes" class="form-control" value="" placeholder="مثال: استرجاع بالتات من العميل / تسليم بالتات مع بضاعة..." />
             </div>
           </div>
 
@@ -13397,29 +13561,56 @@ function openClientPalletMovementModal(clientId) {
 
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
             <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
-            <button type="submit" class="btn btn-primary" style="font-weight:900;">🔒 حفظ واعتماد رصيد البالتات النهائي للعميل</button>
+            <button type="submit" class="btn btn-primary" style="font-weight:900;">💾 حفظ وتحديث حساب البالتات للعميل</button>
           </div>
         </form>
       </div>
     </div>
   `;
+  updatePalletModalLiveCalc(pt.id);
+}
+
+function togglePalletModalActionMode() {
+  const mode = document.getElementById('pm-action-mode')?.value || 'movement';
+  const movBox = document.getElementById('pm-movement-fields');
+  const finBox = document.getElementById('pm-final-fields');
+  if (movBox) movBox.style.display = mode === 'movement' ? 'grid' : 'none';
+  if (finBox) finBox.style.display = mode === 'set_final' ? 'block' : 'none';
   updatePalletModalLiveCalc();
 }
 
-function updatePalletModalLiveCalc() {
-  const finalCount = Math.max(0, Math.round(Number(document.getElementById('pm-final-count')?.value || 0)));
+function updatePalletModalLiveCalc(clientId = '') {
+  const mode = document.getElementById('pm-action-mode')?.value || 'movement';
   const unitPrice = Math.max(0, Number(document.getElementById('pm-price')?.value || 500));
-  const finalVal = +(finalCount * unitPrice).toFixed(2);
+  let currentNet = 0;
+  if (clientId) {
+    const pt = (state.partners || []).find(p => p.id === clientId);
+    if (pt) currentNet = Math.max(0, Number(computeClientMetrics(pt).netPalletsAtClient || 0));
+  } else {
+    const finEl = document.getElementById('pm-final-count');
+    currentNet = Math.max(0, Number(finEl?.defaultValue || 0));
+  }
 
+  let newNetCount = currentNet;
+  if (mode === 'movement') {
+    const delCnt = Math.max(0, Math.round(Number(document.getElementById('pm-del-count')?.value || 0)));
+    const recCnt = Math.max(0, Math.round(Number(document.getElementById('pm-rec-count')?.value || 0)));
+    newNetCount = Math.max(0, currentNet + delCnt - recCnt);
+  } else {
+    newNetCount = Math.max(0, Math.round(Number(document.getElementById('pm-final-count')?.value || 0)));
+  }
+
+  const finalVal = +(newNetCount * unitPrice).toFixed(2);
   const totEl = document.getElementById('pm-total-readonly');
   if (totEl) totEl.value = fmtMoney(finalVal);
 
   const box = document.getElementById('pm-live-preview');
   if (box) {
     box.innerHTML = `
-      <div class="calc-preview-item"><span>العدد النهائي المعتمد للبالتات طرف العميل</span><strong style="color:var(--primary);font-size:1.05rem;">${finalCount} بالتة (نهائي)</strong></div>
+      <div class="calc-preview-item"><span>الرصيد قبل العملية</span><strong>${currentNet} بالتة</strong></div>
+      <div class="calc-preview-item"><span>الرصيد الجديد للبالتات طرف العميل</span><strong style="color:var(--primary);font-size:1.05rem;">${newNetCount} بالتة</strong></div>
       <div class="calc-preview-item"><span>قيمة البالتة الواحدة</span><strong>${fmtMoney(unitPrice)}</strong></div>
-      <div class="calc-preview-item"><span>إجمالي قيمة البالتات النهائي (مستقل عن حساب القشرة)</span><strong style="color:#7c3aed;font-size:1.05rem;">${fmtMoney(finalVal)}</strong></div>
+      <div class="calc-preview-item"><span>إجمالي قيمة البالتات طرف العميل</span><strong style="color:#7c3aed;font-size:1.05rem;">${fmtMoney(finalVal)}</strong></div>
     `;
   }
 }
@@ -13429,31 +13620,65 @@ function submitClientPalletMovement(e, clientId) {
   const pt = (state.partners || []).find(p => p.id === clientId);
   if (!pt) return;
 
-  const finalCount = Math.max(0, Math.round(Number(document.getElementById('pm-final-count')?.value || 0)));
+  const mode = document.getElementById('pm-action-mode')?.value || 'movement';
   const palletUnitPrice = Math.max(0, Number(document.getElementById('pm-price')?.value ?? getWoodenPalletUnitPrice(pt))) || 500;
   const notes = (document.getElementById('pm-notes')?.value || '').trim();
   const now = getMonotonicIso(pt.updatedAt);
-
-  pt.finalNetPallets = finalCount;
-  pt.openingPalletsDelivered = finalCount;
-  pt.openingPalletsReceived = 0;
-  pt.palletAccountFinalized = true;
   pt.palletUnitPrice = palletUnitPrice;
-  pt.palletAccountNotes = notes;
+
+  if (mode === 'movement') {
+    const delCnt = Math.max(0, Math.round(Number(document.getElementById('pm-del-count')?.value || 0)));
+    const recCnt = Math.max(0, Math.round(Number(document.getElementById('pm-rec-count')?.value || 0)));
+    if (delCnt === 0 && recCnt === 0) {
+      alert('⚠️ يرجى إدخال عدد البالتات المسلمة للعميل أو المستلمة منه.');
+      return;
+    }
+    const moveDate = document.getElementById('pm-move-date')?.value || todayStr();
+    const carPlate = (document.getElementById('pm-car-plate')?.value || '').trim();
+    state.palletMovements = state.palletMovements || [];
+    state.palletMovements.unshift({
+      id: uid('plm'),
+      voucherNo: `PLT-${Date.now().toString().slice(-5)}`,
+      date: moveDate,
+      clientId: pt.id,
+      clientCode: pt.code || 'CL',
+      clientName: pt.name,
+      deliveredCount: delCnt,
+      receivedCount: recCnt,
+      palletUnitPrice,
+      totalDeliveredValue: +(delCnt * palletUnitPrice).toFixed(2),
+      totalReceivedValue: +(recCnt * palletUnitPrice).toFixed(2),
+      carPlateNumber: carPlate,
+      notes: notes || (delCnt > 0 && recCnt > 0 ? `تسليم (${delCnt}) واسترجاع (${recCnt}) بالتة` : delCnt > 0 ? `تسليم (${delCnt}) بالتة للعميل` : `استرجاع (${recCnt}) بالتة من العميل`),
+      createdBy: currentUser.name,
+      updatedAt: now
+    });
+  } else {
+    const finalCount = Math.max(0, Math.round(Number(document.getElementById('pm-final-count')?.value || 0)));
+    const clientPms = (state.palletMovements || []).filter(
+      pm => pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim()))
+    );
+    const pmNet = clientPms.reduce((acc, pm) => acc + Number(pm.deliveredCount || 0) - Number(pm.receivedCount || 0), 0);
+    const neededOpening = finalCount - pmNet;
+    if (neededOpening >= 0) {
+      pt.openingPalletsDelivered = neededOpening;
+      pt.openingPalletsReceived = 0;
+    } else {
+      pt.openingPalletsDelivered = 0;
+      pt.openingPalletsReceived = Math.abs(neededOpening);
+    }
+    if (notes) pt.palletAccountNotes = notes;
+  }
+
+  const allClientPms = (state.palletMovements || []).filter(
+    pm => pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim()))
+  );
+  const newNet = Math.max(0, Number(pt.openingPalletsDelivered || 0) - Number(pt.openingPalletsReceived || 0) + allClientPms.reduce((acc, pm) => acc + Number(pm.deliveredCount || 0) - Number(pm.receivedCount || 0), 0));
+  pt.finalNetPallets = newNet;
   pt.updatedAt = now;
 
-  // Purge any incremental palletMovements for this client so nothing can ever add to or deduct from the finalized balance
-  (state.palletMovements || []).forEach(pm => {
-    if (pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim()))) {
-      markRecordIdDeleted(pm.id);
-    }
-  });
-  state.palletMovements = (state.palletMovements || []).filter(
-    pm => !(pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim())))
-  );
-
   closeModal();
-  saveState(`🔒 اعتماد وتثبيت الرصيد النهائي لحساب البالتات المستقل للعميل (${pt.code || ''} - ${pt.name}) بعدد (${finalCount} بالتة × ${fmtMoney(palletUnitPrice)} = ${fmtMoney(finalCount * palletUnitPrice)}) — رصيد نهائي غير قابل للإضافة أو الخصم`);
+  saveState(`🪵 تحديث حساب البالتات للعميل (${pt.code || ''} - ${pt.name}) — الرصيد الصافي الحالي: (${newNet} بالتة × ${fmtMoney(palletUnitPrice)} = ${fmtMoney(newNet * palletUnitPrice)})`);
 }
 
 function openSetDefaultPalletPriceModal() {
@@ -13871,19 +14096,31 @@ function updateCellUnitPrice(thkId, gradeId, priceVal) {
   }
   const price = Math.max(0, Number(priceVal || 0));
   state.catalog.cellPrices = state.catalog.cellPrices || {};
+  state.catalog.cellPricesUpdatedAt = state.catalog.cellPricesUpdatedAt || {};
+  const nowMs = Date.now();
   const key = getCellPriceKey(thkId, gradeId);
   state.catalog.cellPrices[key] = price;
+  state.catalog.cellPricesUpdatedAt[key] = nowMs;
 
   const thkObj = state.catalog.thicknesses.find(t => t.id === thkId);
   const gradeObj = state.catalog.grades.find(g => g.id === gradeId);
 
-  // Also update in-stock pallets matching this cell so inventory value reflects the new piece price immediately
   if (thkObj) {
+    const altKey = getCellPriceKey(thkObj.id, gradeId);
+    const canonKey = getCellPriceKey(`th-${Number(thkObj.mm)}-${thkObj.direction || 'qas'}`, gradeId);
+    state.catalog.cellPrices[altKey] = price;
+    state.catalog.cellPrices[canonKey] = price;
+    state.catalog.cellPricesUpdatedAt[altKey] = nowMs;
+    state.catalog.cellPricesUpdatedAt[canonKey] = nowMs;
+
+    // Also update matching pallets so inventory value reflects the new piece price immediately (and clear stale price on 0-sheet pallets when set to 0)
     for (const p of (state.pallets || [])) {
-      if (p.status === 'in_stock' && matchPalletToThicknessRow(p, thkObj) && p.gradeId === gradeId) {
-        p.unitSheetPrice = price;
-        p.totalValue = +(Number(p.sheetsCount || 0) * price).toFixed(2);
-        p.updatedAt = new Date().toISOString();
+      if (matchPalletToThicknessRow(p, thkObj) && matchPalletToGrade(p, gradeId)) {
+        if (p.status === 'in_stock' || price === 0) {
+          p.unitSheetPrice = price;
+          p.totalValue = +(Number(p.sheetsCount || 0) * price).toFixed(2);
+          p.updatedAt = new Date().toISOString();
+        }
       }
     }
   }
@@ -16664,7 +16901,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '79');
+  urlObj.searchParams.set('v', '80');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
@@ -19396,18 +19633,19 @@ function submitEditPartnerModal(e, clientId) {
   pt.openingDebit = Math.max(0, Number(document.getElementById('ept-debit')?.value || 0));
   pt.openingCredit = Math.max(0, Number(document.getElementById('ept-credit')?.value || 0));
   const finalPallets = Math.max(0, Math.round(Number(document.getElementById('ept-final-pallets')?.value ?? pt.finalNetPallets ?? pt.openingPalletsDelivered ?? 0)));
-  pt.finalNetPallets = finalPallets;
-  pt.openingPalletsDelivered = finalPallets;
-  pt.openingPalletsReceived = 0;
-  pt.palletAccountFinalized = true;
-  (state.palletMovements || []).forEach(pm => {
-    if (pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim()))) {
-      markRecordIdDeleted(pm.id);
-    }
-  });
-  state.palletMovements = (state.palletMovements || []).filter(
-    pm => !(pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim())))
+  const clientPms = (state.palletMovements || []).filter(
+    pm => pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim()))
   );
+  const pmNet = clientPms.reduce((acc, pm) => acc + Number(pm.deliveredCount || 0) - Number(pm.receivedCount || 0), 0);
+  const neededOpening = finalPallets - pmNet;
+  if (neededOpening >= 0) {
+    pt.openingPalletsDelivered = neededOpening;
+    pt.openingPalletsReceived = 0;
+  } else {
+    pt.openingPalletsDelivered = 0;
+    pt.openingPalletsReceived = Math.abs(neededOpening);
+  }
+  pt.finalNetPallets = finalPallets;
   const pltPrice = Math.max(0, Number(document.getElementById('ept-plt-price')?.value ?? getWoodenPalletUnitPrice(pt))) || 500;
   pt.palletUnitPrice = pltPrice;
   if (pltPrice > 0 && !Number(state.catalog?.woodenPalletUnitPrice)) {
@@ -20332,18 +20570,19 @@ function submitClientOrderPiecePricesBatch(e, clientId) {
     if (Math.abs(newDeb - oldDeb) > 0.001 || Math.abs(newCred - oldCred) > 0.001 || newFinalPallets !== oldFinalPallets) {
       pt.openingDebit = newDeb;
       pt.openingCredit = newCred;
-      pt.finalNetPallets = newFinalPallets;
-      pt.openingPalletsDelivered = newFinalPallets;
-      pt.openingPalletsReceived = 0;
-      pt.palletAccountFinalized = true;
-      (state.palletMovements || []).forEach(pm => {
-        if (pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim()))) {
-          markRecordIdDeleted(pm.id);
-        }
-      });
-      state.palletMovements = (state.palletMovements || []).filter(
-        pm => !(pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim())))
+      const clientPms = (state.palletMovements || []).filter(
+        pm => pm && ((pm.clientId && pm.clientId === pt.id) || (!pm.clientId && pm.clientName && pt.name && pm.clientName.trim() === pt.name.trim()))
       );
+      const pmNet = clientPms.reduce((acc, pm) => acc + Number(pm.deliveredCount || 0) - Number(pm.receivedCount || 0), 0);
+      const neededOpening = newFinalPallets - pmNet;
+      if (neededOpening >= 0) {
+        pt.openingPalletsDelivered = neededOpening;
+        pt.openingPalletsReceived = 0;
+      } else {
+        pt.openingPalletsDelivered = 0;
+        pt.openingPalletsReceived = Math.abs(neededOpening);
+      }
+      pt.finalNetPallets = newFinalPallets;
       pt.balance = +(newDeb - newCred).toFixed(2);
       pt.updatedAt = now;
       changesLog.push(`تعديل الرصيد الافتتاحي لحساب القشرة (مدين: ${fmtMoney(newDeb)} / دائن: ${fmtMoney(newCred)}) والرصيد النهائي للبالتات (${newFinalPallets} بالتة)`);
@@ -20827,7 +21066,20 @@ function submitEditPalletMovementModal(e, pmId) {
   pm.totalDeliveredValue = +(pm.deliveredCount * pltPrice).toFixed(2);
   pm.totalReceivedValue = +(pm.receivedCount * pltPrice).toFixed(2);
   pm.notes = (document.getElementById('epm-notes')?.value || pm.notes).trim();
-  pm.updatedAt = new Date().toISOString();
+  pm.updatedAt = getMonotonicIso(pm.updatedAt);
+
+  // Sync linked order carDispatchVoucher if this pallet movement belongs to a car dispatch
+  if (pm.orderId) {
+    const ord = (state.productionOrders || []).find(o => o && o.id === pm.orderId);
+    if (ord && ord.carDispatchVoucher) {
+      ord.carDispatchVoucher.palletsDeliveredCount = pm.deliveredCount;
+      ord.carDispatchVoucher.palletsReceivedCount = pm.receivedCount;
+      ord.carDispatchVoucher.palletUnitPrice = pltPrice;
+      ord.carDispatchVoucher.palletsDeliveredValue = pm.totalDeliveredValue;
+      ord.carDispatchVoucher.palletsReceivedValue = pm.totalReceivedValue;
+      ord.updatedAt = pm.updatedAt;
+    }
+  }
   closeModal();
   saveState(`✏️ تعديل حركة بالتات للعميل (${pm.clientName}) بواسطة ${currentUser.name}`);
 }
