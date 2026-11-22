@@ -115,9 +115,21 @@ function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function toWesternDigitsString(str) {
+  if (str === null || str === undefined) return '';
+  const arabicDigits = '٠١٢٣٤٥٦٧٨٩';
+  const easternDigits = '۰۱۲۳۴۵۶۷۸۹';
+  let out = String(str);
+  for (let i = 0; i < 10; i++) {
+    out = out.split(arabicDigits[i]).join(String(i));
+    out = out.split(easternDigits[i]).join(String(i));
+  }
+  return out;
+}
+
 function fmtNum(n, decimals = 2) {
   const num = Number(n || 0);
-  return num.toLocaleString('ar-EG', { minimumFractionDigits: 0, maximumFractionDigits: decimals });
+  return toWesternDigitsString(num.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: decimals }));
 }
 
 function isWarehouseKeeperOnly(user = currentUser) {
@@ -231,17 +243,40 @@ function sanitizeTextForWarehouseKeeper(str) {
 function fmtMoney(n) {
   if (isWarehouseKeeperOnly()) return 'كميات فقط';
   const num = Number(n || 0);
-  return `${num.toLocaleString('ar-EG', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${state?.factoryInfo?.currency || 'ج.م'}`;
+  return `${toWesternDigitsString(num.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 }))} ${state?.factoryInfo?.currency || 'ج.م'}`;
 }
 
 function fmtDate(iso) {
   if (!iso) return '-';
   try {
     const d = new Date(iso);
-    if (isNaN(d.getTime())) return iso;
-    return d.toLocaleDateString('ar-EG', { year: 'numeric', month: 'short', day: 'numeric' });
+    if (isNaN(d.getTime())) return toWesternDigitsString(iso);
+    return toWesternDigitsString(d.toLocaleDateString('ar-EG-u-nu-latn', { year: 'numeric', month: 'short', day: 'numeric' }));
   } catch (_) {
-    return iso;
+    return toWesternDigitsString(iso);
+  }
+}
+
+function fmtTime(isoOrDate = new Date(), withSeconds = false) {
+  try {
+    const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+    if (isNaN(d.getTime())) return '';
+    const opts = withSeconds
+      ? { hour: '2-digit', minute: '2-digit', second: '2-digit' }
+      : { hour: '2-digit', minute: '2-digit' };
+    return toWesternDigitsString(d.toLocaleTimeString('ar-EG-u-nu-latn', opts));
+  } catch (_) {
+    return '';
+  }
+}
+
+function fmtDateTime(isoOrDate = new Date()) {
+  try {
+    const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+    if (isNaN(d.getTime())) return toWesternDigitsString(String(isoOrDate || ''));
+    return toWesternDigitsString(d.toLocaleString('ar-EG-u-nu-latn'));
+  } catch (_) {
+    return toWesternDigitsString(String(isoOrDate || ''));
   }
 }
 
@@ -1916,7 +1951,7 @@ async function executeUndoEntry(undoId, skipConfirm = false) {
     const msg =
       `↩️ تأكيد التراجع (Undo) وإرجاع الشيء لأصله قبل التعديل:\n\n` +
       `📌 العملية التي سيتم إلغاؤها: ${entry.actionLabel}\n` +
-      `👤 المنفذ: ${entry.actorName} (${new Date(entry.timestamp).toLocaleString('ar-EG')})\n` +
+      `👤 المنفذ: ${entry.actorName} (${fmtDateTime(entry.timestamp)})\n` +
       `🔄 ما سيتم إرجاعه لأصله: ${entry.changesSummary || 'كافة الأرصدة والبيانات المرتبطة'}\n\n` +
       `هل تريد إرجاع المخازن والحسابات والبيانات لحالتها الأصلية قبل هذا التعديل فوراً؟`;
     if (!confirm(msg)) return;
@@ -2215,7 +2250,7 @@ function openUndoHistoryModal() {
                   <td><strong>${idx + 1}</strong></td>
                   <td style="white-space:nowrap;font-size:0.76rem;">
                     ${fmtDate(u.timestamp)}<br/>
-                    <strong>${new Date(u.timestamp).toLocaleTimeString('ar-EG')}</strong>
+                    <strong>${fmtTime(u.timestamp, true)}</strong>
                   </td>
                   <td>
                     <strong>${u.actorName || '-'}</strong><br/>
@@ -3492,7 +3527,7 @@ function openNotificationsCenterModal() {
                 const matchedUndo = undoEntries.find(u => (l.undoId && u.id === l.undoId) || (u.actionLabel && u.actionLabel === l.action));
                 return `
                   <tr>
-                    <td style="white-space:nowrap;font-size:0.78rem;">${fmtDate(l.timestamp)}<br/><strong>${new Date(l.timestamp).toLocaleTimeString('ar-EG')}</strong></td>
+                    <td style="white-space:nowrap;font-size:0.78rem;">${fmtDate(l.timestamp)}<br/><strong>${fmtTime(l.timestamp, true)}</strong></td>
                     <td><strong>${l.userName}</strong><br/><small style="color:var(--text-muted);">${l.roleTitle || ''}</small></td>
                     <td style="font-weight:700;">${sanitizeTextForWarehouseKeeper(l.action)}</td>
                     <td>
@@ -3805,7 +3840,7 @@ function renderChatAndTasksTab() {
                     ${m.channel && m.channel.startsWith('dm_') ? `<span class="badge" style="background:#7c3aed;color:#fff;">🔒 محادثة خاصة</span>` : ''}
                   </div>
                   <small style="color:var(--text-muted);font-size:0.72rem;">
-                    ${fmtDate(m.createdAt)} — ${new Date(m.createdAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                    ${fmtDate(m.createdAt)} — ${fmtTime(m.createdAt, false)}
                   </small>
                 </div>
 
@@ -3832,7 +3867,7 @@ function renderChatAndTasksTab() {
                     <div>
                       ${isCompleted ? `
                         <span class="badge badge-success" style="padding:5px 12px;">
-                          ✅ تم التنفيذ بواسطة (${m.completedBy}) — ${new Date(m.completedAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                          ✅ تم التنفيذ بواسطة (${m.completedBy}) — ${fmtTime(m.completedAt, false)}
                         </span>
                       ` : `
                         <button class="btn btn-sm btn-success" onclick="completeChatTask('${m.id}')">
@@ -4580,7 +4615,7 @@ function renderFinishedVeneerWarehouse() {
       }
     }
     for (const [dimLbl, dimSheets] of customMap.entries()) {
-      customDimBreakdown.push(`${dimLbl}: ${fmtNum(dimSheets, 0)} ق`);
+      customDimBreakdown.push(`${dimLbl}: ${fmtNum(dimSheets, 0)}`);
     }
 
     // Calculate sold pieces & revenue from movements for this cell (supporting both . and _dot_ keys)
@@ -4826,7 +4861,7 @@ function renderFinishedVeneerWarehouse() {
                   `;
                 }).join('')}
 
-                <th class="matrix-grade-th" style="min-width:100px;background:rgba(180,83,9,0.08);">
+                <th class="matrix-grade-th" style="background:rgba(180,83,9,0.08);">
                   ${canEditWh ? `<button class="btn btn-sm btn-primary" onclick="addGradePrompt()" style="width:100%;margin-bottom:3px;padding:2px 6px;font-size:0.66rem;">+ جودة</button>` : ''}
                   <div style="font-size:0.75rem;font-weight:800;color:var(--primary);">إجمالي الصف</div>
                 </th>
@@ -4865,7 +4900,7 @@ function renderFinishedVeneerWarehouse() {
                         style="${hasNegativeStock ? 'background:rgba(220,38,38,0.10) !important;border:2px solid var(--danger) !important;' : ''}${canEditWh ? '' : 'cursor:default;'}"
                         ${canEditWh ? `onclick="openMatrixCellModal('${t.id}', '${g.id}')"` : ''}>
                       ${hasStock ? `
-                        <div class="cell-main-qty" style="color:var(--primary);">${fmtNum(cell.sheets, 0)} قطعة</div>
+                        <div class="cell-main-qty" style="color:var(--primary);">${fmtNum(cell.sheets, 0)}</div>
                         ${canSeeFinancialPrices() && cell.unitPiecePrice > 0 ? `
                           <div class="cell-sub-metrics">
                             <span style="color:var(--success);font-weight:700;">${fmtNum(cell.unitPiecePrice, 1)} ج</span>
@@ -4877,12 +4912,12 @@ function renderFinishedVeneerWarehouse() {
                           </div>
                         ` : ''}
                       ` : hasNegativeStock ? `
-                        <div class="cell-main-qty" style="color:var(--danger);font-weight:900;direction:ltr;">${fmtNum(cell.sheets, 0)} قطعة</div>
+                        <div class="cell-main-qty" style="color:var(--danger);font-weight:900;direction:ltr;">${fmtNum(cell.sheets, 0)}</div>
                         <div style="margin-top:2px;font-size:0.62rem;background:#fee2e2;color:#b91c1c;border:1px solid #ef4444;border-radius:4px;padding:1px 4px;font-weight:800;">
                           📉 بالسالب (لحين الإضافة)
                         </div>
                       ` : `
-                        <div style="color:var(--text-muted);font-size:0.74rem;font-weight:600;">0</div>
+                        <div class="cell-main-qty" style="color:var(--text-muted);font-weight:700;">0</div>
                       `}
                       ${canEditWh ? `
                       <div class="cell-action-hint">
@@ -4921,7 +4956,7 @@ function renderFinishedVeneerWarehouse() {
 
                     <!-- Row Total -->
                     <td class="matrix-total-cell">
-                      <div style="color:var(--primary);font-size:0.84rem;font-weight:900;">${fmtNum(rowSheets, 0)} ق</div>
+                      <div class="cell-main-qty" style="color:var(--primary);">${fmtNum(rowSheets, 0)}</div>
                     </td>
                   </tr>
                 `;
@@ -4931,19 +4966,19 @@ function renderFinishedVeneerWarehouse() {
             <tfoot>
               <tr>
                 <td class="matrix-thickness-td" style="background:rgba(15,23,42,0.08);">
-                  <strong style="font-size:0.76rem;">إجمالي الجودة ⬅️</strong>
+                  <strong style="font-size:0.78rem;">إجمالي الجودة ⬅️</strong>
                 </td>
                 ${grades.map(g => {
                   const colPallets = inStockPallets.filter(p => matchPalletToGrade(p, g.id));
                   const colSheets = colPallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
                   return `
                     <td class="matrix-total-cell">
-                      <div style="color:var(--accent);font-size:0.86rem;font-weight:900;">${fmtNum(colSheets, 0)} ق</div>
+                      <div class="cell-main-qty" style="color:var(--accent);">${fmtNum(colSheets, 0)}</div>
                     </td>
                   `;
                 }).join('')}
                 <td class="matrix-total-cell" style="background:var(--primary-light) !important;">
-                  <div style="color:var(--primary);font-size:0.92rem;font-weight:900;">${fmtNum(grandSheets, 0)} قطعة</div>
+                  <div class="cell-main-qty" style="color:var(--primary);font-size:1.12rem;">${fmtNum(grandSheets, 0)}</div>
                 </td>
               </tr>
             </tfoot>
@@ -4973,7 +5008,7 @@ function renderFinishedVeneerWarehouse() {
                     <div style="margin-top:2px;font-size:0.75rem;font-weight:800;">${g.name}</div>
                   </th>
                 `).join('')}
-                <th class="matrix-grade-th" style="min-width:110px;background:rgba(15,118,110,0.08);">
+                <th class="matrix-grade-th" style="background:rgba(15,118,110,0.08);">
                   <div style="font-size:0.76rem;font-weight:800;color:var(--accent);">إجمالي الصف</div>
                 </th>
               </tr>
@@ -5066,7 +5101,7 @@ function renderFinishedVeneerWarehouse() {
                 <td class="matrix-total-cell" style="background:var(--accent-light) !important;">
                   <div style="color:var(--primary);font-size:0.88rem;font-weight:900;">${fmtMoney(grandStockValueByPiece)}</div>
                   <div style="font-size:0.68rem;color:var(--success);font-weight:800;">
-                    مبيعات (${grandSoldSheets} ق): ${fmtMoney(grandSoldRevenue)}
+                    مبيعات (${fmtNum(grandSoldSheets, 0)}): ${fmtMoney(grandSoldRevenue)}
                   </div>
                 </td>
               </tr>
@@ -5496,7 +5531,7 @@ function extractProductionEntryDetails(m) {
     try {
       const dt = new Date(m.updatedAt);
       if (!isNaN(dt.getTime())) {
-        timeStr = dt.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+        timeStr = fmtTime(dt, false);
       }
     } catch (_) {}
   }
@@ -6039,7 +6074,7 @@ function renderProductionLogTableSection() {
         <div class="stat-card" style="border-right:4px solid #7c3aed;">
           <span class="stat-title">المستخدمون المنفذون لتنزيل الإنتاج</span>
           <div class="stat-value" style="font-size:0.95rem;color:#6d28d9;">
-            ${data.userSummaryList.length === 0 ? 'لا يوجد' : data.userSummaryList.map(u => `${u.userName} (${fmtNum(u.sheets, 0)} ق)`).join(' | ')}
+            ${data.userSummaryList.length === 0 ? 'لا يوجد' : data.userSummaryList.map(u => `${u.userName} (${fmtNum(u.sheets, 0)})`).join(' | ')}
           </div>
           <div class="stat-sub">
             ${showPrices ? `إجمالي القيمة التقديرية للإنتاج: <strong style="color:var(--success);">${fmtMoney(data.totalValue)}</strong>` : 'متابعة كميات الإنتاج حسب المستخدم'}
@@ -6056,26 +6091,24 @@ function renderProductionLogTableSection() {
         <table class="matrix-table">
           <thead>
             <tr>
-              <th class="matrix-corner-th" style="min-width:115px;text-align:center;">
+              <th class="matrix-corner-th" style="text-align:center;">
                 📅 التاريخ
               </th>
-              <th class="matrix-grade-th" style="min-width:115px;background:#0f172a;color:#fff;text-align:center;">
+              <th class="matrix-grade-th" style="background:#0f172a;color:#fff;text-align:center;">
                 ⭐ الجودة \\ التخانة ⬅️
               </th>
               ${thkCols.map(col => `
-                <th class="matrix-grade-th" style="min-width:92px;text-align:center;border-top:3px solid ${col.direction === 'sada' ? '#0284c7' : '#d97706'};">
-                  <div style="font-weight:900;font-size:0.82rem;color:var(--primary);">${col.thkMm} مم</div>
+                <th class="matrix-grade-th" style="text-align:center;border-top:3px solid ${col.direction === 'sada' ? '#0284c7' : '#d97706'};">
+                  <div style="font-weight:900;font-size:0.86rem;color:var(--primary);">${col.thkMm} مم</div>
                   <span class="badge" style="background:${col.direction === 'sada' ? '#0284c7' : '#d97706'};color:#fff;font-size:0.65rem;padding:1px 6px;">
                     ${col.direction === 'sada' ? '📏 سدا' : '✂️ قص'}
                   </span>
-                  <div style="font-size:0.66rem;color:var(--text-muted);margin-top:2px;">الكمية (قطعة)</div>
                 </th>
               `).join('')}
-              <th class="matrix-grade-th" style="min-width:105px;background:rgba(15,118,110,0.10);text-align:center;">
+              <th class="matrix-grade-th" style="background:rgba(15,118,110,0.10);text-align:center;">
                 <div style="font-weight:900;color:var(--primary);">إجمالي الجودة</div>
-                <small style="font-size:0.66rem;color:var(--text-muted);">بالقطعة (الفرخ)</small>
               </th>
-              <th class="matrix-grade-th" style="min-width:130px;background:rgba(124,58,237,0.10);text-align:center;">
+              <th class="matrix-grade-th" style="background:rgba(124,58,237,0.10);text-align:center;">
                 <div style="font-weight:900;color:#6d28d9;">👤 قام بتنزيل الإنتاج</div>
                 <small style="font-size:0.66rem;color:var(--text-muted);">اسم المستخدم</small>
               </th>
@@ -6095,7 +6128,7 @@ function renderProductionLogTableSection() {
                   ${gIdx === 0 ? `
                     <td rowspan="${rowSpanCount}" style="background:var(--bg-elevated);font-weight:900;text-align:center;vertical-align:middle;border-left:2px solid var(--primary);padding:8px 6px;">
                       <div style="font-size:0.88rem;color:var(--primary);">📅 ${dg.dateStr}</div>
-                      <div style="font-size:0.72rem;color:var(--success);margin-top:4px;">إجمالي اليوم:<br/><strong>${fmtNum(dg.dayTotalSheets, 0)} قطعة</strong></div>
+                      <div style="font-size:0.75rem;color:var(--success);margin-top:4px;">إجمالي اليوم:<br/><strong style="font-size:0.98rem;">${fmtNum(dg.dayTotalSheets, 0)}</strong></div>
                     </td>
                   ` : ''}
                   <td style="background:rgba(15,118,110,0.06);font-weight:800;text-align:center;vertical-align:middle;padding:6px;">
@@ -6105,18 +6138,18 @@ function renderProductionLogTableSection() {
                   ${thkCols.map(col => {
                     const cell = gRow.cellsByThkKey.get(col.colKey);
                     if (!cell || cell.sheets <= 0) {
-                      return `<td style="text-align:center;color:var(--text-muted);font-size:0.74rem;vertical-align:middle;">-</td>`;
+                      return `<td style="text-align:center;color:var(--text-muted);font-size:0.84rem;vertical-align:middle;">-</td>`;
                     }
                     const usersArr = Array.from(cell.usersSet);
                     return `
                       <td style="text-align:center;vertical-align:middle;background:rgba(16,185,129,0.07);padding:5px 4px;">
-                        <div style="font-weight:900;font-size:0.9rem;color:var(--success);">${fmtNum(cell.sheets, 0)} ق</div>
-                        <div style="font-size:0.63rem;color:#6d28d9;font-weight:800;margin-top:2px;">👤 ${usersArr.join(' ، ')}</div>
+                        <div class="cell-main-qty" style="color:var(--success);">${fmtNum(cell.sheets, 0)}</div>
+                        <div style="font-size:0.65rem;color:#6d28d9;font-weight:800;margin-top:2px;">👤 ${usersArr.join(' ، ')}</div>
                       </td>
                     `;
                   }).join('')}
                   <td class="matrix-total-cell" style="text-align:center;vertical-align:middle;">
-                    <div style="font-weight:900;font-size:0.88rem;color:var(--primary);">${fmtNum(gRow.rowTotalSheets, 0)} قطعة</div>
+                    <div class="cell-main-qty" style="color:var(--primary);">${fmtNum(gRow.rowTotalSheets, 0)}</div>
                   </td>
                   <td style="text-align:center;vertical-align:middle;padding:6px;">
                     <div style="display:flex;flex-direction:column;gap:3px;align-items:center;">
@@ -6140,15 +6173,15 @@ function renderProductionLogTableSection() {
                 ${thkCols.map(col => `
                   <td class="matrix-total-cell" style="text-align:center;">
                     ${col.totalSheets > 0 ? `
-                      <div style="color:var(--primary);font-weight:900;font-size:0.86rem;">${fmtNum(col.totalSheets, 0)} ق</div>
+                      <div class="cell-main-qty" style="color:var(--primary);">${fmtNum(col.totalSheets, 0)}</div>
                     ` : `<span style="color:var(--text-muted);">-</span>`}
                   </td>
                 `).join('')}
                 <td class="matrix-total-cell" style="background:var(--primary-light) !important;text-align:center;">
-                  <div style="color:var(--primary);font-size:0.94rem;font-weight:900;">${fmtNum(data.totalSheets, 0)} قطعة</div>
+                  <div class="cell-main-qty" style="color:var(--primary);font-size:1.12rem;">${fmtNum(data.totalSheets, 0)}</div>
                 </td>
-                <td style="text-align:center;font-size:0.72rem;color:#6d28d9;">
-                  ${data.userSummaryList.map(u => `<div>👤 ${u.userName}: <strong>${fmtNum(u.sheets, 0)} ق</strong></div>`).join('')}
+                <td style="text-align:center;font-size:0.74rem;color:#6d28d9;">
+                  ${data.userSummaryList.map(u => `<div>👤 ${u.userName}: <strong>${fmtNum(u.sheets, 0)}</strong></div>`).join('')}
                 </td>
               </tr>
             </tfoot>
@@ -6233,21 +6266,21 @@ function printProductionLogReportPdf() {
       )}
 
       ${data.userSummaryList.length > 0 ? `
-        <div style="margin-bottom:10px;padding:6px 10px;border:1px solid #334155;border-radius:6px;background:#f8fafc;font-size:11.5px;">
+        <div style="margin-bottom:10px;padding:6px 10px;border:1px solid #334155;border-radius:6px;background:#f8fafc;font-size:12px;">
           <strong>👤 إجمالي الإنتاج المنزّل حسب المستخدم:</strong>
-          ${data.userSummaryList.map(u => `${u.userName}: ${fmtNum(u.sheets, 0)} قطعة (${showM3 ? fmtNum(u.volumeM3, 3) + ' م³ — ' : ''}${u.entriesCount} حركة)`).join(' &nbsp;|&nbsp; ')}
+          ${data.userSummaryList.map(u => `${u.userName}: <strong>${fmtNum(u.sheets, 0)}</strong> (${showM3 ? fmtNum(u.volumeM3, 3) + ' م³ — ' : ''}${u.entriesCount} حركة)`).join(' &nbsp;|&nbsp; ')}
         </div>
       ` : ''}
 
-      <table class="pdf-report-table">
+      <table class="pdf-report-table" style="table-layout:fixed;width:100%;">
         <thead>
           <tr>
             <th>التاريخ</th>
             <th>الجودة \\ التخانة</th>
             ${thkCols.map(col => `
               <th>
-                <div>${col.thkMm} مم</div>
-                <div style="font-size:9.5px;">(${col.direction === 'sada' ? 'سدا' : 'قص'})</div>
+                <div style="font-size:12px;">${col.thkMm} مم</div>
+                <div style="font-size:10px;">(${col.direction === 'sada' ? 'سدا' : 'قص'})</div>
               </th>
             `).join('')}
             <th>إجمالي الجودة</th>
@@ -6261,43 +6294,43 @@ function printProductionLogReportPdf() {
               <tr>
                 ${gIdx === 0 ? `
                   <td rowspan="${rowSpanCount}" style="font-weight:900;background:#f1f5f9;">
-                    <div>${dg.dateStr}</div>
-                    <div style="font-size:9.5px;margin-top:2px;">(${fmtNum(dg.dayTotalSheets, 0)} ق)</div>
+                    <div style="font-size:12px;">${dg.dateStr}</div>
+                    <div style="font-size:12px;margin-top:2px;color:#0f766e;">${fmtNum(dg.dayTotalSheets, 0)}</div>
                   </td>
                 ` : ''}
-                <td style="font-weight:800;background:#f8fafc;">${gRow.gradeCode}</td>
+                <td style="font-weight:900;background:#f8fafc;font-size:12.5px;">${gRow.gradeCode}</td>
                 ${thkCols.map(col => {
                   const cell = gRow.cellsByThkKey.get(col.colKey);
-                  if (!cell || cell.sheets <= 0) return `<td>-</td>`;
+                  if (!cell || cell.sheets <= 0) return `<td style="font-size:13px;color:#94a3b8;">-</td>`;
                   return `
                     <td>
-                      <strong>${fmtNum(cell.sheets, 0)} ق</strong>
-                      ${showM3 ? `<div style="font-size:9px;">${fmtNum(cell.volumeM3, 3)} م³</div>` : ''}
-                      ${showM2 ? `<div style="font-size:8.5px;color:#475569;">${fmtNum(cell.areaM2, 1)} م²</div>` : ''}
-                      <div style="font-size:8.5px;color:#334155;">${Array.from(cell.usersSet).join('، ')}</div>
+                      <div style="font-weight:900;font-size:14.5px;color:#0f172a;direction:ltr;">${fmtNum(cell.sheets, 0)}</div>
+                      ${showM3 ? `<div style="font-size:10px;">${fmtNum(cell.volumeM3, 3)} م³</div>` : ''}
+                      ${showM2 ? `<div style="font-size:9.5px;color:#475569;">${fmtNum(cell.areaM2, 1)} م²</div>` : ''}
+                      <div style="font-size:9.5px;color:#334155;">${Array.from(cell.usersSet).join('، ')}</div>
                     </td>
                   `;
                 }).join('')}
                 <td style="font-weight:900;background:#f1f5f9;">
-                  <div>${fmtNum(gRow.rowTotalSheets, 0)} ق</div>
-                  ${showM3 ? `<div style="font-size:9px;">${fmtNum(gRow.rowTotalVolumeM3, 3)} م³</div>` : ''}
-                  ${showM2 ? `<div style="font-size:8.5px;color:#475569;">${fmtNum(gRow.rowTotalAreaM2, 1)} م²</div>` : ''}
+                  <div style="font-size:14.5px;color:#0f766e;direction:ltr;">${fmtNum(gRow.rowTotalSheets, 0)}</div>
+                  ${showM3 ? `<div style="font-size:10px;">${fmtNum(gRow.rowTotalVolumeM3, 3)} م³</div>` : ''}
+                  ${showM2 ? `<div style="font-size:9.5px;color:#475569;">${fmtNum(gRow.rowTotalAreaM2, 1)} م²</div>` : ''}
                 </td>
-                <td style="font-weight:800;">${Array.from(gRow.usersSet).join(' ، ')}</td>
+                <td style="font-weight:800;font-size:11.5px;">${Array.from(gRow.usersSet).join(' ، ')}</td>
               </tr>
             `).join('');
           }).join('')}
         </tbody>
         <tfoot>
           <tr style="background:#e2e8f0;font-weight:900;">
-            <td colspan="2">إجمالي التخانة</td>
+            <td colspan="2" style="font-size:12.5px;">إجمالي التخانة</td>
             ${thkCols.map(col => `
               <td>
-                ${col.totalSheets > 0 ? `${fmtNum(col.totalSheets, 0)} ق${showM3 ? `<br/><span style="font-size:9px;">${fmtNum(col.totalVolumeM3, 3)} م³</span>` : ''}${showM2 ? `<br/><span style="font-size:8.5px;">${fmtNum(col.totalAreaM2, 1)} م²</span>` : ''}` : '-'}
+                ${col.totalSheets > 0 ? `<div style="font-size:14.5px;color:#0f172a;direction:ltr;">${fmtNum(col.totalSheets, 0)}</div>${showM3 ? `<div style="font-size:10px;">${fmtNum(col.totalVolumeM3, 3)} م³</div>` : ''}${showM2 ? `<div style="font-size:9.5px;">${fmtNum(col.totalAreaM2, 1)} م²</div>` : ''}` : '-'}
               </td>
             `).join('')}
-            <td>${fmtNum(data.totalSheets, 0)} ق${showM3 ? `<br/><span style="font-size:9px;">${fmtNum(data.totalVolumeM3, 4)} م³</span>` : ''}${showM2 ? `<br/><span style="font-size:8.5px;">${fmtNum(data.totalAreaM2, 2)} م²</span>` : ''}</td>
-            <td>${data.totalEntriesCount} حركة</td>
+            <td style="background:#dcfce7;"><div style="font-size:15.5px;color:#15803d;direction:ltr;">${fmtNum(data.totalSheets, 0)}</div>${showM3 ? `<div style="font-size:10.5px;">${fmtNum(data.totalVolumeM3, 4)} م³</div>` : ''}${showM2 ? `<div style="font-size:9.5px;">${fmtNum(data.totalAreaM2, 2)} م²</div>` : ''}</td>
+            <td style="font-size:12px;">${data.totalEntriesCount} حركة</td>
           </tr>
         </tfoot>
       </table>
@@ -7894,7 +7927,7 @@ function renderReports() {
               const matchedUndo = undoEntries.find(u => (l.undoId && u.id === l.undoId) || (u.actionLabel && u.actionLabel === l.action));
               return `
               <tr>
-                <td>${new Date(l.timestamp).toLocaleString('ar-EG')}</td>
+                <td>${fmtDateTime(l.timestamp)}</td>
                 <td><strong>${l.userName}</strong></td>
                 <td>${l.roleTitle}</td>
                 <td>${sanitizeTextForWarehouseKeeper(l.action)}</td>
@@ -15247,8 +15280,8 @@ function normalizeDomForHtml2CanvasArabic(rootEl) {
     for (const tNode of textNodes) {
       let txt = tNode.nodeValue || '';
 
-      // Clean punctuation & separate glued numbers and Arabic letters
-      txt = txt
+      // Clean punctuation, convert any Eastern/Hindi digits to Western (0-9), & separate glued numbers and Arabic letters
+      txt = toWesternDigitsString(txt)
         .replace(/\u200F/g, '')
         .replace(/([A-Za-z]+)\s*-\s*([A-Za-z]+)/g, '$1-$2')
         .replace(/([0-9\u0660-\u0669])([\u0621-\u064A])/g, '$1 $2')
@@ -16631,7 +16664,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '78');
+  urlObj.searchParams.set('v', '79');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
@@ -17885,7 +17918,7 @@ function triggerOfficialReportPdf(title, subtitle, bodyHtml, landscape = false) 
         ${getPrintTopLeftLogoHtml(`
           <div style="font-size:11px;border:1px solid #0f172a;padding:5px 10px;border-radius:6px;background:#f8fafc;">
             <div><strong>تاريخ الطباعة:</strong> ${todayStr()}</div>
-            <div><strong>التوقيت:</strong> ${new Date().toLocaleTimeString('ar-EG')}</div>
+            <div><strong>التوقيت:</strong> ${fmtTime(new Date(), true)}</div>
             <div><strong>المستخدم:</strong> ${userLabel}</div>
           </div>
         `)}
@@ -17942,10 +17975,10 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
       colTotals[g.id].m3 += m3;
       colTotals[g.id].m2 += m2;
       return `
-        <td style="background:${sheets > 0 ? '#f0fdf4' : sheets < 0 ? '#fef2f2' : '#ffffff'};">
-          <div style="font-weight:900;font-size:12px;color:${sheets > 0 ? '#0f172a' : sheets < 0 ? '#dc2626' : '#94a3b8'};direction:ltr;">${fmtNum(sheets, 0)} ق</div>
-          ${showM3 ? `<div style="font-size:9.5px;color:${sheets < 0 ? '#dc2626' : '#475569'};direction:ltr;">${fmtNum(m3, 3)} م³</div>` : ''}
-          ${showM2 ? `<div style="font-size:9px;color:${sheets < 0 ? '#dc2626' : '#64748b'};direction:ltr;">${fmtNum(m2, 1)} م²</div>` : ''}
+        <td style="background:${sheets > 0 ? '#f0fdf4' : sheets < 0 ? '#fef2f2' : '#ffffff'};padding:6px 4px;">
+          <div style="font-weight:900;font-size:15px;color:${sheets > 0 ? '#0f172a' : sheets < 0 ? '#dc2626' : '#94a3b8'};direction:ltr;">${fmtNum(sheets, 0)}</div>
+          ${showM3 ? `<div style="font-size:10.5px;color:${sheets < 0 ? '#dc2626' : '#475569'};direction:ltr;">${fmtNum(m3, 3)} م³</div>` : ''}
+          ${showM2 ? `<div style="font-size:10px;color:${sheets < 0 ? '#dc2626' : '#64748b'};direction:ltr;">${fmtNum(m2, 1)} م²</div>` : ''}
         </td>
       `;
     }).join('');
@@ -17956,26 +17989,26 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
 
     return `
       <tr>
-        <td style="background:${isSada ? '#e0f2fe' : '#fef3c7'};font-weight:900;text-align:right;white-space:nowrap;">
+        <td style="background:${isSada ? '#e0f2fe' : '#fef3c7'};font-weight:900;font-size:13px;text-align:right;white-space:nowrap;padding:6px 8px;">
           ${t.mm} مم (${isSada ? 'سدا' : 'قص'})
         </td>
         ${cellsHtml}
-        <td style="background:#f1f5f9;font-weight:900;">
-          <div>${fmtNum(rowSheets, 0)} ق</div>
-          ${showM3 ? `<div style="font-size:9.5px;color:#0f766e;">${fmtNum(rowM3, 3)} م³</div>` : ''}
-          ${showM2 ? `<div style="font-size:9px;color:#475569;">${fmtNum(rowM2, 1)} م²</div>` : ''}
+        <td style="background:#f1f5f9;font-weight:900;padding:6px 4px;">
+          <div style="font-size:15px;color:#0f766e;direction:ltr;">${fmtNum(rowSheets, 0)}</div>
+          ${showM3 ? `<div style="font-size:10.5px;color:#0f766e;">${fmtNum(rowM3, 3)} م³</div>` : ''}
+          ${showM2 ? `<div style="font-size:10px;color:#475569;">${fmtNum(rowM2, 1)} م²</div>` : ''}
         </td>
       </tr>
     `;
   }).join('');
 
   return `
-    <table class="pdf-report-table">
+    <table class="pdf-report-table" style="table-layout:fixed;width:100%;">
       <thead>
         <tr>
-          <th style="text-align:right;">التخانة والاتجاه \\ الجودة</th>
-          ${grades.map(g => `<th>${g.code}<br/><span style="font-size:9px;font-weight:600;">${g.name}</span></th>`).join('')}
-          <th>إجمالي الصف</th>
+          <th style="text-align:right;width:15%;font-size:12.5px;">التخانة والاتجاه \\ الجودة</th>
+          ${grades.map(g => `<th style="font-size:12.5px;">${g.code}<br/><span style="font-size:10px;font-weight:700;">${g.name}</span></th>`).join('')}
+          <th style="width:12%;font-size:12.5px;">إجمالي الصف</th>
         </tr>
       </thead>
       <tbody>
@@ -17983,18 +18016,18 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
       </tbody>
       <tfoot>
         <tr style="background:#e2e8f0;font-weight:900;">
-          <td style="text-align:right;">إجمالي العمود</td>
+          <td style="text-align:right;font-size:13px;padding:7px 8px;">إجمالي العمود</td>
           ${grades.map(g => `
-            <td>
-              <div>${fmtNum(colTotals[g.id].sheets, 0)} ق</div>
-              ${showM3 ? `<div style="font-size:9.5px;color:#0f766e;">${fmtNum(colTotals[g.id].m3, 3)} م³</div>` : ''}
-              ${showM2 ? `<div style="font-size:9px;color:#475569;">${fmtNum(colTotals[g.id].m2, 1)} م²</div>` : ''}
+            <td style="padding:7px 4px;">
+              <div style="font-size:15px;color:#0f172a;direction:ltr;">${fmtNum(colTotals[g.id].sheets, 0)}</div>
+              ${showM3 ? `<div style="font-size:10.5px;color:#0f766e;">${fmtNum(colTotals[g.id].m3, 3)} م³</div>` : ''}
+              ${showM2 ? `<div style="font-size:10px;color:#475569;">${fmtNum(colTotals[g.id].m2, 1)} م²</div>` : ''}
             </td>
           `).join('')}
-          <td style="background:#dcfce7;font-size:12px;">
-            <div>${fmtNum(grandSheets, 0)} قطعة</div>
-            ${showM3 ? `<div style="font-size:10px;color:#15803d;">${fmtNum(grandM3, 3)} م³</div>` : ''}
-            ${showM2 ? `<div style="font-size:9.5px;color:#334155;">${fmtNum(grandM2, 1)} م²</div>` : ''}
+          <td style="background:#dcfce7;padding:7px 4px;">
+            <div style="font-size:16px;color:#15803d;direction:ltr;">${fmtNum(grandSheets, 0)}</div>
+            ${showM3 ? `<div style="font-size:11px;color:#15803d;">${fmtNum(grandM3, 3)} م³</div>` : ''}
+            ${showM2 ? `<div style="font-size:10px;color:#334155;">${fmtNum(grandM2, 1)} م²</div>` : ''}
           </td>
         </tr>
       </tfoot>
@@ -18041,10 +18074,10 @@ function buildVeneerPricesMatrixPrintHtml() {
       colTotals[g.id].salesValue += soldValue;
 
       return `
-        <td style="background:${sheets > 0 ? '#fffbeb' : '#ffffff'};">
-          <div style="font-weight:900;font-size:11.5px;color:#b45309;">${fmtNum(unitPrice, 2)} ج/ق</div>
-          <div style="font-size:9.5px;color:#0f172a;">رصيد (${fmtNum(sheets, 0)} ق): <strong>${fmtNum(stockValue, 0)} ج</strong></div>
-          ${soldValue > 0 ? `<div style="font-size:9px;color:#15803d;">مباع: ${fmtNum(soldValue, 0)} ج</div>` : ''}
+        <td style="background:${sheets > 0 ? '#fffbeb' : '#ffffff'};padding:5px 4px;">
+          <div style="font-weight:900;font-size:13px;color:#b45309;">${fmtNum(unitPrice, 2)} ج</div>
+          <div style="font-size:10.5px;color:#0f172a;">رصيد (${fmtNum(sheets, 0)}): <strong>${fmtNum(stockValue, 0)} ج</strong></div>
+          ${soldValue > 0 ? `<div style="font-size:9.5px;color:#15803d;">مباع: ${fmtNum(soldValue, 0)} ج</div>` : ''}
         </td>
       `;
     }).join('');
@@ -18054,25 +18087,25 @@ function buildVeneerPricesMatrixPrintHtml() {
 
     return `
       <tr>
-        <td style="background:${isSada ? '#e0f2fe' : '#fef3c7'};font-weight:900;text-align:right;white-space:nowrap;">
+        <td style="background:${isSada ? '#e0f2fe' : '#fef3c7'};font-weight:900;font-size:12.5px;text-align:right;white-space:nowrap;">
           ${t.mm} مم (${isSada ? 'سدا' : 'قص'})
         </td>
         ${cellsHtml}
-        <td style="background:#f1f5f9;font-weight:900;">
+        <td style="background:#f1f5f9;font-weight:900;font-size:11.5px;">
           <div>رصيد: ${fmtMoney(rowStockVal)}</div>
-          ${rowSalesVal > 0 ? `<div style="font-size:9.5px;color:#15803d;">مباع: ${fmtMoney(rowSalesVal)}</div>` : ''}
+          ${rowSalesVal > 0 ? `<div style="font-size:10px;color:#15803d;">مباع: ${fmtMoney(rowSalesVal)}</div>` : ''}
         </td>
       </tr>
     `;
   }).join('');
 
   return `
-    <table class="pdf-report-table">
+    <table class="pdf-report-table" style="table-layout:fixed;width:100%;">
       <thead>
         <tr>
-          <th style="text-align:right;">التخانة والاتجاه \\ الجودة</th>
-          ${grades.map(g => `<th>${g.code}<br/><span style="font-size:9px;font-weight:600;">${g.name}</span></th>`).join('')}
-          <th>إجمالي قيمة الصف</th>
+          <th style="text-align:right;width:15%;">التخانة والاتجاه \\ الجودة</th>
+          ${grades.map(g => `<th>${g.code}<br/><span style="font-size:9.5px;font-weight:600;">${g.name}</span></th>`).join('')}
+          <th style="width:13%;">إجمالي قيمة الصف</th>
         </tr>
       </thead>
       <tbody>
@@ -18651,7 +18684,7 @@ function printAuditLogReportPdf() {
       <tbody>
         ${logs.map(l => `
           <tr>
-            <td>${new Date(l.timestamp).toLocaleString('ar-EG')}</td>
+            <td>${fmtDateTime(l.timestamp)}</td>
             <td><strong>${l.userName}</strong></td>
             <td>${l.roleTitle}</td>
             <td style="text-align:right;">${sanitizeTextForWarehouseKeeper(l.action)}</td>
@@ -21086,7 +21119,7 @@ function openSmartAiAssistantModal(initialCommand = '') {
     const showPrices = canSeeFinancialPrices();
     aiChatHistory.push({
       sender: 'ai',
-      time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+      time: fmtTime(new Date(), false),
       html: `
         <div style="font-weight:800;color:var(--primary);margin-bottom:6px;">
           👋 أهلاً بك يا <strong>${currentUser?.name || 'بطل المصنع'}</strong> في مساعد مصنع العاصمة الذكي!
@@ -21372,7 +21405,7 @@ function launchAiPrefilledCellAction(thkId, gradeId, opMode, sheetsCount, length
 }
 
 function processSmartAiCommand(rawText) {
-  const timeStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+  const timeStr = fmtTime(new Date(), false);
   aiChatHistory.push({
     sender: 'user',
     time: timeStr,
@@ -23159,7 +23192,7 @@ function syncRawMaterialsWithLogContainers(nowIso) {
 
 function importDedoncker5559AllContainersFromAi() {
   const res = saveContainersBatchToSystem(DEDONCKER_PACKING_LIST_5559);
-  const timeStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+  const timeStr = fmtTime(new Date(), false);
   aiChatHistory.push({
     sender: 'ai',
     time: timeStr,
@@ -23189,7 +23222,7 @@ function importDedoncker5559AllContainersFromAi() {
 async function handleAiPackingListPdfUpload(event) {
   const file = event?.target?.files?.[0];
   if (!file) return;
-  const timeStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+  const timeStr = fmtTime(new Date(), false);
 
   aiChatHistory.push({
     sender: 'user',
@@ -24656,7 +24689,7 @@ function executeLastAiLogMultiPalletPlanNow() {
     batchNotes: 'تشغيل جذع وإنتاج بالتات متعددة عبر المساعد الذكي'
   });
 
-  const timeStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+  const timeStr = fmtTime(new Date(), false);
   aiChatHistory.push({
     sender: 'ai',
     time: timeStr,

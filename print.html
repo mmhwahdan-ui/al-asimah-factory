@@ -189,9 +189,21 @@
     let _printedOnce = false;
     let _currentDocTitle = 'مستند_مصنع_العاصمة';
 
+    function toWesternDigitsString(str) {
+      if (str === null || str === undefined) return '';
+      const arabicDigits = '٠١٢٣٤٥٦٧٨٩';
+      const easternDigits = '۰۱۲۳۴۵۶۷۸۹';
+      let out = String(str);
+      for (let i = 0; i < 10; i++) {
+        out = out.split(arabicDigits[i]).join(String(i));
+        out = out.split(easternDigits[i]).join(String(i));
+      }
+      return out;
+    }
+
     function fmtNumAr(n, decimals = 2) {
       const num = Number(n || 0);
-      return num.toLocaleString('ar-EG', { minimumFractionDigits: 0, maximumFractionDigits: decimals });
+      return toWesternDigitsString(num.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: decimals }));
     }
 
     function decodeBase64UrlUtf8(b64) {
@@ -359,7 +371,7 @@
         for (const tNode of textNodes) {
           let txt = tNode.nodeValue || '';
 
-          txt = txt
+          txt = toWesternDigitsString(txt)
             .replace(/\u200F/g, '')
             .replace(/([A-Za-z]+)\s*-\s*([A-Za-z]+)/g, '$1-$2')
             .replace(/([0-9\u0660-\u0669])([\u0621-\u064A])/g, '$1 $2')
