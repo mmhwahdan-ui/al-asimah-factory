@@ -15918,6 +15918,299 @@ function prepareRtlElementForFullA4Capture(contentEl, isLandscape = false, extra
   return { targetA4PxNum, restore };
 }
 
+function centerAndFrameReportCanvas(rawCanvas, padPx = 32) {
+  if (!rawCanvas || !rawCanvas.width || !rawCanvas.height) return rawCanvas;
+  try {
+    const w = rawCanvas.width;
+    const h = rawCanvas.height;
+    const ctx = rawCanvas.getContext('2d');
+    if (!ctx) return rawCanvas;
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+
+    let minX = w;
+    let minY = h;
+    let maxX = -1;
+    let maxY = -1;
+
+    for (let y = 0; y < h; y++) {
+      const rowOffset = y * w * 4;
+      for (let x = 0; x < w; x++) {
+        const idx = rowOffset + x * 4;
+        if (data[idx + 3] > 15) {
+          if (data[idx] < 248 || data[idx + 1] < 248 || data[idx + 2] < 248) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+    }
+
+    if (maxX <= minX || maxY <= minY) return rawCanvas;
+
+    const cropW = maxX - minX + 1;
+    const cropH = maxY - minY + 1;
+    const pad = Math.max(20, Math.round(padPx));
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = cropW + pad * 2;
+    outCanvas.height = cropH + pad * 2;
+    const outCtx = outCanvas.getContext('2d');
+    if (!outCtx) return rawCanvas;
+
+    outCtx.fillStyle = '#ffffff';
+    outCtx.fillRect(0, 0, outCanvas.width, outCanvas.height);
+    outCtx.drawImage(rawCanvas, minX, minY, cropW, cropH, pad, pad, cropW, cropH);
+    return outCanvas;
+  } catch (_) {
+    return rawCanvas;
+  }
+}
+
+async function captureReportElementToCenteredCanvas(contentEl, isLandscape = false) {
+  if (!contentEl || !contentEl.innerHTML.trim()) return null;
+  paginateTablesForPrintAndPdf(contentEl, isLandscape);
+  normalizeDomForHtml2CanvasArabic(contentEl);
+
+  const h2c = await ensureHtml2CanvasLoaded();
+  if (typeof h2c !== 'function' && typeof window.html2pdf !== 'function') return null;
+
+  const targetA4PxNum = isLandscape ? 1060 : 760;
+  const sideBufferPx = 240;
+  const outerStageWidth = targetA4PxNum + sideBufferPx * 2;
+
+  const prevStage = document.getElementById('__asimah_img_capture_stage__');
+  if (prevStage) prevStage.remove();
+
+  const savedHtmlDir = document.documentElement ? document.documentElement.getAttribute('dir') : 'rtl';
+  const savedHtmlDirStyle = document.documentElement ? document.documentElement.style.direction : '';
+  const savedBodyDir = document.body ? document.body.getAttribute('dir') : 'rtl';
+  const savedBodyDirStyle = document.body ? document.body.style.direction : '';
+  const savedScrollX = window.scrollX || window.pageXOffset || 0;
+  const savedScrollY = window.scrollY || window.pageYOffset || 0;
+
+  const stageOuter = document.createElement('div');
+  stageOuter.id = '__asimah_img_capture_stage__';
+  stageOuter.setAttribute('dir', 'ltr');
+  stageOuter.style.cssText =
+    `position:fixed !important;left:0px !important;top:0px !important;right:auto !important;` +
+    `width:${outerStageWidth}px !important;min-width:${outerStageWidth}px !important;max-width:${outerStageWidth}px !important;` +
+    `padding:36px ${sideBufferPx}px !important;margin:0px !important;background:#ffffff !important;color:#000000 !important;` +
+    `direction:ltr !important;text-align:left !important;box-sizing:border-box !important;z-index:-10 !important;overflow:visible !important;`;
+
+  const cloneEl = contentEl.cloneNode(true);
+  cloneEl.setAttribute('dir', 'rtl');
+  cloneEl.style.cssText =
+    `position:static !important;display:block !important;` +
+    `width:${targetA4PxNum}px !important;min-width:${targetA4PxNum}px !important;max-width:${targetA4PxNum}px !important;` +
+    `margin:0px auto !important;padding:0px !important;background:#ffffff !important;color:#000000 !important;` +
+    `direction:rtl !important;box-sizing:border-box !important;overflow:visible !important;`;
+
+  cloneEl.querySelectorAll('.pdf-report-wrap, table').forEach(el => {
+    el.style.width = '100%';
+    el.style.maxWidth = '100%';
+    el.style.marginLeft = 'auto';
+    el.style.marginRight = 'auto';
+    el.style.boxSizing = 'border-box';
+  });
+
+  stageOuter.appendChild(cloneEl);
+
+  let rawCanvas = null;
+  try {
+    if (document.documentElement) {
+      document.documentElement.setAttribute('dir', 'ltr');
+      document.documentElement.style.setProperty('direction', 'ltr', 'important');
+    }
+    if (document.body) {
+      document.body.setAttribute('dir', 'ltr');
+      document.body.style.setProperty('direction', 'ltr', 'important');
+      document.body.appendChild(stageOuter);
+    }
+
+    if (typeof window.scrollTo === 'function') {
+      window.scrollTo(0, 0);
+    }
+
+    const imgs = Array.from(stageOuter.querySelectorAll('img'));
+    if (imgs.length > 0) {
+      await Promise.race([
+        Promise.all(imgs.map(img => img.decode ? img.decode().catch(() => {}) : Promise.resolve())),
+        new Promise(r => setTimeout(r, 250))
+      ]);
+    }
+
+    const stageW = Math.max(outerStageWidth, stageOuter.scrollWidth || stageOuter.offsetWidth || outerStageWidth);
+    const stageH = Math.max(200, stageOuter.scrollHeight || stageOuter.offsetHeight || 600);
+
+    const h2cOpts = {
+      scale: 2,
+      useCORS: true,
+      allowTaint: true,
+      logging: false,
+      letterRendering: false,
+      backgroundColor: '#ffffff',
+      scrollY: 0,
+      scrollX: 0,
+      width: stageW,
+      height: stageH,
+      windowWidth: stageW,
+      windowHeight: stageH,
+      onclone: (clonedDoc) => {
+        try {
+          if (clonedDoc.documentElement) {
+            clonedDoc.documentElement.setAttribute('dir', 'ltr');
+            clonedDoc.documentElement.style.cssText += `;direction:ltr !important;margin:0 !important;padding:0 !important;width:${stageW}px !important;overflow:visible !important;background:#ffffff !important;`;
+          }
+          if (clonedDoc.body) {
+            clonedDoc.body.setAttribute('dir', 'ltr');
+            clonedDoc.body.style.cssText += `;direction:ltr !important;margin:0 !important;padding:0 !important;width:${stageW}px !important;overflow:visible !important;background:#ffffff !important;`;
+          }
+        } catch (_) {}
+      }
+    };
+
+    if (typeof h2c === 'function') {
+      rawCanvas = await h2c(stageOuter, h2cOpts);
+    } else if (typeof window.html2pdf === 'function') {
+      const worker = window.html2pdf().set({
+        margin: 4,
+        html2canvas: h2cOpts,
+        jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait' }
+      }).from(stageOuter).toCanvas();
+      rawCanvas = await worker.get('canvas');
+    }
+  } finally {
+    try { stageOuter.remove(); } catch (_) {}
+    if (document.documentElement) {
+      document.documentElement.setAttribute('dir', savedHtmlDir || 'rtl');
+      document.documentElement.style.direction = savedHtmlDirStyle;
+    }
+    if (document.body) {
+      if (savedBodyDir) document.body.setAttribute('dir', savedBodyDir);
+      else document.body.removeAttribute('dir');
+      document.body.style.direction = savedBodyDirStyle;
+    }
+    if (typeof window.scrollTo === 'function') {
+      window.scrollTo(savedScrollX, savedScrollY);
+    }
+  }
+
+  if (!rawCanvas || !rawCanvas.width || !rawCanvas.height) return null;
+  return centerAndFrameReportCanvas(rawCanvas, 32);
+}
+
+async function buildCenteredJsPdfFromElement(contentEl, isLandscape = false, safeName = 'Report.pdf') {
+  const centeredCanvas = await captureReportElementToCenteredCanvas(contentEl, isLandscape);
+  if (!centeredCanvas) return null;
+
+  const orientation = isLandscape ? 'landscape' : 'portrait';
+  let pdfObj = null;
+  const JsPdfCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+  if (typeof JsPdfCtor === 'function') {
+    pdfObj = new JsPdfCtor({ unit: 'mm', format: 'a4', orientation });
+  } else if (typeof window.html2pdf === 'function') {
+    const dummy = document.createElement('div');
+    dummy.style.cssText = 'width:4px;height:4px;background:#ffffff;';
+    const worker = window.html2pdf().set({
+      jsPDF: { unit: 'mm', format: 'a4', orientation }
+    }).from(dummy).toPdf();
+    const protoPdf = await worker.get('pdf');
+    if (protoPdf && typeof protoPdf.constructor === 'function') {
+      try {
+        pdfObj = new protoPdf.constructor({ unit: 'mm', format: 'a4', orientation });
+      } catch (_) {
+        pdfObj = protoPdf;
+      }
+    } else {
+      pdfObj = protoPdf;
+    }
+  }
+  if (!pdfObj) return null;
+
+  const pageW = isLandscape ? 297 : 210;
+  const pageH = isLandscape ? 210 : 297;
+  const marginMm = 6;
+  const availW = pageW - marginMm * 2;
+  const availH = pageH - marginMm * 2;
+
+  const isSinglePageStmt = Boolean(contentEl.querySelector('[data-single-page-statement="1"]'));
+  const explicitBreaksCount = contentEl.querySelectorAll('.html2pdf__page-break').length;
+  const imgW = centeredCanvas.width;
+  const imgH = centeredCanvas.height;
+  const pageMaxSourceH = Math.floor(imgW * (availH / availW));
+
+  if (isSinglePageStmt || (explicitBreaksCount === 0 && imgH <= pageMaxSourceH * 1.15)) {
+    const imgRatio = imgW / imgH;
+    let drawW = availW;
+    let drawH = drawW / imgRatio;
+    if (drawH > availH) {
+      drawH = availH;
+      drawW = drawH * imgRatio;
+    }
+    const offsetX = +((pageW - drawW) / 2).toFixed(2);
+    const offsetY = +((pageH - drawH) / 2).toFixed(2);
+    const imgDataUrl = centeredCanvas.toDataURL('image/jpeg', 0.98);
+    pdfObj.addImage(imgDataUrl, 'JPEG', offsetX, offsetY, drawW, drawH);
+  } else {
+    let curY = 0;
+    let pageIdx = 0;
+    const ctx = centeredCanvas.getContext('2d');
+    while (curY < imgH - 8) {
+      let sliceH = Math.min(pageMaxSourceH, imgH - curY);
+      if (curY + sliceH < imgH && ctx) {
+        const searchRange = Math.min(80, Math.floor(sliceH * 0.15));
+        const scanStart = Math.max(curY + 40, curY + sliceH - searchRange);
+        const strip = ctx.getImageData(0, scanStart, imgW, curY + sliceH - scanStart).data;
+        const rowsCount = curY + sliceH - scanStart;
+        for (let r = rowsCount - 1; r >= 0; r--) {
+          let rowIsCleanWhite = true;
+          const rOff = r * imgW * 4;
+          for (let x = 40; x < imgW - 40; x += 4) {
+            const i = rOff + x * 4;
+            if (strip[i] < 245 || strip[i + 1] < 245 || strip[i + 2] < 245) {
+              rowIsCleanWhite = false;
+              break;
+            }
+          }
+          if (rowIsCleanWhite) {
+            sliceH = (scanStart + r) - curY;
+            break;
+          }
+        }
+      }
+      const sliceCanvas = document.createElement('canvas');
+      sliceCanvas.width = imgW;
+      sliceCanvas.height = sliceH;
+      const sCtx = sliceCanvas.getContext('2d');
+      if (sCtx) {
+        sCtx.fillStyle = '#ffffff';
+        sCtx.fillRect(0, 0, imgW, sliceH);
+        sCtx.drawImage(centeredCanvas, 0, curY, imgW, sliceH, 0, 0, imgW, sliceH);
+      }
+      if (pageIdx > 0) pdfObj.addPage();
+      const drawW = availW;
+      const drawH = +(drawW * (sliceH / imgW)).toFixed(2);
+      const offsetX = +((pageW - drawW) / 2).toFixed(2);
+      const offsetY = marginMm;
+      pdfObj.addImage(sliceCanvas.toDataURL('image/jpeg', 0.98), 'JPEG', offsetX, offsetY, drawW, drawH);
+      curY += sliceH;
+      pageIdx++;
+    }
+  }
+
+  if (typeof pdfObj.setProperties === 'function') {
+    pdfObj.setProperties({
+      title: safeName.replace(/\.pdf$/i, ''),
+      subject: 'Al Asimah Factory Official PDF Report',
+      author: 'Al Asimah Factory',
+      creator: 'Al Asimah Factory'
+    });
+  }
+  return pdfObj;
+}
+
 async function generateCurrentReportPdfBlobAndUpload() {
   if (_cachedGeneratedPdfFile && _cachedGeneratedForDocTitle === _lastPrintDocumentTitle) {
     return {
@@ -15938,59 +16231,10 @@ async function generateCurrentReportPdfBlobAndUpload() {
     }
     const contentEl = document.getElementById('print-document-content');
     if (!contentEl || !contentEl.innerHTML.trim()) return null;
-    paginateTablesForPrintAndPdf(contentEl, _lastPrintLandscape);
-    normalizeDomForHtml2CanvasArabic(contentEl);
-    if (typeof window.html2pdf !== 'function') return null;
-
-    const isSinglePageStmt = Boolean(contentEl.querySelector('[data-single-page-statement="1"]'));
-    const explicitBreaksCount = contentEl.querySelectorAll('.html2pdf__page-break').length;
-    const expectedMaxPages = isSinglePageStmt ? 1 : (explicitBreaksCount > 0 ? (explicitBreaksCount + 1) : 0);
     const safeName = buildCleanAsciiPdfFileName(_lastPrintDocumentTitle || 'Report');
 
-    const { targetA4PxNum, restore } = prepareRtlElementForFullA4Capture(contentEl, _lastPrintLandscape, 0);
-
-    let pdfObj = null;
-    try {
-      const worker = window.html2pdf().set({
-        margin: isSinglePageStmt ? 4 : 6,
-        filename: safeName,
-        pagebreak: { mode: ['css', 'legacy'] },
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: {
-          scale: 2,
-          useCORS: true,
-          letterRendering: false,
-          backgroundColor: '#ffffff',
-          scrollY: 0,
-          scrollX: 0,
-          x: 0,
-          y: 0,
-          width: targetA4PxNum,
-          windowWidth: targetA4PxNum
-        },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: _lastPrintLandscape ? 'landscape' : 'portrait' }
-      }).from(contentEl).toPdf();
-
-      pdfObj = await worker.get('pdf');
-    } finally {
-      restore();
-    }
-
+    const pdfObj = await buildCenteredJsPdfFromElement(contentEl, _lastPrintLandscape, safeName);
     if (!pdfObj) return null;
-
-    if (expectedMaxPages > 0 && pdfObj.internal && typeof pdfObj.internal.getNumberOfPages === 'function') {
-      while (pdfObj.internal.getNumberOfPages() > expectedMaxPages) {
-        pdfObj.deletePage(pdfObj.internal.getNumberOfPages());
-      }
-    }
-    if (typeof pdfObj.setProperties === 'function') {
-      pdfObj.setProperties({
-        title: safeName.replace(/\.pdf$/i, ''),
-        subject: 'Al Asimah Factory Official PDF Report',
-        author: 'Al Asimah Factory',
-        creator: 'Al Asimah Factory'
-      });
-    }
 
     const pdfBlob = pdfObj.output('blob');
     const pdfFile = new File([pdfBlob], safeName, { type: 'application/pdf' });
@@ -16039,124 +16283,11 @@ async function generateCurrentReportImageBlob() {
     }
     const contentEl = document.getElementById('print-document-content');
     if (!contentEl || !contentEl.innerHTML.trim()) return null;
-    paginateTablesForPrintAndPdf(contentEl, _lastPrintLandscape);
-    normalizeDomForHtml2CanvasArabic(contentEl);
-
-    const h2c = await ensureHtml2CanvasLoaded();
-    if (typeof h2c !== 'function' && typeof window.html2pdf !== 'function') return null;
 
     const safePdfName = buildCleanAsciiPdfFileName(_lastPrintDocumentTitle || 'Report');
     const safeImgName = safePdfName.replace(/\.pdf$/i, '.png');
-    const targetA4PxNum = _lastPrintLandscape ? 1060 : 760;
 
-    // Create a dedicated, clean off-screen LTR-anchored stage with a static-flow RTL clone inside it.
-    // This guarantees stage.offsetWidth === targetA4PxNum, stage.offsetHeight > 0 (full report height),
-    // and stage.getBoundingClientRect().left === 0 on all mobile and desktop browsers!
-    const prevStage = document.getElementById('__asimah_img_capture_stage__');
-    if (prevStage) prevStage.remove();
-
-    const savedHtmlDir = document.documentElement ? document.documentElement.getAttribute('dir') : 'rtl';
-    const savedHtmlDirStyle = document.documentElement ? document.documentElement.style.direction : '';
-    const savedBodyDir = document.body ? document.body.getAttribute('dir') : 'rtl';
-    const savedBodyDirStyle = document.body ? document.body.style.direction : '';
-    const savedScrollX = window.scrollX || window.pageXOffset || 0;
-    const savedScrollY = window.scrollY || window.pageYOffset || 0;
-
-    const stage = document.createElement('div');
-    stage.id = '__asimah_img_capture_stage__';
-    stage.setAttribute('dir', 'rtl');
-    stage.style.cssText =
-      `position:absolute !important;left:0px !important;top:0px !important;right:auto !important;` +
-      `width:${targetA4PxNum}px !important;min-width:${targetA4PxNum}px !important;max-width:${targetA4PxNum}px !important;` +
-      `padding:14px !important;margin:0px !important;background:#ffffff !important;color:#000000 !important;` +
-      `direction:rtl !important;box-sizing:border-box !important;z-index:-10 !important;overflow:visible !important;`;
-
-    const cloneEl = contentEl.cloneNode(true);
-    cloneEl.setAttribute('dir', 'rtl');
-    cloneEl.style.cssText =
-      `position:static !important;width:100% !important;min-width:100% !important;max-width:100% !important;` +
-      `margin:0px !important;padding:0px !important;background:#ffffff !important;color:#000000 !important;` +
-      `direction:rtl !important;box-sizing:border-box !important;overflow:visible !important;`;
-
-    cloneEl.querySelectorAll('.pdf-report-wrap, table').forEach(el => {
-      el.style.width = '100%';
-      el.style.maxWidth = '100%';
-      el.style.boxSizing = 'border-box';
-    });
-
-    stage.appendChild(cloneEl);
-
-    let canvasObj = null;
-    try {
-      if (document.documentElement) {
-        document.documentElement.setAttribute('dir', 'ltr');
-        document.documentElement.style.setProperty('direction', 'ltr', 'important');
-      }
-      if (document.body) {
-        document.body.setAttribute('dir', 'ltr');
-        document.body.style.setProperty('direction', 'ltr', 'important');
-        document.body.appendChild(stage);
-      }
-
-      if (typeof window.scrollTo === 'function') {
-        window.scrollTo(0, 0);
-      }
-
-      // Wait for any images inside the cloned stage to decode
-      const imgs = Array.from(stage.querySelectorAll('img'));
-      if (imgs.length > 0) {
-        await Promise.race([
-          Promise.all(imgs.map(img => img.decode ? img.decode().catch(() => {}) : Promise.resolve())),
-          new Promise(r => setTimeout(r, 250))
-        ]);
-      }
-
-      const stageW = Math.max(targetA4PxNum, stage.scrollWidth || stage.offsetWidth || targetA4PxNum);
-      const stageH = Math.max(200, stage.scrollHeight || stage.offsetHeight || 600);
-
-      const h2cOpts = {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        logging: false,
-        letterRendering: false,
-        backgroundColor: '#ffffff',
-        scrollY: 0,
-        scrollX: 0,
-        x: 0,
-        y: 0,
-        width: stageW,
-        height: stageH,
-        windowWidth: stageW,
-        windowHeight: stageH
-      };
-
-      if (typeof h2c === 'function') {
-        canvasObj = await h2c(stage, h2cOpts);
-      } else if (typeof window.html2pdf === 'function') {
-        const worker = window.html2pdf().set({
-          margin: 4,
-          html2canvas: h2cOpts,
-          jsPDF: { unit: 'mm', format: 'a4', orientation: _lastPrintLandscape ? 'landscape' : 'portrait' }
-        }).from(stage).toCanvas();
-        canvasObj = await worker.get('canvas');
-      }
-    } finally {
-      try { stage.remove(); } catch (_) {}
-      if (document.documentElement) {
-        document.documentElement.setAttribute('dir', savedHtmlDir || 'rtl');
-        document.documentElement.style.direction = savedHtmlDirStyle;
-      }
-      if (document.body) {
-        if (savedBodyDir) document.body.setAttribute('dir', savedBodyDir);
-        else document.body.removeAttribute('dir');
-        document.body.style.direction = savedBodyDirStyle;
-      }
-      if (typeof window.scrollTo === 'function') {
-        window.scrollTo(savedScrollX, savedScrollY);
-      }
-    }
-
+    const canvasObj = await captureReportElementToCenteredCanvas(contentEl, _lastPrintLandscape);
     if (!canvasObj || !canvasObj.width || !canvasObj.height) return null;
 
     let dataUrl = '';
@@ -16796,64 +16927,14 @@ function sendReportViaWhatsAppImage(printTriggerFn, presetPhone = '', presetReci
   sendReportViaWhatsApp(printTriggerFn, presetPhone, presetRecipientName, 'image');
 }
 
-function downloadInPagePdfFile() {
-  const contentEl = document.getElementById('print-document-content');
-  if (!contentEl || !contentEl.innerHTML.trim()) return;
-  paginateTablesForPrintAndPdf(contentEl, _lastPrintLandscape);
-  normalizeDomForHtml2CanvasArabic(contentEl);
-  if (typeof window.html2pdf !== 'function') {
-    window.focus();
-    window.print();
+async function downloadInPagePdfFile() {
+  const res = await generateCurrentReportPdfBlobAndUpload();
+  if (res && res.blob) {
+    triggerBlobDownload(res.blob, res.safeName);
     return;
   }
-  const isSinglePageStmt = Boolean(contentEl.querySelector('[data-single-page-statement="1"]'));
-  const explicitBreaksCount = contentEl.querySelectorAll('.html2pdf__page-break').length;
-  const expectedMaxPages = isSinglePageStmt ? 1 : (explicitBreaksCount > 0 ? (explicitBreaksCount + 1) : 0);
-  const safeName = buildCleanAsciiPdfFileName(_lastPrintDocumentTitle || 'Report');
-
-  const { targetA4PxNum, restore } = prepareRtlElementForFullA4Capture(contentEl, _lastPrintLandscape, 0);
-
-  const worker = window.html2pdf().set({
-    margin: isSinglePageStmt ? 4 : 6,
-    filename: safeName,
-    pagebreak: { mode: ['css', 'legacy'] },
-    image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: {
-      scale: 2,
-      useCORS: true,
-      letterRendering: false,
-      backgroundColor: '#ffffff',
-      scrollY: 0,
-      scrollX: 0,
-      x: 0,
-      y: 0,
-      width: targetA4PxNum,
-      windowWidth: targetA4PxNum
-    },
-    jsPDF: { unit: 'mm', format: 'a4', orientation: _lastPrintLandscape ? 'landscape' : 'portrait' }
-  }).from(contentEl).toPdf();
-
-  worker.get('pdf').then((pdf) => {
-    if (expectedMaxPages > 0 && pdf && pdf.internal && typeof pdf.internal.getNumberOfPages === 'function') {
-      while (pdf.internal.getNumberOfPages() > expectedMaxPages) {
-        pdf.deletePage(pdf.internal.getNumberOfPages());
-      }
-    }
-    if (pdf && typeof pdf.setProperties === 'function') {
-      pdf.setProperties({
-        title: safeName.replace(/\.pdf$/i, ''),
-        subject: 'Al Asimah Factory Official PDF Report',
-        author: 'Al Asimah Factory',
-        creator: 'Al Asimah Factory'
-      });
-    }
-  }).then(() => worker.save()).then(() => {
-    restore();
-  }).catch(() => {
-    restore();
-    window.focus();
-    window.print();
-  });
+  window.focus();
+  window.print();
 }
 
 function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null) {
@@ -16901,7 +16982,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '80');
+  urlObj.searchParams.set('v', '81');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
@@ -17028,6 +17109,9 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
         color: #0f172a;
         background: #fff;
         box-sizing: border-box;
+        width: 100%;
+        max-width: 100%;
+        margin: 0 auto !important;
       }
       .pdf-report-header {
         display: flex;
@@ -17135,7 +17219,7 @@ function openUniversalPrintDocument(docHtml, docTitle = 'طباعة مستند �
         <span>📄 إرسال واتساب PDF</span>
       </button>
     </div>
-    <div id="print-document-content" style="background:#fff;color:#000;">
+    <div id="print-document-content" style="background:#fff;color:#000;width:100%;max-width:1120px;margin:0 auto !important;box-sizing:border-box;">
       ${docHtml}
     </div>
   `;
