@@ -4021,11 +4021,14 @@ function renderChatAndTasksTab() {
 // ============================================================================
 function renderDashboard() {
   const inStockPallets = (state.pallets || []).filter(p => p.status === 'in_stock');
-  const totalPallets = inStockPallets.length;
-  const totalSheets = inStockPallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
-  const totalAreaM2 = inStockPallets.reduce((s, p) => s + Number(p.areaM2 || 0), 0);
-  const totalVolumeM3 = inStockPallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
-  const totalVeneerValue = inStockPallets.reduce((s, p) => s + Number(p.totalValue || 0), 0);
+  const positiveStockPallets = inStockPallets.filter(p => Number(p.sheetsCount || 0) > 0);
+  const deficitStockPallets = inStockPallets.filter(p => Number(p.sheetsCount || 0) < 0);
+  const totalPallets = positiveStockPallets.length;
+  const totalSheets = positiveStockPallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+  const totalDeficitSheets = deficitStockPallets.reduce((s, p) => s + Math.abs(Number(p.sheetsCount || 0)), 0);
+  const totalAreaM2 = positiveStockPallets.reduce((s, p) => s + Number(p.areaM2 || 0), 0);
+  const totalVolumeM3 = positiveStockPallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
+  const totalVeneerValue = positiveStockPallets.reduce((s, p) => s + Math.max(0, Number(p.totalValue || 0)), 0);
 
   const rawLogsM3 = (state.rawMaterials || [])
     .filter(r => r.unit === 'م³')
@@ -4228,6 +4231,7 @@ function renderDashboard() {
       <div class="stat-card">
         <span class="stat-title">رصيد كميات مخزن القشرة التامة (250×125)</span>
         <div class="stat-value">${fmtNum(totalSheets, 0)} فرخ</div>
+        ${totalDeficitSheets > 0 ? `<div style="color:var(--danger);font-weight:900;font-size:0.86rem;margin-top:2px;">${fmtNum(totalDeficitSheets, 0)} عجز</div>` : ''}
         <div class="stat-sub"><strong>${fmtNum(totalVolumeM3, 3)}</strong> م³ | <strong>${totalPallets}</strong> بالتة</div>
       </div>
 
@@ -4698,10 +4702,13 @@ function renderFinishedVeneerWarehouse() {
       p => matchPalletToThicknessRow(p, t) && matchPalletToGrade(p, gradeId)
     );
     const sheets = cellPallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+    const availableSheets = sheets > 0 ? sheets : 0;
+    const deficitSheets = sheets < 0 ? Math.abs(sheets) : 0;
     const areaM2 = cellPallets.reduce((s, p) => s + Number(p.areaM2 || 0), 0);
     const volumeM3 = cellPallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
     const unitPiecePrice = getCellUnitPrice(t.id, gradeId, t.mm, t.direction);
-    const stockValueByPiece = +(sheets * unitPiecePrice).toFixed(2);
+    const stockValueByPiece = +(availableSheets * unitPiecePrice).toFixed(2);
+    const deficitValueByPiece = +(deficitSheets * unitPiecePrice).toFixed(2);
 
     // Track custom dimensions inside this cell
     const customDimBreakdown = [];
@@ -4729,10 +4736,13 @@ function renderFinishedVeneerWarehouse() {
     return {
       palletsCount: cellPallets.length,
       sheets,
+      availableSheets,
+      deficitSheets,
       areaM2: +areaM2.toFixed(2),
       volumeM3: +volumeM3.toFixed(4),
       unitPiecePrice,
       stockValueByPiece,
+      deficitValueByPiece,
       soldSheets,
       soldRevenue: +soldRevenue.toFixed(2),
       customDimBreakdown
@@ -4743,27 +4753,35 @@ function renderFinishedVeneerWarehouse() {
   function getTotalSheetsForThicknessRowAllWoods(t) {
     return (state.pallets || [])
       .filter(p => p.status === 'in_stock' && matchPalletToThicknessRow(p, t))
-      .reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+      .reduce((s, p) => s + Math.abs(Number(p.sheetsCount || 0)), 0);
   }
 
   function getTotalSheetsForGradeAllWoods(gradeId) {
     return (state.pallets || [])
       .filter(p => p.status === 'in_stock' && matchPalletToGrade(p, gradeId))
-      .reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+      .reduce((s, p) => s + Math.abs(Number(p.sheetsCount || 0)), 0);
   }
 
-  const grandSheets = inStockPallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
-  const grandM2 = inStockPallets.reduce((s, p) => s + Number(p.areaM2 || 0), 0);
-  const grandM3 = inStockPallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
-
+  let grandSheets = 0;
+  let grandDeficitSheets = 0;
+  let grandM2 = 0;
+  let grandM3 = 0;
   let grandStockValueByPiece = 0;
+  let grandDeficitValueByPiece = 0;
   let grandSoldRevenue = 0;
   let grandSoldSheets = 0;
   const negativeCellsList = [];
   for (const t of thicknesses) {
     for (const g of grades) {
       const cd = getCellData(t, g.id);
+      grandSheets += cd.availableSheets;
+      grandDeficitSheets += cd.deficitSheets;
+      if (cd.sheets > 0) {
+        grandM2 += cd.areaM2;
+        grandM3 += cd.volumeM3;
+      }
       grandStockValueByPiece += cd.stockValueByPiece;
+      grandDeficitValueByPiece += cd.deficitValueByPiece;
       grandSoldRevenue += cd.soldRevenue;
       grandSoldSheets += cd.soldSheets;
       if (cd.sheets < 0) {
@@ -4776,6 +4794,7 @@ function renderFinishedVeneerWarehouse() {
           gradeCode: g.code,
           gradeName: g.name,
           sheets: cd.sheets,
+          deficitSheets: cd.deficitSheets,
           volumeM3: cd.volumeM3
         });
       }
@@ -4982,13 +5001,15 @@ function renderFinishedVeneerWarehouse() {
                 const dirBadgeBg = isSada ? '#0284c7' : '#d97706';
                 const dirBadgeText = isSada ? '📏 سدا' : '✂️ قص';
                 let rowSheets = 0;
+                let rowDeficitSheets = 0;
                 let rowM3 = 0;
                 let rowPallets = 0;
 
                 const cellsHtml = grades.map(g => {
                   const cell = getCellData(t, g.id);
-                  rowSheets += cell.sheets;
-                  rowM3 += cell.volumeM3;
+                  rowSheets += cell.availableSheets;
+                  rowDeficitSheets += cell.deficitSheets;
+                  if (cell.sheets > 0) rowM3 += cell.volumeM3;
                   rowPallets += cell.palletsCount;
                   const hasStock = cell.sheets > 0;
                   const hasNegativeStock = cell.sheets < 0;
@@ -5010,16 +5031,16 @@ function renderFinishedVeneerWarehouse() {
                           </div>
                         ` : ''}
                       ` : hasNegativeStock ? `
-                        <div class="cell-main-qty" style="color:var(--danger);font-weight:900;direction:ltr;">${fmtNum(cell.sheets, 0)}</div>
+                        <div class="cell-main-qty" style="color:var(--danger);font-weight:900;">${fmtNum(cell.deficitSheets, 0)} عجز</div>
                         <div style="margin-top:2px;font-size:0.62rem;background:#fee2e2;color:#b91c1c;border:1px solid #ef4444;border-radius:4px;padding:1px 4px;font-weight:800;">
-                          📉 بالسالب (لحين الإضافة)
+                          📉 عجز (لحين الإضافة)
                         </div>
                       ` : `
                         <div class="cell-main-qty" style="color:var(--text-muted);font-weight:700;">0</div>
                       `}
                       ${canEditWh ? `
                       <div class="cell-action-hint">
-                        <button type="button" class="cell-mini-btn" style="${hasNegativeStock ? 'background:#dc2626;color:#fff;border-color:#b91c1c;font-weight:800;' : ''}" title="${hasNegativeStock ? 'إضافة إنتاج لتغطية الرصيد السالب' : 'إضافة كميات إنتاج'}" onclick="event.stopPropagation(); openMatrixCellModal('${t.id}', '${g.id}', 'in')">${hasNegativeStock ? '+تغطية السالب' : '+إنتاج'}</button>
+                        <button type="button" class="cell-mini-btn" style="${hasNegativeStock ? 'background:#dc2626;color:#fff;border-color:#b91c1c;font-weight:800;' : ''}" title="${hasNegativeStock ? 'إضافة إنتاج لتغطية العجز' : 'إضافة كميات إنتاج'}" onclick="event.stopPropagation(); openMatrixCellModal('${t.id}', '${g.id}', 'in')">${hasNegativeStock ? '+تغطية العجز' : '+إنتاج'}</button>
                         <button type="button" class="cell-mini-btn" style="background:rgba(124,58,237,0.14);color:#6d28d9;border-color:#8b5cf6;" title="إضافة مرتجع مبيعات" onclick="event.stopPropagation(); openMatrixCellModal('${t.id}', '${g.id}', 'sales_return')">مرتجع</button>
                         ${hasStock ? `
                           <button type="button" class="cell-mini-btn" style="background:rgba(16,185,129,0.15);color:#059669;border-color:#10b981;" title="خروج الكميات حسب المبيعات" onclick="event.stopPropagation(); openMatrixCellModal('${t.id}', '${g.id}', 'out')">بيع</button>
@@ -5052,9 +5073,10 @@ function renderFinishedVeneerWarehouse() {
 
                     ${cellsHtml}
 
-                    <!-- Row Total -->
+                    <!-- Row Total (Available + Deficit separated) -->
                     <td class="matrix-total-cell">
                       <div class="cell-main-qty" style="color:var(--primary);">${fmtNum(rowSheets, 0)}</div>
+                      ${rowDeficitSheets > 0 ? `<div style="margin-top:2px;font-size:0.78rem;color:var(--danger);font-weight:900;">${fmtNum(rowDeficitSheets, 0)} عجز</div>` : ''}
                     </td>
                   </tr>
                 `;
@@ -5067,16 +5089,23 @@ function renderFinishedVeneerWarehouse() {
                   <strong style="font-size:0.78rem;">إجمالي الجودة ⬅️</strong>
                 </td>
                 ${grades.map(g => {
-                  const colPallets = inStockPallets.filter(p => matchPalletToGrade(p, g.id));
-                  const colSheets = colPallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+                  let colAvailableSheets = 0;
+                  let colDeficitSheets = 0;
+                  for (const t of thicknesses) {
+                    const cd = getCellData(t, g.id);
+                    colAvailableSheets += cd.availableSheets;
+                    colDeficitSheets += cd.deficitSheets;
+                  }
                   return `
                     <td class="matrix-total-cell">
-                      <div class="cell-main-qty" style="color:var(--accent);">${fmtNum(colSheets, 0)}</div>
+                      <div class="cell-main-qty" style="color:var(--accent);">${fmtNum(colAvailableSheets, 0)}</div>
+                      ${colDeficitSheets > 0 ? `<div style="margin-top:2px;font-size:0.78rem;color:var(--danger);font-weight:900;">${fmtNum(colDeficitSheets, 0)} عجز</div>` : ''}
                     </td>
                   `;
                 }).join('')}
                 <td class="matrix-total-cell" style="background:var(--primary-light) !important;">
                   <div class="cell-main-qty" style="color:var(--primary);font-size:1.12rem;">${fmtNum(grandSheets, 0)}</div>
+                  ${grandDeficitSheets > 0 ? `<div style="margin-top:2px;font-size:0.82rem;color:var(--danger);font-weight:900;">${fmtNum(grandDeficitSheets, 0)} عجز</div>` : ''}
                 </td>
               </tr>
             </tfoot>
@@ -5124,11 +5153,15 @@ function renderFinishedVeneerWarehouse() {
                 const dirBadgeBg = isSada ? '#0284c7' : '#d97706';
                 const dirBadgeText = isSada ? '📏 سدا' : '✂️ قص';
                 let rowStockValue = 0;
+                let rowDeficitValue = 0;
+                let rowDeficitSheets = 0;
                 let rowSalesValue = 0;
 
                 const priceCellsHtml = grades.map(g => {
                   const cell = getCellData(t, g.id);
                   rowStockValue += cell.stockValueByPiece;
+                  rowDeficitValue += cell.deficitValueByPiece;
+                  rowDeficitSheets += cell.deficitSheets;
                   rowSalesValue += cell.soldRevenue;
 
                   return `
@@ -5145,8 +5178,13 @@ function renderFinishedVeneerWarehouse() {
                       </div>
 
                       <div style="font-size:0.68rem;padding:2px 4px;border-radius:4px;background:var(--bg-elevated);line-height:1.25;">
-                        <span style="color:var(--text-muted);">رصيد (${cell.sheets}):</span>
-                        <strong style="color:var(--primary);">${fmtMoney(cell.stockValueByPiece)}</strong>
+                        ${cell.deficitSheets > 0 ? `
+                          <span style="color:var(--danger);font-weight:800;">عجز (${fmtNum(cell.deficitSheets, 0)}):</span>
+                          <strong style="color:var(--danger);">${fmtMoney(cell.deficitValueByPiece)}</strong>
+                        ` : `
+                          <span style="color:var(--text-muted);">رصيد (${fmtNum(cell.availableSheets, 0)}):</span>
+                          <strong style="color:var(--primary);">${fmtMoney(cell.stockValueByPiece)}</strong>
+                        `}
                       </div>
 
                       ${cell.soldSheets > 0 ? `
@@ -5169,6 +5207,7 @@ function renderFinishedVeneerWarehouse() {
                     ${priceCellsHtml}
                     <td class="matrix-total-cell">
                       <div style="color:var(--primary);font-size:0.78rem;font-weight:800;">${fmtMoney(rowStockValue)}</div>
+                      ${rowDeficitSheets > 0 ? `<div style="font-size:0.66rem;color:var(--danger);font-weight:800;">عجز (${fmtNum(rowDeficitSheets, 0)}): ${fmtMoney(rowDeficitValue)}</div>` : ''}
                       ${rowSalesValue > 0 ? `<div style="font-size:0.66rem;color:var(--success);">بيع: ${fmtMoney(rowSalesValue)}</div>` : ''}
                     </td>
                   </tr>
@@ -5183,21 +5222,27 @@ function renderFinishedVeneerWarehouse() {
                 </td>
                 ${grades.map(g => {
                   let colStockVal = 0;
+                  let colDeficitVal = 0;
+                  let colDeficitSheets = 0;
                   let colSalesVal = 0;
                   for (const t of thicknesses) {
                     const cd = getCellData(t, g.id);
                     colStockVal += cd.stockValueByPiece;
+                    colDeficitVal += cd.deficitValueByPiece;
+                    colDeficitSheets += cd.deficitSheets;
                     colSalesVal += cd.soldRevenue;
                   }
                   return `
                     <td class="matrix-total-cell">
                       <div style="color:var(--primary);font-size:0.8rem;font-weight:800;">${fmtMoney(colStockVal)}</div>
+                      ${colDeficitSheets > 0 ? `<div style="font-size:0.66rem;color:var(--danger);font-weight:800;">عجز (${fmtNum(colDeficitSheets, 0)}): ${fmtMoney(colDeficitVal)}</div>` : ''}
                       ${colSalesVal > 0 ? `<div style="font-size:0.66rem;color:var(--success);">بيع: ${fmtMoney(colSalesVal)}</div>` : ''}
                     </td>
                   `;
                 }).join('')}
                 <td class="matrix-total-cell" style="background:var(--accent-light) !important;">
                   <div style="color:var(--primary);font-size:0.88rem;font-weight:900;">${fmtMoney(grandStockValueByPiece)}</div>
+                  ${grandDeficitSheets > 0 ? `<div style="font-size:0.68rem;color:var(--danger);font-weight:900;">عجز (${fmtNum(grandDeficitSheets, 0)}): ${fmtMoney(grandDeficitValueByPiece)}</div>` : ''}
                   <div style="font-size:0.68rem;color:var(--success);font-weight:800;">
                     مبيعات (${fmtNum(grandSoldSheets, 0)}): ${fmtMoney(grandSoldRevenue)}
                   </div>
@@ -7882,13 +7927,16 @@ function renderAccounting() {
 // 6. REPORTS & AUDIT LOG
 // ============================================================================
 function renderReports() {
-  // Summarize inventory by wood type
+  // Summarize inventory by wood type (separating available positive stock from deficit)
   const woodSummary = state.catalog.woodTypes.map(wt => {
     const pallets = (state.pallets || []).filter(p => p.woodTypeId === wt.id && p.status === 'in_stock');
-    const sheets = pallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
-    const m3 = pallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
-    const val = pallets.reduce((s, p) => s + Number(p.totalValue || 0), 0);
-    return { name: wt.name, palletsCount: pallets.length, sheets, m3, val };
+    const posPallets = pallets.filter(p => Number(p.sheetsCount || 0) > 0);
+    const negPallets = pallets.filter(p => Number(p.sheetsCount || 0) < 0);
+    const sheets = posPallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+    const deficitSheets = negPallets.reduce((s, p) => s + Math.abs(Number(p.sheetsCount || 0)), 0);
+    const m3 = posPallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
+    const val = posPallets.reduce((s, p) => s + Math.max(0, Number(p.totalValue || 0)), 0);
+    return { name: wt.name, palletsCount: posPallets.length, sheets, deficitSheets, m3, val };
   });
 
   return `
@@ -7972,7 +8020,10 @@ function renderReports() {
               <tr>
                 <td><strong>${ws.name}</strong></td>
                 <td>${ws.palletsCount} بالتة</td>
-                <td><strong>${fmtNum(ws.sheets, 0)} فرخ</strong></td>
+                <td>
+                  <strong>${fmtNum(ws.sheets, 0)} فرخ</strong>
+                  ${ws.deficitSheets > 0 ? `<span style="color:var(--danger);font-weight:900;margin-right:6px;">(${fmtNum(ws.deficitSheets, 0)} عجز)</span>` : ''}
+                </td>
                 ${canSeeFinancialPrices() ? `<td><strong>${fmtMoney(ws.val)}</strong></td>` : ''}
               </tr>
             `).join('')}
@@ -16982,7 +17033,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '81');
+  urlObj.searchParams.set('v', '82');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
@@ -18267,20 +18318,24 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
   );
 
   let grandSheets = 0;
+  let grandDeficitSheets = 0;
   let grandM3 = 0;
   let grandM2 = 0;
   const colTotals = {};
-  grades.forEach(g => { colTotals[g.id] = { sheets: 0, m3: 0, m2: 0 }; });
+  grades.forEach(g => { colTotals[g.id] = { sheets: 0, deficitSheets: 0, m3: 0, m2: 0 }; });
 
   const rowsHtml = thicknesses.map(t => {
     const isSada = t.direction === 'sada';
     let rowSheets = 0;
+    let rowDeficitSheets = 0;
     let rowM3 = 0;
     let rowM2 = 0;
 
     const cellsHtml = grades.map(g => {
       const matching = inStockPallets.filter(p => matchPalletToThicknessRow(p, t) && matchPalletToGrade(p, g.id));
       const sheets = matching.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+      const availSheets = sheets > 0 ? sheets : 0;
+      const deficitSheets = sheets < 0 ? Math.abs(sheets) : 0;
       const m3 = +(matching.reduce((s, p) => {
         if (Number(p.volumeM3) !== 0) return s + Number(p.volumeM3);
         return s + calculateVeneerMetrics(p.lengthCm || 250, p.widthCm || 125, t.mm, p.sheetsCount).totalVolumeM3;
@@ -18289,22 +18344,33 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
         if (Number(p.areaM2) !== 0) return s + Number(p.areaM2);
         return s + calculateVeneerMetrics(p.lengthCm || 250, p.widthCm || 125, t.mm, p.sheetsCount).totalAreaM2;
       }, 0)).toFixed(2);
-      rowSheets += sheets;
-      rowM3 += m3;
-      rowM2 += m2;
-      colTotals[g.id].sheets += sheets;
-      colTotals[g.id].m3 += m3;
-      colTotals[g.id].m2 += m2;
+      rowSheets += availSheets;
+      rowDeficitSheets += deficitSheets;
+      if (sheets > 0) {
+        rowM3 += m3;
+        rowM2 += m2;
+      }
+      colTotals[g.id].sheets += availSheets;
+      colTotals[g.id].deficitSheets += deficitSheets;
+      if (sheets > 0) {
+        colTotals[g.id].m3 += m3;
+        colTotals[g.id].m2 += m2;
+      }
       return `
         <td style="background:${sheets > 0 ? '#f0fdf4' : sheets < 0 ? '#fef2f2' : '#ffffff'};padding:6px 4px;">
-          <div style="font-weight:900;font-size:15px;color:${sheets > 0 ? '#0f172a' : sheets < 0 ? '#dc2626' : '#94a3b8'};direction:ltr;">${fmtNum(sheets, 0)}</div>
-          ${showM3 ? `<div style="font-size:10.5px;color:${sheets < 0 ? '#dc2626' : '#475569'};direction:ltr;">${fmtNum(m3, 3)} م³</div>` : ''}
-          ${showM2 ? `<div style="font-size:10px;color:${sheets < 0 ? '#dc2626' : '#64748b'};direction:ltr;">${fmtNum(m2, 1)} م²</div>` : ''}
+          ${sheets < 0 ? `
+            <div style="font-weight:900;font-size:14.5px;color:#dc2626;">${fmtNum(deficitSheets, 0)} عجز</div>
+          ` : `
+            <div style="font-weight:900;font-size:15px;color:${sheets > 0 ? '#0f172a' : '#94a3b8'};direction:ltr;">${fmtNum(sheets, 0)}</div>
+          `}
+          ${showM3 ? `<div style="font-size:10.5px;color:${sheets < 0 ? '#dc2626' : '#475569'};direction:ltr;">${fmtNum(Math.abs(m3), 3)} م³</div>` : ''}
+          ${showM2 ? `<div style="font-size:10px;color:${sheets < 0 ? '#dc2626' : '#64748b'};direction:ltr;">${fmtNum(Math.abs(m2), 1)} م²</div>` : ''}
         </td>
       `;
     }).join('');
 
     grandSheets += rowSheets;
+    grandDeficitSheets += rowDeficitSheets;
     grandM3 += rowM3;
     grandM2 += rowM2;
 
@@ -18316,6 +18382,7 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
         ${cellsHtml}
         <td style="background:#f1f5f9;font-weight:900;padding:6px 4px;">
           <div style="font-size:15px;color:#0f766e;direction:ltr;">${fmtNum(rowSheets, 0)}</div>
+          ${rowDeficitSheets > 0 ? `<div style="font-size:12.5px;color:#dc2626;font-weight:900;margin-top:2px;">${fmtNum(rowDeficitSheets, 0)} عجز</div>` : ''}
           ${showM3 ? `<div style="font-size:10.5px;color:#0f766e;">${fmtNum(rowM3, 3)} م³</div>` : ''}
           ${showM2 ? `<div style="font-size:10px;color:#475569;">${fmtNum(rowM2, 1)} م²</div>` : ''}
         </td>
@@ -18341,12 +18408,14 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
           ${grades.map(g => `
             <td style="padding:7px 4px;">
               <div style="font-size:15px;color:#0f172a;direction:ltr;">${fmtNum(colTotals[g.id].sheets, 0)}</div>
+              ${colTotals[g.id].deficitSheets > 0 ? `<div style="font-size:12.5px;color:#dc2626;font-weight:900;margin-top:2px;">${fmtNum(colTotals[g.id].deficitSheets, 0)} عجز</div>` : ''}
               ${showM3 ? `<div style="font-size:10.5px;color:#0f766e;">${fmtNum(colTotals[g.id].m3, 3)} م³</div>` : ''}
               ${showM2 ? `<div style="font-size:10px;color:#475569;">${fmtNum(colTotals[g.id].m2, 1)} م²</div>` : ''}
             </td>
           `).join('')}
           <td style="background:#dcfce7;padding:7px 4px;">
             <div style="font-size:16px;color:#15803d;direction:ltr;">${fmtNum(grandSheets, 0)}</div>
+            ${grandDeficitSheets > 0 ? `<div style="font-size:13px;color:#dc2626;font-weight:900;margin-top:2px;">${fmtNum(grandDeficitSheets, 0)} عجز</div>` : ''}
             ${showM3 ? `<div style="font-size:11px;color:#15803d;">${fmtNum(grandM3, 3)} م³</div>` : ''}
             ${showM2 ? `<div style="font-size:10px;color:#334155;">${fmtNum(grandM2, 1)} م²</div>` : ''}
           </td>
@@ -18366,20 +18435,27 @@ function buildVeneerPricesMatrixPrintHtml() {
   const allMovs = state.warehouseMovements || [];
 
   let grandStockValue = 0;
+  let grandDeficitValue = 0;
+  let grandDeficitSheets = 0;
   let grandSalesValue = 0;
   const colTotals = {};
-  grades.forEach(g => { colTotals[g.id] = { stockValue: 0, salesValue: 0 }; });
+  grades.forEach(g => { colTotals[g.id] = { stockValue: 0, deficitValue: 0, deficitSheets: 0, salesValue: 0 }; });
 
   const rowsHtml = thicknesses.map(t => {
     const isSada = t.direction === 'sada';
     let rowStockVal = 0;
+    let rowDeficitVal = 0;
+    let rowDeficitSheets = 0;
     let rowSalesVal = 0;
 
     const cellsHtml = grades.map(g => {
       const matching = inStockPallets.filter(p => matchPalletToThicknessRow(p, t) && matchPalletToGrade(p, g.id));
       const sheets = matching.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+      const availSheets = sheets > 0 ? sheets : 0;
+      const deficitSheets = sheets < 0 ? Math.abs(sheets) : 0;
       const unitPrice = getCellUnitPrice(t.id, g.id, t.mm, t.direction);
-      const stockValue = +(sheets * unitPrice).toFixed(2);
+      const stockValue = +(availSheets * unitPrice).toFixed(2);
+      const deficitValue = +(deficitSheets * unitPrice).toFixed(2);
       const cellKey = getCellPriceKey(t.id, g.id);
       const soldMovs = allMovs.filter(m =>
         m.warehouseType === 'finished_veneers' &&
@@ -18390,20 +18466,30 @@ function buildVeneerPricesMatrixPrintHtml() {
       const soldValue = soldMovs.reduce((s, m) => s + Number(m.totalSaleAmount || 0), 0);
 
       rowStockVal += stockValue;
+      rowDeficitVal += deficitValue;
+      rowDeficitSheets += deficitSheets;
       rowSalesVal += soldValue;
       colTotals[g.id].stockValue += stockValue;
+      colTotals[g.id].deficitValue += deficitValue;
+      colTotals[g.id].deficitSheets += deficitSheets;
       colTotals[g.id].salesValue += soldValue;
 
       return `
-        <td style="background:${sheets > 0 ? '#fffbeb' : '#ffffff'};padding:5px 4px;">
+        <td style="background:${sheets > 0 ? '#fffbeb' : sheets < 0 ? '#fef2f2' : '#ffffff'};padding:5px 4px;">
           <div style="font-weight:900;font-size:13px;color:#b45309;">${fmtNum(unitPrice, 2)} ج</div>
-          <div style="font-size:10.5px;color:#0f172a;">رصيد (${fmtNum(sheets, 0)}): <strong>${fmtNum(stockValue, 0)} ج</strong></div>
+          ${deficitSheets > 0 ? `
+            <div style="font-size:10.5px;color:#dc2626;font-weight:800;">عجز (${fmtNum(deficitSheets, 0)}): <strong>${fmtNum(deficitValue, 0)} ج</strong></div>
+          ` : `
+            <div style="font-size:10.5px;color:#0f172a;">رصيد (${fmtNum(availSheets, 0)}): <strong>${fmtNum(stockValue, 0)} ج</strong></div>
+          `}
           ${soldValue > 0 ? `<div style="font-size:9.5px;color:#15803d;">مباع: ${fmtNum(soldValue, 0)} ج</div>` : ''}
         </td>
       `;
     }).join('');
 
     grandStockValue += rowStockVal;
+    grandDeficitValue += rowDeficitVal;
+    grandDeficitSheets += rowDeficitSheets;
     grandSalesValue += rowSalesVal;
 
     return `
@@ -18414,6 +18500,7 @@ function buildVeneerPricesMatrixPrintHtml() {
         ${cellsHtml}
         <td style="background:#f1f5f9;font-weight:900;font-size:11.5px;">
           <div>رصيد: ${fmtMoney(rowStockVal)}</div>
+          ${rowDeficitSheets > 0 ? `<div style="font-size:10px;color:#dc2626;">عجز (${fmtNum(rowDeficitSheets, 0)}): ${fmtMoney(rowDeficitVal)}</div>` : ''}
           ${rowSalesVal > 0 ? `<div style="font-size:10px;color:#15803d;">مباع: ${fmtMoney(rowSalesVal)}</div>` : ''}
         </td>
       </tr>
@@ -18438,11 +18525,13 @@ function buildVeneerPricesMatrixPrintHtml() {
           ${grades.map(g => `
             <td>
               <div>${fmtMoney(colTotals[g.id].stockValue)}</div>
+              ${colTotals[g.id].deficitSheets > 0 ? `<div style="font-size:9.5px;color:#dc2626;">عجز (${fmtNum(colTotals[g.id].deficitSheets, 0)}): ${fmtMoney(colTotals[g.id].deficitValue)}</div>` : ''}
               ${colTotals[g.id].salesValue > 0 ? `<div style="font-size:9px;color:#15803d;">مباع: ${fmtMoney(colTotals[g.id].salesValue)}</div>` : ''}
             </td>
           `).join('')}
           <td style="background:#fde68a;font-size:11.5px;">
             <div>رصيد: ${fmtMoney(grandStockValue)}</div>
+            ${grandDeficitSheets > 0 ? `<div style="font-size:9.5px;color:#dc2626;">عجز (${fmtNum(grandDeficitSheets, 0)}): ${fmtMoney(grandDeficitValue)}</div>` : ''}
             <div style="font-size:9.5px;color:#15803d;">مباع: ${fmtMoney(grandSalesValue)}</div>
           </td>
         </tr>
@@ -18952,11 +19041,14 @@ function printGeneralInventoryAndAuditReportPdf() {
   const showM2 = Boolean(reportShowAreaM2);
   const woodSummary = (state.catalog?.woodTypes || []).map(wt => {
     const pallets = (state.pallets || []).filter(p => p.woodTypeId === wt.id && p.status === 'in_stock');
-    const sheets = pallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
-    const m3 = pallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
-    const m2 = pallets.reduce((s, p) => s + Number(p.areaM2 || 0), 0);
-    const val = pallets.reduce((s, p) => s + Number(p.totalValue || 0), 0);
-    return { name: wt.name, palletsCount: pallets.length, sheets, m3, m2, val };
+    const posPallets = pallets.filter(p => Number(p.sheetsCount || 0) > 0);
+    const negPallets = pallets.filter(p => Number(p.sheetsCount || 0) < 0);
+    const sheets = posPallets.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+    const deficitSheets = negPallets.reduce((s, p) => s + Math.abs(Number(p.sheetsCount || 0)), 0);
+    const m3 = posPallets.reduce((s, p) => s + Number(p.volumeM3 || 0), 0);
+    const m2 = posPallets.reduce((s, p) => s + Number(p.areaM2 || 0), 0);
+    const val = posPallets.reduce((s, p) => s + Math.max(0, Number(p.totalValue || 0)), 0);
+    return { name: wt.name, palletsCount: posPallets.length, sheets, deficitSheets, m3, m2, val };
   });
   const bodyHtml = `
     <h3 style="margin:0 0 6px;font-size:13px;color:#0f766e;">1️⃣ ملخص جرد القشرة الخشبية حسب النوع</h3>
@@ -18976,7 +19068,10 @@ function printGeneralInventoryAndAuditReportPdf() {
           <tr>
             <td><strong>${ws.name}</strong></td>
             <td>${ws.palletsCount} بالتة</td>
-            <td><strong>${fmtNum(ws.sheets, 0)} فرخ</strong></td>
+            <td>
+              <strong>${fmtNum(ws.sheets, 0)} فرخ</strong>
+              ${ws.deficitSheets > 0 ? `<span style="color:#dc2626;font-weight:900;margin-right:6px;">(${fmtNum(ws.deficitSheets, 0)} عجز)</span>` : ''}
+            </td>
             ${showM2 ? `<td>${fmtNum(ws.m2, 2)} م²</td>` : ''}
             ${showM3 ? `<td><strong>${fmtNum(ws.m3, 4)} م³</strong></td>` : ''}
             ${showPrices ? `<td><strong>${fmtMoney(ws.val)}</strong></td>` : ''}
