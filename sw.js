@@ -1,4 +1,4 @@
-const CACHE_NAME = 'al-asimah-factory-v84';
+const CACHE_NAME = 'al-asimah-factory-v85';
 const META_CACHE_NAME = 'al-asimah-sw-meta-v1';
 const FIREBASE_DEFAULT_URL = 'https://elite-grand-8a6c3-default-rtdb.firebaseio.com/al_asimah_factory_clean.json';
 
@@ -6,8 +6,8 @@ const ASSETS = [
   './',
   './index.html',
   './print.html',
-  './styles.css?v=84',
-  './app.js?v=84',
+  './styles.css?v=85',
+  './app.js?v=85',
   './manifest.webmanifest',
   './icons/logo.svg',
   'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
@@ -215,10 +215,10 @@ async function flushPendingOfflineStateFromSw() {
 async function checkCloudForBackgroundNotifications() {
   try {
     await flushPendingOfflineStateFromSw();
-    // Skip duplicate SW notification if an active visible window client is already polling in the foreground
+    // Only skip if a window client is currently actively focused in the foreground
     const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    const hasFocusedVisibleClient = clientList.some((c) => c.focused || c.visibilityState === 'visible');
-    if (hasFocusedVisibleClient) return;
+    const hasActivelyFocusedClient = clientList.some((c) => Boolean(c.focused));
+    if (hasActivelyFocusedClient) return;
 
     const ctx = await readSwUserContext();
     if (!ctx || !ctx.user) return;

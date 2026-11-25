@@ -583,30 +583,183 @@ let activeChatChannel = 'general'; // 'general' | 'warehouses' | 'production' | 
 let chatMsgType = 'message'; // 'message' | 'task' | 'urgent'
 let chatLinkedTab = '';
 let chatAssignedUserId = '';
+let _globalAlertAudioEl = null;
+let _bgKeepAliveAudioEl = null;
+let _cachedNormalWavUrl = '';
+let _cachedUrgentWavUrl = '';
+let _cachedSilentWavUrl = '';
+let _bgPollWorker = null;
+let _webLockHeld = false;
 
-// Unlock Web Audio API on first user interaction
-window.addEventListener('click', () => {
-  if (!audioCtx && (window.AudioContext || window.webkitAudioContext)) {
-    try {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state === 'suspended') audioCtx.resume();
-    } catch (_) {}
-  } else if (audioCtx && audioCtx.state === 'suspended') {
-    audioCtx.resume().catch(() => {});
+function buildPcmWavBlobUrl(notesPattern, totalDurationSec = 4.5, volumeScale = 0.85) {
+  try {
+    const sampleRate = 22050;
+    const numSamples = Math.floor(sampleRate * totalDurationSec);
+    const buffer = new ArrayBuffer(44 + numSamples * 2);
+    const view = new DataView(buffer);
+    const writeStr = (offset, str) => {
+      for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + numSamples * 2, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, 'data');
+    view.setUint32(40, numSamples * 2, true);
+
+    const samples = new Float32Array(numSamples);
+    for (const n of (notesPattern || [])) {
+      const startSample = Math.floor((n.delay / 1000) * sampleRate);
+      const durSamples = Math.floor(n.dur * sampleRate);
+      const freq = n.freq;
+      for (let i = 0; i < durSamples && (startSample + i) < numSamples; i++) {
+        const t = i / sampleRate;
+        const env = Math.min(1, i / (sampleRate * 0.015)) * Math.exp(-3.2 * (t / n.dur));
+        const wave = Math.sin(2 * Math.PI * freq * t) + 0.35 * Math.sin(4 * Math.PI * freq * t);
+        samples[startSample + i] += wave * env * volumeScale;
+      }
+    }
+
+    let offset = 44;
+    for (let i = 0; i < numSamples; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      offset += 2;
+    }
+    const blob = new Blob([buffer], { type: 'audio/wav' });
+    return URL.createObjectURL(blob);
+  } catch (_) {
+    return '';
   }
-}, { once: false });
+}
+
+function getAlertWavUrl(isUrgent = false) {
+  const patternUrgent = [
+    { freq: 880, delay: 0, dur: 0.35 },
+    { freq: 1174.66, delay: 380, dur: 0.35 },
+    { freq: 880, delay: 760, dur: 0.35 },
+    { freq: 1174.66, delay: 1140, dur: 0.35 },
+    { freq: 1318.5, delay: 1550, dur: 0.45 },
+    { freq: 880, delay: 2100, dur: 0.35 },
+    { freq: 1174.66, delay: 2480, dur: 0.35 },
+    { freq: 1318.5, delay: 2880, dur: 0.45 },
+    { freq: 1046.5, delay: 3400, dur: 0.4 },
+    { freq: 1318.5, delay: 3850, dur: 0.65 }
+  ];
+  const patternNormal = [
+    { freq: 587.33, delay: 0, dur: 0.38 },
+    { freq: 880, delay: 400, dur: 0.38 },
+    { freq: 1174.66, delay: 800, dur: 0.45 },
+    { freq: 880, delay: 1300, dur: 0.38 },
+    { freq: 1046.5, delay: 1720, dur: 0.45 },
+    { freq: 587.33, delay: 2250, dur: 0.38 },
+    { freq: 880, delay: 2650, dur: 0.38 },
+    { freq: 1174.66, delay: 3050, dur: 0.45 },
+    { freq: 1046.5, delay: 3550, dur: 0.42 },
+    { freq: 1174.66, delay: 4000, dur: 0.65 }
+  ];
+  if (isUrgent) {
+    if (!_cachedUrgentWavUrl) _cachedUrgentWavUrl = buildPcmWavBlobUrl(patternUrgent, 4.6, 0.9);
+    return _cachedUrgentWavUrl;
+  }
+  if (!_cachedNormalWavUrl) _cachedNormalWavUrl = buildPcmWavBlobUrl(patternNormal, 4.7, 0.85);
+  return _cachedNormalWavUrl;
+}
+
+function startBackgroundKeepAliveEngine() {
+  try {
+    // 1) Hold a Web Lock so Android / Chromium does not freeze the background page when screen is locked or minimized
+    if (!_webLockHeld && typeof navigator !== 'undefined' && navigator.locks && typeof navigator.locks.request === 'function') {
+      _webLockHeld = true;
+      navigator.locks.request('al_asimah_bg_active_lock', () => new Promise(() => {})).catch(() => { _webLockHeld = false; });
+    }
+    // 2) Start an unthrottled Web Worker timer that ticks every 2.5s even when the browser tab is hidden/minimized
+    if (!_bgPollWorker && typeof Worker === 'function' && typeof Blob === 'function') {
+      const workerCode = `setInterval(function(){ postMessage({ type: 'BG_POLL_TICK' }); }, 2500);`;
+      const b = new Blob([workerCode], { type: 'application/javascript' });
+      _bgPollWorker = new Worker(URL.createObjectURL(b));
+      _bgPollWorker.onmessage = () => {
+        if (typeof runLiveCloudPollTick === 'function') {
+          runLiveCloudPollTick();
+        }
+      };
+    }
+    // 3) Unlock HTML5 Audio & subtle keep-alive loop so mobile OS allows playing loud ringtone in background
+    if (!_cachedSilentWavUrl) {
+      _cachedSilentWavUrl = buildPcmWavBlobUrl([{ freq: 40, delay: 0, dur: 0.1 }], 2.0, 0.0005);
+    }
+    if (!_bgKeepAliveAudioEl && _cachedSilentWavUrl && typeof Audio === 'function') {
+      _bgKeepAliveAudioEl = new Audio(_cachedSilentWavUrl);
+      _bgKeepAliveAudioEl.loop = true;
+      _bgKeepAliveAudioEl.volume = 0.005;
+    }
+    if (_bgKeepAliveAudioEl && _bgKeepAliveAudioEl.paused) {
+      _bgKeepAliveAudioEl.play().catch(() => {});
+    }
+    if (!_globalAlertAudioEl && typeof Audio === 'function') {
+      _globalAlertAudioEl = new Audio(getAlertWavUrl(false));
+      _globalAlertAudioEl.volume = 1.0;
+    }
+  } catch (_) {}
+}
+
+// Unlock Web Audio API & Background Keep-Alive on first user interaction
+['click', 'touchstart', 'keydown'].forEach(evtName => {
+  window.addEventListener(evtName, () => {
+    if (!audioCtx && (window.AudioContext || window.webkitAudioContext)) {
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+      } catch (_) {}
+    } else if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {});
+    }
+    startBackgroundKeepAliveEngine();
+  }, { once: false, passive: true });
+});
 
 function stopLongAlertSound() {
   for (const t of activeAlertTimers) {
     clearTimeout(t);
   }
   activeAlertTimers = [];
+  try {
+    if (_globalAlertAudioEl) {
+      _globalAlertAudioEl.pause();
+      _globalAlertAudioEl.currentTime = 0;
+    }
+  } catch (_) {}
 }
 
-// Plays a clear, long (4.5 seconds) industrial multi-chime ringtone for authorized users
+// Plays a clear, long (4.5 seconds) industrial multi-chime ringtone (via both HTML5 WAV Audio for background/locked-screen mobile & Web Audio API)
 function playLongAlertSound(isUrgent = false) {
   if (!soundEnabled) return;
   stopLongAlertSound();
+  try {
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      navigator.vibrate(isUrgent ? [450, 150, 450, 150, 600] : [300, 120, 300, 120, 400]);
+    }
+  } catch (_) {}
+  try {
+    const wavUrl = getAlertWavUrl(isUrgent);
+    if (wavUrl && typeof Audio === 'function') {
+      if (!_globalAlertAudioEl) {
+        _globalAlertAudioEl = new Audio(wavUrl);
+      } else {
+        _globalAlertAudioEl.src = wavUrl;
+      }
+      _globalAlertAudioEl.volume = 1.0;
+      _globalAlertAudioEl.currentTime = 0;
+      _globalAlertAudioEl.play().catch(() => {});
+    }
+  } catch (_) {}
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
@@ -2005,9 +2158,11 @@ function isSafeToAutoRenderFromPoll() {
   return true;
 }
 
-// Live Polling (every 2.5s) so any order preparation, approval, warehouse update, or chat triggers immediate long sound alert for authorized users
-setInterval(async () => {
-  if (window._isSavingState || window._isPrintingActive) return;
+// Live Polling (every 2.5s via both main thread & unthrottled background Web Worker) so any order preparation, approval, warehouse update, or chat triggers immediate long sound alert & OS notification
+let _isPollingTickRunning = false;
+async function runLiveCloudPollTick() {
+  if (_isPollingTickRunning || window._isSavingState || window._isPrintingActive) return;
+  _isPollingTickRunning = true;
   try {
     const fresh = await fetchRemoteState();
     if (window._isSavingState) return;
@@ -2054,8 +2209,18 @@ setInterval(async () => {
   } catch (_) {
     isOnline = false;
     updateSyncIndicator();
+  } finally {
+    _isPollingTickRunning = false;
   }
-}, 2500);
+}
+
+setInterval(runLiveCloudPollTick, 2500);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    runLiveCloudPollTick();
+  }
+  syncUserContextToServiceWorker();
+});
 
 // ============================================================================
 // UNIVERSAL UNDO & RESTORATION ENGINE (نظام التراجع الشامل وإرجاع الشيء لأصله قبل التعديل — خاص بالمدير التنفيذي ومدير المشروعات)
@@ -3001,6 +3166,20 @@ function selectLoginUser(userId) {
   }
 }
 
+function activateLoggedInUserContext(user) {
+  if (!user) return;
+  currentUser = user;
+  localStorage.setItem(SESSION_USER_KEY, user.id);
+  markNotifIdsSeen([
+    ...(state?.auditLogs || []).map(l => l.id),
+    ...(state?.chatMessages || []).map(c => c.id),
+    ...(state?.productionOrders || []).map(o => `ord_stage_${o.id}_${o.stage || o.status}`),
+    ...(state?.salesReturns || []).map(r => `ret_status_${r.id}_${r.status || 'pending_approval'}`)
+  ]);
+  syncUserContextToServiceWorker();
+  startBackgroundKeepAliveEngine();
+}
+
 function handleLoginSubmit(e) {
   if (e) e.preventDefault();
   const pinInput = document.getElementById('login-pin-input');
@@ -3011,8 +3190,7 @@ function handleLoginSubmit(e) {
     alert('⛔ الباسورد / كود الدخول (PIN) غير صحيح لهذا المستخدم!');
     return;
   }
-  currentUser = user;
-  localStorage.setItem(SESSION_USER_KEY, user.id);
+  activateLoggedInUserContext(user);
   activeTab = 'dashboard';
   addAuditLog(`تسجيل دخول إلى النظام بواسطة: ${user.name}`);
   saveState();
@@ -3023,9 +3201,8 @@ function quickSwitchUser(userId) {
   if (!user) return;
   if (currentUser && user.id === currentUser.id) return;
   if (isFullAdmin(currentUser)) {
-    currentUser = user;
     sidebarOpen = false;
-    localStorage.setItem(SESSION_USER_KEY, user.id);
+    activateLoggedInUserContext(user);
     render();
     return;
   }
@@ -3069,9 +3246,8 @@ function submitQuickSwitchUserModal(e, targetUserId) {
     alert('⛔ الباسورد غير صحيح!');
     return;
   }
-  currentUser = user;
   sidebarOpen = false;
-  localStorage.setItem(SESSION_USER_KEY, user.id);
+  activateLoggedInUserContext(user);
   closeModal();
   render();
 }
@@ -17445,7 +17621,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '84');
+  urlObj.searchParams.set('v', '85');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
