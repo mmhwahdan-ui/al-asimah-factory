@@ -1,20 +1,49 @@
 {
-  "name": "مصنع العاصمة للصناعات المتخصصة - إدارة المخازن والإنتاج",
+  "id": "./index.html",
+  "name": "مصنع العاصمة للصناعات المتخصصة - إدارة المخازن والإنتاج والحسابات",
   "short_name": "مصنع العاصمة",
-  "description": "نظام إدارة المخازن والإنتاج والحسابات المتخصص في القشرة الخشبية (250×125 سم) - مصنع العاصمة للصناعات المتخصصة",
+  "description": "برنامج إدارة المخازن والإنتاج والحسابات المتخصص في القشرة الخشبية (250×125 سم) - مصنع العاصمة للصناعات المتخصصة",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
   "dir": "rtl",
   "lang": "ar",
   "background_color": "#0f172a",
   "theme_color": "#b45309",
+  "prefer_related_applications": false,
+  "categories": ["business", "productivity", "finance"],
   "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
     {
       "src": "./icons/logo.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ]
 }

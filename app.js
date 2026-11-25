@@ -1960,6 +1960,23 @@ window.addEventListener('beforeinstallprompt', (e) => {
   render();
 });
 
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  localStorage.setItem('al_asimah_app_installed', 'true');
+  closeModal();
+  render();
+});
+
+function isRunningStandaloneApp() {
+  try {
+    if (window.matchMedia && (window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: window-controls-overlay)').matches)) {
+      return true;
+    }
+    if (window.navigator && window.navigator.standalone === true) return true;
+  } catch (_) {}
+  return false;
+}
+
 async function refreshServerUrls() {
   try {
     const res = await fetch('/api/urls', { cache: 'no-store' });
@@ -3057,15 +3074,57 @@ window.addEventListener('offline', () => {
 // 1-Click Install & Mobile QR Code Modal
 async function triggerOneClickInstall() {
   if (deferredInstallPrompt) {
-    deferredInstallPrompt.prompt();
-    const choice = await deferredInstallPrompt.userChoice;
-    if (choice.outcome === 'accepted') {
-      deferredInstallPrompt = null;
-      render();
+    try {
+      deferredInstallPrompt.prompt();
+      const choice = await deferredInstallPrompt.userChoice;
+      if (choice && choice.outcome === 'accepted') {
+        deferredInstallPrompt = null;
+        localStorage.setItem('al_asimah_app_installed', 'true');
+        closeModal();
+        render();
+      }
+    } catch (_) {
+      openMobileInstallModal();
     }
   } else {
     openMobileInstallModal();
   }
+}
+
+function downloadWindowsDesktopShortcut() {
+  const appUrl = PERMANENT_CLOUD_URL || window.location.href;
+  const batContent = [
+    '@echo off',
+    'title Al-Asimah Factory Desktop App',
+    'set "APP_URL=' + appUrl + '"',
+    'if exist "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe" (',
+    '  start "" "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe" --app="%APP_URL%"',
+    '  exit',
+    ')',
+    'if exist "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe" (',
+    '  start "" "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe" --app="%APP_URL%"',
+    '  exit',
+    ')',
+    'if exist "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe" (',
+    '  start "" "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe" --app="%APP_URL%"',
+    '  exit',
+    ')',
+    'if exist "%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe" (',
+    '  start "" "%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe" --app="%APP_URL%"',
+    '  exit',
+    ')',
+    'start "" "%APP_URL%"'
+  ].join('\r\n');
+
+  const blob = new Blob([batContent], { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'برنامج_مصنع_العاصمة.bat';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
 function copyLinkToClipboard(urlText) {
@@ -3079,50 +3138,77 @@ async function openMobileInstallModal() {
   const shareUrl = PERMANENT_CLOUD_URL;
   const lanUrl = liveServerUrls.lanUrl || 'http://192.168.1.3:8090';
   const qrImgUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(shareUrl)}`;
-  const whatsappUrl = `https://wa.me/?text=${encodeURIComponent('🏭 الرابط الرسمي الدائم لنظام مصنع العاصمة للصناعات المتخصصة (يعمل من أي مكان في المصنع أو الإدارة على أي موبايل أو كمبيوتر 24 ساعة):\n' + shareUrl)}`;
+  const whatsappUrl = `https://wa.me/?text=${encodeURIComponent('🏭 برنامج نظام مصنع العاصمة للصناعات المتخصصة (اضغط على الرابط ثم اضغط "تثبيت البرنامج" ليعمل على الكمبيوتر أو الأندرويد بدون متصفح):\n' + shareUrl)}`;
+  const isStandalone = isRunningStandaloneApp();
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box" style="max-width:560px;text-align:center;">
+      <div class="modal-box" style="max-width:620px;text-align:center;">
         <div class="card-header">
-          <div class="card-title">📲 أسهل طريقة لفتح وتثبيت التطبيق على الموبايلات</div>
+          <div class="card-title">💻📲 تثبيت برنامج مصنع العاصمة على الكمبيوتر والأندرويد (بدون متصفح)</div>
           <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
         </div>
 
-        <div style="background:var(--bg-elevated);padding:16px;border-radius:14px;margin-bottom:14px;">
-          <div style="font-weight:800;font-size:1rem;color:var(--primary);margin-bottom:8px;">
-            1️⃣ افتح كاميرا الموبايل ووجّهها على الكود (QR Code) هيفتح التطبيق فوراً:
+        ${isStandalone ? `
+          <div style="background:rgba(16,185,129,0.14);border:2px solid #10b981;color:#065f46;padding:12px 16px;border-radius:12px;margin-bottom:14px;font-weight:900;">
+            ✅ أنت تشغل النظام الآن بالفعل كبرنامج مستقل (بدون متصفح)!
           </div>
-          <div style="background:#fff;padding:12px;border-radius:12px;display:inline-block;border:2px solid var(--primary);">
-            <img src="${qrImgUrl}" alt="QR Code" style="width:190px;height:190px;display:block;" onerror="this.style.display='none'" />
-          </div>
-          <div style="margin-top:10px;font-size:0.86rem;">
-            <div style="margin-bottom:4px;"><strong>🌍 الرابط السحابي المباشر (من أي مكان 4G/5G أو Wi-Fi):</strong></div>
-            <a href="${shareUrl}" target="_blank" style="direction:ltr;display:inline-block;font-weight:800;color:var(--accent);word-break:break-all;">${shareUrl}</a>
-            <div style="margin-top:6px;"><strong>📶 رابط شبكة الواي فاي الداخلية (بدون إنترنت):</strong></div>
-            <a href="${lanUrl}" target="_blank" style="direction:ltr;display:inline-block;font-weight:800;color:var(--primary);">${lanUrl}</a>
-          </div>
-        </div>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
-          <a href="${whatsappUrl}" target="_blank" class="btn btn-success" style="justify-content:center;text-decoration:none;padding:12px;">
-            💬 إرسال الرابط على واتساب
-          </a>
-          <button type="button" class="btn btn-primary" style="justify-content:center;padding:12px;" onclick="copyLinkToClipboard('${shareUrl}')">
-            📋 نسخ الرابط المباشر
-          </button>
-        </div>
-
-        ${deferredInstallPrompt ? `
-          <button type="button" class="btn btn-accent" style="width:100%;justify-content:center;padding:13px;font-size:1rem;margin-bottom:12px;" onclick="triggerOneClickInstall()">
-            📲 تثبيت التطبيق الآن على هذا الجهاز بضغطة واحدة
-          </button>
         ` : ''}
 
-        <div style="text-align:right;font-size:0.84rem;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);padding:12px;border-radius:10px;line-height:1.7;">
-          <strong>✨ كيف يتثبت بأيقونة على الموبايل في ثانية واحدة؟</strong><br/>
-          • بعد فتح الرابط على الموبايل، ستظهر لك رسالة تلقائية <strong>"تثبيت تطبيق مصنع العاصمة"</strong> اضغط <strong>تثبيت (Install)</strong>.<br/>
-          • أو على آيفون (Safari): اضغط زر <strong>مشاركة ⬆️</strong> ثم <strong>إضافة للشاشة الرئيسية</strong>.
+        ${deferredInstallPrompt ? `
+          <div style="background:linear-gradient(135deg, rgba(16,185,129,0.15), rgba(15,118,110,0.15));border:2.5px solid #10b981;padding:16px;border-radius:14px;margin-bottom:16px;">
+            <div style="font-weight:900;font-size:1.05rem;color:#047857;margin-bottom:10px;">
+              🚀 البرنامج جاهز للتثبيت المباشر على هذا الجهاز (كمبيوتر أو أندرويد):
+            </div>
+            <button type="button" class="btn btn-success" style="width:100%;justify-content:center;padding:14px;font-size:1.08rem;font-weight:900;box-shadow:0 6px 18px rgba(16,185,129,0.35);" onclick="triggerOneClickInstall()">
+              📲 اضغط هنا لتثبيت البرنامج الآن بضغطة واحدة (Install App)
+            </button>
+            <small style="display:block;margin-top:8px;color:var(--text-main);font-weight:700;">
+              سينزل كأيقونة برنامج مستقلة على سطح المكتب أو شاشة الموبايل ويفتح مباشرة بدون متصفح
+            </small>
+          </div>
+        ` : `
+          <div style="text-align:right;background:rgba(245,158,11,0.1);border:2px solid #f59e0b;padding:14px;border-radius:12px;margin-bottom:14px;line-height:1.75;font-size:0.88rem;">
+            <div style="font-weight:900;color:#b45309;font-size:0.96rem;margin-bottom:6px;">
+              💻 أولاً: طريقة التثبيت على الكمبيوتر (Windows) بدون متصفح:
+            </div>
+            1. انظر إلى أقصى يمين (أو يسار) شريط العنوان أعلى المتصفح ستجد أيقونة شاشة عليها سهم <strong>(📥 تثبيت مصنع العاصمة / Install)</strong> اضغط عليها ثم اضغط <strong>تثبيت</strong>.<br/>
+            2. أو اضغط على زر <strong>الثلاث نقاط (⋮)</strong> أعلى المتصفح ⬅ اختر <strong>تثبيت التطبيق (Install App)</strong> أو <strong>حفظ ومشاركة ⬅ تثبيت مصنع العاصمة</strong>.<br/>
+            <div style="margin-top:10px;">
+              <button type="button" class="btn btn-sm" style="background:#0f766e;color:#fff;font-weight:900;width:100%;justify-content:center;padding:10px;" onclick="downloadWindowsDesktopShortcut()">
+                🖥️ أو اضغط هنا لتحميل مشغل سطح المكتب المباشر للكمبيوتر (برنامج_مصنع_العاصمة.bat)
+              </button>
+            </div>
+          </div>
+        `}
+
+        <div style="text-align:right;font-size:0.86rem;background:rgba(16,185,129,0.08);border:1.5px solid rgba(16,185,129,0.35);padding:13px;border-radius:12px;margin-bottom:14px;line-height:1.75;">
+          <div style="font-weight:900;color:#047857;font-size:0.95rem;margin-bottom:4px;">
+            📱 ثانياً: طريقة التثبيت على موبايل الأندرويد (Android) كبرنامج مستقل:
+          </div>
+          • اضغط زر <strong>(📲 تثبيت البرنامج الآن)</strong> باللون الأخضر أعلى الشاشة.<br/>
+          • أو اضغط على <strong>الثلاث نقاط (⋮)</strong> في أعلى متصفح الموبايل واختر <strong>«تثبيت التطبيق / Install App»</strong> أو <strong>«إضافة إلى الشاشة الرئيسية»</strong>، فينزل كبرنامج مستقل وسط تطبيقات الموبايل يفتح بدون متصفح تماماً!
+        </div>
+
+        <div style="background:var(--bg-elevated);padding:14px;border-radius:14px;margin-bottom:14px;">
+          <div style="font-weight:800;font-size:0.95rem;color:var(--primary);margin-bottom:8px;">
+            📷 مسح الكود (QR Code) بكاميرا الموبايل لتثبيت البرنامج على أي موبايل آخر:
+          </div>
+          <div style="background:#fff;padding:10px;border-radius:12px;display:inline-block;border:2px solid var(--primary);">
+            <img src="${qrImgUrl}" alt="QR Code" style="width:170px;height:170px;display:block;" onerror="this.style.display='none'" />
+          </div>
+          <div style="margin-top:8px;font-size:0.82rem;">
+            <a href="${shareUrl}" target="_blank" style="direction:ltr;display:inline-block;font-weight:800;color:var(--accent);word-break:break-all;">${shareUrl}</a>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <a href="${whatsappUrl}" target="_blank" class="btn btn-success" style="justify-content:center;text-decoration:none;padding:11px;font-weight:800;">
+            💬 إرسال رابط التثبيت واتساب
+          </a>
+          <button type="button" class="btn btn-primary" style="justify-content:center;padding:11px;font-weight:800;" onclick="copyLinkToClipboard('${shareUrl}')">
+            📋 نسخ رابط التثبيت
+          </button>
         </div>
       </div>
     </div>
@@ -3977,6 +4063,12 @@ function render() {
           <button class="nav-item" onclick="openPasswordsManagerModal()">
             <span>🔑 تغيير الباسوردات</span>
           </button>
+
+          ${!isRunningStandaloneApp() ? `
+          <button class="nav-item" style="background:linear-gradient(135deg,#059669,#047857);color:#fff;font-weight:900;border:1.5px solid #34d399;margin-top:4px;" onclick="sidebarOpen=false; triggerOneClickInstall();">
+            <span>💻📲 تثبيت البرنامج بدون متصفح</span>
+          </button>
+          ` : ''}
         </nav>
 
         <div class="sidebar-footer">
@@ -4037,9 +4129,15 @@ function render() {
             <button class="btn btn-sm btn-accent" onclick="openPasswordsManagerModal()" title="تغيير الباسورد الخاص بك وباسوردات الموبايلات">
               🔑 تغيير الباسوردات
             </button>
-            <button class="btn btn-sm btn-primary" onclick="openMobileInstallModal()" title="افتح بالكاميرا QR أو أرسل الرابط على واتساب أو ثبته بضغطة واحدة">
-              📲 الموبايل (QR)
-            </button>
+            ${!isRunningStandaloneApp() ? `
+              <button class="btn btn-sm" style="background:linear-gradient(135deg,#059669,#047857);color:#fff;font-weight:900;border:2px solid #34d399;box-shadow:0 3px 10px rgba(16,185,129,0.3);" onclick="triggerOneClickInstall()" title="تثبيت البرنامج على الكمبيوتر أو الأندرويد كبرنامج مستقل يفتح من سطح المكتب بدون متصفح">
+                💻📲 تثبيت البرنامج على الجهاز
+              </button>
+            ` : `
+              <span class="badge badge-success" style="padding:6px 10px;font-weight:900;cursor:pointer;" onclick="openMobileInstallModal()" title="النظام يعمل الآن كبرنامج مستقل — اضغط لعرض كود QR للموبايلات الأخرى">
+                💻 برنامج مثبت (QR)
+              </span>
+            `}
             ${(currentUser && !['admin_manager', 'warehouse_keeper', 'operations_manager'].includes(currentUser.roleKey)) ? `
               <a href="./Al_Asimah_Factory_Full_System.xlsx" download="Al_Asimah_Factory_Full_System.xlsx" class="btn btn-sm" style="background:#15803d;color:#fff;font-weight:900;text-decoration:none;border:none;" title="تحميل شيت الإكسيل الموحد الكامل للمصنع شامل جميع الجداول والحسابات والدوال الحية">
                 📊 شيت الإكسيل الكامل (.xlsx)
@@ -4092,8 +4190,13 @@ function renderLoginScreen() {
           <h1>${state.factoryInfo.name}</h1>
           <p>${state.factoryInfo.subtitle} — مقاس قياسي (${state.factoryInfo.standardDimensions})</p>
           <div style="margin-top:10px;display:flex;justify-content:center;gap:8px;flex-wrap:wrap;">
+            ${!isRunningStandaloneApp() ? `
+              <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#059669,#047857);color:#fff;font-weight:900;border:2px solid #34d399;padding:8px 16px;" onclick="triggerOneClickInstall()">
+                💻📲 تثبيت البرنامج على الكمبيوتر / الأندرويد (بدون متصفح)
+              </button>
+            ` : ''}
             <button type="button" class="btn btn-sm btn-accent" onclick="openMobileInstallModal()">
-              📲 تثبيت التطبيق على الموبايل / إرسال واتساب (QR)
+              📷 كود الموبايل (QR) / إرسال واتساب
             </button>
           </div>
         </div>

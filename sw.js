@@ -1,4 +1,4 @@
-const CACHE_NAME = 'al-asimah-factory-v85';
+const CACHE_NAME = 'al-asimah-factory-v86';
 const META_CACHE_NAME = 'al-asimah-sw-meta-v1';
 const FIREBASE_DEFAULT_URL = 'https://elite-grand-8a6c3-default-rtdb.firebaseio.com/al_asimah_factory_clean.json';
 
@@ -6,10 +6,12 @@ const ASSETS = [
   './',
   './index.html',
   './print.html',
-  './styles.css?v=85',
-  './app.js?v=85',
+  './styles.css?v=86',
+  './app.js?v=86',
   './manifest.webmanifest',
   './icons/logo.svg',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
   'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'
 ];
