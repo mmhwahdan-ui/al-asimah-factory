@@ -1,4 +1,4 @@
-const CACHE_NAME = 'al-asimah-factory-v83';
+const CACHE_NAME = 'al-asimah-factory-v84';
 const META_CACHE_NAME = 'al-asimah-sw-meta-v1';
 const FIREBASE_DEFAULT_URL = 'https://elite-grand-8a6c3-default-rtdb.firebaseio.com/al_asimah_factory_clean.json';
 
@@ -6,8 +6,8 @@ const ASSETS = [
   './',
   './index.html',
   './print.html',
-  './styles.css?v=83',
-  './app.js?v=83',
+  './styles.css?v=84',
+  './app.js?v=84',
   './manifest.webmanifest',
   './icons/logo.svg',
   'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
@@ -124,6 +124,27 @@ function isModificationOrSilentActionSw(actionText = '') {
     txt.includes('لوجو الشركة') ||
     txt.includes('ختم الشركة')
   );
+}
+
+function canUserSeeChatMessageSw(user, msg) {
+  if (!user || !msg) return false;
+  if (isFullAdminSw(user)) return true;
+  if (
+    msg.senderId === user.id ||
+    msg.assignedToUserId === user.id ||
+    msg.recipientUserId === user.id ||
+    msg.channel === `dm_${user.id}`
+  ) {
+    return true;
+  }
+  if (msg.channel && msg.channel.startsWith('dm_')) {
+    const targetId = msg.channel.replace('dm_', '');
+    return targetId === user.id || msg.recipientUserId === user.id || msg.assignedToUserId === user.id || msg.senderId === user.id;
+  }
+  if (msg.channel === 'warehouses') return Boolean(user.permissions?.warehouses);
+  if (msg.channel === 'production') return Boolean(user.permissions?.production);
+  if (msg.channel === 'accounting') return Boolean(user.permissions?.salesAccounting || user.permissions?.approvals);
+  return true;
 }
 
 function canUserReceiveLogSw(user, logItem) {
@@ -287,6 +308,41 @@ async function checkCloudForBackgroundNotifications() {
         seenSet.add(stageKey);
         notified = true;
         break;
+      }
+    }
+
+    if (!notified) {
+      const chatList = Array.isArray(remote.chatMessages) ? remote.chatMessages.slice(-20) : [];
+      for (let i = chatList.length - 1; i >= 0; i--) {
+        const c = chatList[i];
+        if (!c || !c.id || seenSet.has(c.id)) continue;
+        if (c.senderId === user.id) {
+          seenSet.add(c.id);
+          continue;
+        }
+        if (canUserSeeChatMessageSw(user, c)) {
+          const isDirectToMe =
+            (c.channel && c.channel.startsWith('dm_')) ||
+            c.recipientUserId === user.id ||
+            c.assignedToUserId === user.id;
+          const targetChatChannel = isDirectToMe ? `dm_${c.senderId}` : (c.channel || 'general');
+          const chatTitle = `${c.msgType === 'task' ? '📌 مهمة عمل جديدة' : c.msgType === 'urgent' ? '🚨 تنبيه عاجل' : '💬 رسالة شات جديدة'} من ${c.senderName || 'مستخدم'}`;
+          await self.registration.showNotification(chatTitle, {
+            body: sanitizeForUserSw(c.text || '', user),
+            icon: './icons/logo.svg',
+            badge: './icons/logo.svg',
+            dir: 'rtl',
+            lang: 'ar',
+            vibrate: [300, 120, 300, 120, 400],
+            requireInteraction: true,
+            renotify: true,
+            tag: c.id,
+            data: { targetTab: 'chat', targetChatChannel }
+          });
+          seenSet.add(c.id);
+          notified = true;
+          break;
+        }
       }
     }
 

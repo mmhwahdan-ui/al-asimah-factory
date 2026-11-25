@@ -4185,7 +4185,9 @@ function sendChatMessage(e) {
   if (inputEl) inputEl.value = '';
 
   const logPrefix = msgType === 'task' ? '📌 تكليف مهمة عمل جديدة' : msgType === 'urgent' ? '🚨 تنبيه عاجل' : '💬 رسالة عمل';
-  saveState(`${logPrefix} من (${currentUser.name}) في (${channelLabel})${assignedUser ? ' موجهة إلى ' + assignedUser.name : ''}: ${text}`);
+  addPendingOfflineOperation(`${logPrefix} في (${channelLabel})`);
+  playLongAlertSound(false);
+  saveState('');
 
   setTimeout(() => {
     const box = document.getElementById('chat-messages-scroll');
@@ -17443,7 +17445,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '83');
+  urlObj.searchParams.set('v', '84');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
