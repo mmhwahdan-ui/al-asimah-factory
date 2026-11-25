@@ -232,12 +232,39 @@ function canApproveSalesReturn(user = currentUser) {
   return ['ceo', 'projects_manager', 'accountant', 'accounts_manager', 'accounting_manager'].includes(user.roleKey);
 }
 
-function sanitizeTextForWarehouseKeeper(str) {
-  if (!str || canSeeFinancialPrices()) return str || '';
+function sanitizeTextForWarehouseKeeper(str, user = currentUser) {
+  const targetUser = user || currentUser;
+  const canSeeFin = targetUser
+    ? (!isWarehouseKeeperOnly(targetUser) && (isFullAdmin(targetUser) || Boolean(targetUser.permissions?.salesAccounting) || ['accounts_manager', 'accounting_manager', 'accountant', 'reserve_user'].includes(targetUser.roleKey)))
+    : canSeeFinancialPrices();
+  if (!str || canSeeFin) return str || '';
   return String(str)
     .replace(/\s*[×xX]\s*[0-9.,]+\s*ج(?:\.م)?\s*=\s*[0-9.,]+\s*(?:ج\.م|ج)?/g, '')
-    .replace(/\s*(?:بصافي|بقيمة|بسعر|إجمالي|خصم|إلى)\s*[0-9.,]+\s*(?:ج\.م|جنيه|ج)/g, '')
+    .replace(/\s*(?:بصافي|بقيمة|بسعر|إجمالي|خصم|إلى|بمبلغ|مدين|دائن)\s*[0-9.,]+\s*(?:ج\.م|جنيه|ج)/g, '')
     .replace(/[0-9.,]+\s*(?:ج\.م|جنيه)/g, '');
+}
+
+// Returns true for edit/modification/deletion/undo/login actions that must NOT trigger WhatsApp-like workflow notifications
+function isModificationOrSilentAction(actionText = '') {
+  const txt = String(actionText || '').trim();
+  if (!txt) return true;
+  if (
+    txt.includes('تعديل') ||
+    txt.includes('تحديث سعر') ||
+    txt.includes('تحديث القيمة الافتراضية') ||
+    txt.includes('تحديث الباسورد') ||
+    txt.includes('حذف') ||
+    txt.includes('إلغاء التخانة') ||
+    txt.includes('إلغاء درجة الجودة') ||
+    txt.includes('تراجع (Undo)') ||
+    txt.includes('إعادة تطبيق العملية') ||
+    txt.includes('تسجيل دخول') ||
+    txt.includes('لوجو الشركة') ||
+    txt.includes('ختم الشركة')
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function fmtMoney(n) {
@@ -677,16 +704,21 @@ function inferActionScope(actionText = '') {
 
 function canUserSeeNotification(user, logItem) {
   if (!user || !logItem) return false;
-  if (isFullAdmin(user)) return true; // المدير التنفيذي ومدير المشروعات يرون كافة الإشعارات والتعديلات
   if (Array.isArray(logItem.hiddenFromRoles) && logItem.hiddenFromRoles.includes(user.roleKey)) {
     return false;
   }
-  if (isWarehouseKeeperOnly(user)) {
+  const hasFinancialView = !isWarehouseKeeperOnly(user) && (
+    isFullAdmin(user) ||
+    Boolean(user.permissions && user.permissions.salesAccounting) ||
+    ['accounts_manager', 'accounting_manager', 'accountant', 'reserve_user'].includes(user.roleKey)
+  );
+  if (!hasFinancialView) {
     const act = String(logItem.action || '');
-    if (act.includes('سعر القطعة') || act.includes('معاملة مالية') || act.includes('تحصيل دفعة') || act.includes('سند مالي') || act.includes('مديونية')) {
+    if (act.includes('سعر القطعة') || act.includes('معاملة مالية') || act.includes('تحصيل دفعة') || act.includes('سند مالي') || act.includes('مديونية') || act.includes('شيك تحت التحصيل') || act.includes('تأمين البالتات')) {
       return false;
     }
   }
+  if (isFullAdmin(user)) return true;
   if (logItem.targetUserId && logItem.targetUserId !== 'all') {
     return logItem.targetUserId === user.id || logItem.actorId === user.id;
   }
@@ -696,6 +728,161 @@ function canUserSeeNotification(user, logItem) {
 
   if (perms.includes('all') || perms.includes('dashboard') || perms.includes('chat')) return true;
   return perms.some(pk => Boolean(user.permissions && user.permissions[pk]));
+}
+
+function canUserReceivePushAlert(user, logItem) {
+  if (!user || !logItem) return false;
+  if (logItem.isSilentEdit || isModificationOrSilentAction(logItem.action)) return false;
+  return canUserSeeNotification(user, logItem);
+}
+
+const SW_META_CACHE_NAME = 'al-asimah-sw-meta-v1';
+const OFFLINE_QUEUE_KEY = 'al_asimah_offline_pending_queue_v1';
+
+function getPendingOfflineQueue() {
+  try {
+    const raw = localStorage.getItem(OFFLINE_QUEUE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function addPendingOfflineOperation(actionLabel = '') {
+  try {
+    const q = getPendingOfflineQueue();
+    q.push({
+      id: uid('offop'),
+      timestamp: new Date().toISOString(),
+      actorId: currentUser ? currentUser.id : 'system',
+      actorName: currentUser ? currentUser.name : 'النظام',
+      actionLabel: actionLabel || 'عملية محفوظة بدون إنترنت'
+    });
+    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(q.slice(-200)));
+  } catch (_) {}
+}
+
+function clearPendingOfflineQueue() {
+  try {
+    localStorage.removeItem(OFFLINE_QUEUE_KEY);
+  } catch (_) {}
+  if ('caches' in window) {
+    caches.open(SW_META_CACHE_NAME).then(c => c.delete('https://al-asimah-local/pending-offline-state.json')).catch(() => {});
+  }
+}
+
+async function syncUserContextToServiceWorker() {
+  if (!currentUser) return;
+  const payload = {
+    user: currentUser,
+    seenIds: Array.from(getSeenNotifIds()),
+    firebaseUrl: FIREBASE_CLOUD_URL,
+    updatedAt: Date.now()
+  };
+  try {
+    if ('caches' in window) {
+      const cache = await caches.open(SW_META_CACHE_NAME);
+      await cache.put(
+        'https://al-asimah-local/user-context.json',
+        new Response(JSON.stringify(payload), { headers: { 'Content-Type': 'application/json' } })
+      );
+    }
+  } catch (_) {}
+  try {
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: 'SET_USER_CONTEXT',
+        ...payload
+      });
+    }
+  } catch (_) {}
+}
+
+async function triggerNativeOsNotification(title, bodyText, targetTab = 'dashboard', tagId = '', targetChatChannel = '') {
+  if (typeof window === 'undefined' || !('Notification' in window)) return;
+  if (Notification.permission !== 'granted') return;
+  const cleanBody = sanitizeTextForWarehouseKeeper(bodyText, currentUser);
+  const notifTitle = title || '🏭 مصنع العاصمة للصناعات المتخصصة';
+  const notifTag = tagId || `asimah_${Date.now()}`;
+  const notifOpts = {
+    body: cleanBody,
+    icon: './icons/logo.svg',
+    badge: './icons/logo.svg',
+    dir: 'rtl',
+    lang: 'ar',
+    vibrate: [300, 120, 300, 120, 400],
+    requireInteraction: true,
+    renotify: true,
+    tag: notifTag,
+    data: {
+      targetTab: targetTab || 'dashboard',
+      targetChatChannel: targetChatChannel || '',
+      url: './index.html'
+    }
+  };
+  try {
+    if ('serviceWorker' in navigator) {
+      const reg = await navigator.serviceWorker.ready;
+      if (reg && typeof reg.showNotification === 'function') {
+        await reg.showNotification(notifTitle, notifOpts);
+        return;
+      }
+    }
+  } catch (_) {}
+  try {
+    const n = new Notification(notifTitle, notifOpts);
+    n.onclick = () => {
+      window.focus();
+      if (targetTab === 'chat' && targetChatChannel) {
+        activeTab = 'chat';
+        selectChatChannel(targetChatChannel);
+      } else if (targetTab) {
+        setTab(targetTab);
+      }
+      n.close();
+    };
+  } catch (_) {}
+}
+
+async function requestOsNotificationPermission(silent = false) {
+  if (typeof window === 'undefined' || !('Notification' in window)) {
+    if (!silent) alert('⚠️ متصفحك الحالي لا يدعم إشعارات النظام المنبثقة.');
+    return false;
+  }
+  try {
+    let perm = Notification.permission;
+    if (perm !== 'granted') {
+      perm = await Notification.requestPermission();
+    }
+    if (perm === 'granted') {
+      await syncUserContextToServiceWorker();
+      if ('serviceWorker' in navigator) {
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          if (reg && reg.periodicSync && typeof reg.periodicSync.register === 'function') {
+            await reg.periodicSync.register('al-asimah-bg-check', { minInterval: 60 * 1000 });
+          }
+          if (reg && reg.sync && typeof reg.sync.register === 'function') {
+            await reg.sync.register('al-asimah-cloud-sync');
+          }
+        } catch (_) {}
+      }
+      if (!silent) {
+        await triggerNativeOsNotification(
+          '🔔 تم تفعيل إشعارات مصنع العاصمة بنجاح',
+          `مرحباً ${currentUser ? currentUser.name : ''} — ستصلك إشعارات مراحل الشغل وإدخال الأرصدة وأوامر التجهيز والموافقات فوراً مثل الواتساب!`,
+          'dashboard',
+          'asimah_test_enable'
+        );
+      }
+      render();
+      return true;
+    } else if (!silent) {
+      alert('⚠️ يرجى السماح بالإشعارات (Allow Notifications) من إعدادات المتصفح لتصلك إشعارات مراحل الشغل مثل الواتساب.');
+    }
+  } catch (_) {}
+  return false;
 }
 
 function getSeenNotifIds() {
@@ -714,6 +901,7 @@ function markNotifIdsSeen(ids) {
   for (const id of ids) set.add(id);
   const arr = Array.from(set).slice(-300);
   localStorage.setItem(`al_asimah_seen_notifs_${currentUser.id}`, JSON.stringify(arr));
+  syncUserContextToServiceWorker();
 }
 
 function showLiveBannerAlert(logItem) {
@@ -798,50 +986,58 @@ function checkIncomingNotifications(prevLogs = [], newLogs = [], prevChats = [],
 
     if (curStage !== oldStage && !seen.has(stageAlertKey)) {
       if (curStage === 'pending_warehouse_prep' && isWarehouseOrAdmin) {
+        const msg = `📦 أمر تجهيز طلبية جديد (${ord.orderNumber}) لصالح العميل (${ord.clientName}) — إجمالي الكمية: ${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة جاهز للتجهيز الآن!`;
         playLongAlertSound(true);
         showLiveBannerAlert({
           id: stageAlertKey,
           userName: ord.executiveApprovedBy || ord.requestedBy || 'الإدارة',
           roleTitle: 'أمر تجهيز طلبية فوري',
-          action: `📦 أمر تجهيز طلبية جديد (${ord.orderNumber}) لصالح العميل (${ord.clientName}) — إجمالي الكمية: ${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة (${fmtNum(ord.totalVolumeM3 || 0, 4)} م³) جاهز للتجهيز الآن!`,
+          action: msg,
           targetTab: 'production'
         });
+        triggerNativeOsNotification(`📦 أمر تجهيز طلبية جديد (${ord.orderNumber})`, msg, 'production', stageAlertKey);
         markNotifIdsSeen([stageAlertKey]);
         return;
       }
       if (curStage === 'ready_for_car_dispatch' && isWarehouseOrAdmin) {
+        const msg = `🚚 أمر فوري بصرف الطلبية (${ord.orderNumber}) للعميل (${ord.clientName}) وعمل إذن صرف للسيارة المحملة (${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة)!`;
         playLongAlertSound(true);
         showLiveBannerAlert({
           id: stageAlertKey,
           userName: ord.accountantReleaseBy || 'الحسابات',
           roleTitle: 'أمر صرف وتحميل سيارة فوري',
-          action: `🚚 أمر فوري بصرف الطلبية (${ord.orderNumber}) للعميل (${ord.clientName}) وعمل إذن صرف للسيارة المحملة (${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة)!`,
+          action: msg,
           targetTab: 'approvals'
         });
+        triggerNativeOsNotification(`🚚 أمر صرف وتحميل سيارة (${ord.orderNumber})`, msg, 'approvals', stageAlertKey);
         markNotifIdsSeen([stageAlertKey]);
         return;
       }
-      if (curStage === 'pending_executive' && isFullAdmin(currentUser)) {
+      if (curStage === 'pending_executive' && (isFullAdmin(currentUser) || canApproveExecutiveStage(currentUser))) {
+        const msg = `📋 بيان وأمر تجهيز طلبية جديد (${ord.orderNumber}) للعميل (${ord.clientName}) بانتظار موافقة المدير التنفيذي أو مدير المشروعات ليظهر للمخزن والمدير الإداري`;
         playLongAlertSound(true);
         showLiveBannerAlert({
           id: stageAlertKey,
           userName: ord.requestedBy || 'المحاسب',
           roleTitle: 'طلب موافقة على بيان طلبية',
-          action: `📋 بيان وأمر تجهيز طلبية جديد (${ord.orderNumber}) للعميل (${ord.clientName}) بانتظار موافقة المدير التنفيذي أو مدير المشروعات ليظهر للمخزن والمدير الإداري`,
+          action: msg,
           targetTab: 'production'
         });
+        triggerNativeOsNotification(`📋 طلب موافقة على طلبية (${ord.orderNumber})`, msg, 'production', stageAlertKey);
         markNotifIdsSeen([stageAlertKey]);
         return;
       }
       if (curStage === 'pending_accountant_release' && isAccountantRole) {
+        const msg = `✅ تمت موافقة (${ord.warehousePrepApprovedBy || 'المخزن'}) على تجهيز الطلبية (${ord.orderNumber}) للعميل (${ord.clientName}) — بانتظار عمل حسابات العميل واعتماد إذن الصرف`;
         playLongAlertSound(true);
         showLiveBannerAlert({
           id: stageAlertKey,
           userName: ord.warehousePrepApprovedBy || 'المخزن/الإدارة',
           roleTitle: 'تم تجهيز الطلبية بالمخزن',
-          action: `✅ تمت موافقة (${ord.warehousePrepApprovedBy || 'المخزن'}) على تجهيز الطلبية (${ord.orderNumber}) للعميل (${ord.clientName}) — بانتظار عمل حسابات العميل واعتماد إذن الصرف`,
+          action: msg,
           targetTab: 'approvals'
         });
+        triggerNativeOsNotification(`💳 طلبية جاهزة لاعتماد الحسابات (${ord.orderNumber})`, msg, 'approvals', stageAlertKey);
         markNotifIdsSeen([stageAlertKey]);
         return;
       }
@@ -858,26 +1054,30 @@ function checkIncomingNotifications(prevLogs = [], newLogs = [], prevChats = [],
 
     if (curStatus !== oldStatus && !seen.has(retAlertKey)) {
       if (curStatus === 'pending_approval' && canApproveSalesReturn(currentUser)) {
+        const msg = `🔄 طلب إدخال مرتجع مبيعات (${ret.returnNumber}) من العميل (${ret.clientName}) بكمية (${fmtNum(ret.sheetsCount || 0, 0)} قطعة — ${ret.thicknessMm}مم ${ret.directionLabel} × ${ret.gradeName}) بانتظار موافقتك ليدخل رصيد المخزن!`;
         playLongAlertSound(true);
         showLiveBannerAlert({
           id: retAlertKey,
           userName: ret.requestedBy || 'أمين المخزن',
           roleTitle: 'طلب موافقة على مرتجع مبيعات للمخزن',
-          action: `🔄 طلب إدخال مرتجع مبيعات (${ret.returnNumber}) من العميل (${ret.clientName}) بكمية (${fmtNum(ret.sheetsCount || 0, 0)} قطعة — ${ret.thicknessMm}مم ${ret.directionLabel} × ${ret.gradeName}) بانتظار موافقتك ليدخل رصيد المخزن!`,
+          action: msg,
           targetTab: 'warehouses'
         });
+        triggerNativeOsNotification(`🔄 طلب موافقة على مرتجع مبيعات (${ret.returnNumber})`, msg, 'warehouses', retAlertKey);
         markNotifIdsSeen([retAlertKey]);
         return;
       }
       if (curStatus === 'approved' && isWarehouseOrAdmin) {
+        const msg = `✅ تمت موافقة (${ret.approvedBy || 'الإدارة'}) على مرتجع المبيعات (${ret.returnNumber}) للعميل (${ret.clientName}) — دخلت الكمية (${fmtNum(ret.sheetsCount || 0, 0)} قطعة) إلى رصيد المخزن الآن!`;
         playLongAlertSound(true);
         showLiveBannerAlert({
           id: retAlertKey,
           userName: ret.approvedBy || 'الإدارة/الحسابات',
           roleTitle: 'تمت الموافقة على دخول المرتجع للمخزن',
-          action: `✅ تمت موافقة (${ret.approvedBy || 'الإدارة'}) على مرتجع المبيعات (${ret.returnNumber}) للعميل (${ret.clientName}) — دخلت الكمية (${fmtNum(ret.sheetsCount || 0, 0)} قطعة) إلى رصيد المخزن الآن!`,
+          action: msg,
           targetTab: 'warehouses'
         });
+        triggerNativeOsNotification(`✅ اعتماد دخول مرتجع للمخزن (${ret.returnNumber})`, msg, 'warehouses', retAlertKey);
         markNotifIdsSeen([retAlertKey]);
         return;
       }
@@ -886,12 +1086,21 @@ function checkIncomingNotifications(prevLogs = [], newLogs = [], prevChats = [],
 
   const prevLogIds = new Set((prevLogs || []).map(l => l.id));
 
-  // Find newly arrived logs that currentUser has permission to view
+  // Find newly arrived workflow logs (excluding edits/modifications) that currentUser has permission to view
   const freshAuthorizedLogs = (newLogs || []).filter(l =>
     l && l.id && !prevLogIds.has(l.id) && !seen.has(l.id) &&
     l.actorId !== currentUser.id &&
-    canUserSeeNotification(currentUser, l)
+    canUserReceivePushAlert(currentUser, l)
   );
+
+  // Mark silent edit logs as seen so they don't accumulate
+  const silentEditLogs = (newLogs || []).filter(l =>
+    l && l.id && !prevLogIds.has(l.id) && !seen.has(l.id) &&
+    (l.isSilentEdit || isModificationOrSilentAction(l.action))
+  );
+  if (silentEditLogs.length > 0) {
+    markNotifIdsSeen(silentEditLogs.map(l => l.id));
+  }
 
   const prevChatIds = new Set((prevChats || []).map(c => c.id));
   const freshAuthorizedChats = (newChats || []).filter(c =>
@@ -908,6 +1117,7 @@ function checkIncomingNotifications(prevLogs = [], newLogs = [], prevChats = [],
       latestChat.recipientUserId === currentUser.id ||
       latestChat.assignedToUserId === currentUser.id;
     const targetChatChannel = isDirectToMe ? `dm_${latestChat.senderId}` : (latestChat.channel || 'general');
+    const chatTitle = `${latestChat.msgType === 'task' ? '📌 مهمة عمل جديدة' : latestChat.msgType === 'urgent' ? '🚨 تنبيه عاجل' : '💬 رسالة جديدة'} من ${latestChat.senderName}`;
 
     playLongAlertSound(isUrgent);
     showLiveBannerAlert({
@@ -918,14 +1128,22 @@ function checkIncomingNotifications(prevLogs = [], newLogs = [], prevChats = [],
       targetTab: 'chat',
       targetChatChannel
     });
+    triggerNativeOsNotification(chatTitle, latestChat.text, 'chat', latestChat.id, targetChatChannel);
     markNotifIdsSeen(freshAuthorizedChats.map(c => c.id));
     return;
   }
 
   if (freshAuthorizedLogs.length > 0) {
     const latestLog = freshAuthorizedLogs[0];
+    const tTab = latestLog.targetTab || inferActionScope(latestLog.action).targetTab || 'dashboard';
     playLongAlertSound(false);
     showLiveBannerAlert(latestLog);
+    triggerNativeOsNotification(
+      `🔔 إشعار عمل جديد (${latestLog.userName || 'النظام'})`,
+      latestLog.action,
+      tTab,
+      latestLog.id
+    );
     markNotifIdsSeen(freshAuthorizedLogs.map(l => l.id));
   }
 }
@@ -934,6 +1152,7 @@ function addAuditLog(actionText, explicitPermKeys = null, explicitTargetTab = nu
   if (!state) return;
   state.auditLogs = state.auditLogs || [];
   const inferred = inferActionScope(actionText);
+  const isSilentEdit = isModificationOrSilentAction(actionText);
   const newLog = {
     id: uid('log'),
     timestamp: new Date().toISOString(),
@@ -945,7 +1164,8 @@ function addAuditLog(actionText, explicitPermKeys = null, explicitTargetTab = nu
     targetTab: explicitTargetTab || inferred.targetTab,
     targetUserId,
     hiddenFromRoles,
-    undoId: linkedUndoId || ''
+    undoId: linkedUndoId || '',
+    isSilentEdit
   };
   state.auditLogs.unshift(newLog);
   if (state.auditLogs.length > 250) {
@@ -954,8 +1174,10 @@ function addAuditLog(actionText, explicitPermKeys = null, explicitTargetTab = nu
   if (currentUser) {
     markNotifIdsSeen([newLog.id]);
   }
-  // Play confirmation long alert if user has sound enabled so everyone on this device or other devices hears it
-  playLongAlertSound(false);
+  // Only play confirmation sound for workflow additions/orders/approvals, NOT for edits/modifications
+  if (!isSilentEdit) {
+    playLongAlertSound(false);
+  }
 }
 
 const FIREBASE_CLOUD_URL = 'https://elite-grand-8a6c3-default-rtdb.firebaseio.com/al_asimah_factory_clean.json';
@@ -1721,10 +1943,34 @@ async function loadData() {
         ...(state.productionOrders || []).map(o => `ord_stage_${o.id}_${o.stage || o.status}`),
         ...(state.salesReturns || []).map(r => `ret_status_${r.id}_${r.status || 'pending_approval'}`)
       ]);
+      syncUserContextToServiceWorker();
     }
   }
   updateUndoBaselineSnapshot(state);
   render();
+  if (isOnline && getPendingOfflineQueue().length > 0) {
+    flushPendingOfflineQueueToCloud();
+  }
+}
+
+if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    const data = e.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'OPEN_TARGET_TAB' && data.targetTab) {
+      if (data.targetTab === 'chat' && data.targetChatChannel) {
+        activeTab = 'chat';
+        selectChatChannel(data.targetChatChannel);
+      } else {
+        setTab(data.targetTab);
+      }
+    } else if (data.type === 'OFFLINE_SYNC_COMPLETED') {
+      clearPendingOfflineQueue();
+      isOnline = true;
+      updateSyncIndicator();
+      if (isSafeToAutoRenderFromPoll()) render();
+    }
+  });
 }
 
 // Track user touch/pointer/keyboard interactions so background polling NEVER destroys a DOM button mid-tap on mobile!
@@ -1797,6 +2043,10 @@ setInterval(async () => {
             if (isSafeToAutoRenderFromPoll() || activeTab === 'chat') render();
           }, 2200);
         }
+      }
+      if (!isOnline || getPendingOfflineQueue().length > 0) {
+        isOnline = true;
+        await flushPendingOfflineQueueToCloud();
       }
       isOnline = true;
       updateSyncIndicator();
@@ -2412,6 +2662,94 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
   });
 }
 
+async function persistPendingOfflineStateForSw(stateToQueue) {
+  try {
+    if ('caches' in window && stateToQueue) {
+      const cache = await caches.open(SW_META_CACHE_NAME);
+      await cache.put(
+        'https://al-asimah-local/pending-offline-state.json',
+        new Response(JSON.stringify({ state: stateToQueue, firebaseUrl: FIREBASE_CLOUD_URL, queuedAt: Date.now() }), {
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
+    }
+    if ('serviceWorker' in navigator) {
+      const reg = await navigator.serviceWorker.ready;
+      if (reg && reg.sync && typeof reg.sync.register === 'function') {
+        await reg.sync.register('al-asimah-cloud-sync');
+      }
+    }
+  } catch (_) {}
+}
+
+let _isFlushingOfflineQueue = false;
+async function flushPendingOfflineQueueToCloud() {
+  if (_isFlushingOfflineQueue || !state) return false;
+  const pendingList = getPendingOfflineQueue();
+  if (pendingList.length === 0) return true;
+  _isFlushingOfflineQueue = true;
+  try {
+    let synced = false;
+    const isLocalHost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname.startsWith('192.168.') || location.hostname.endsWith('.trycloudflare.com');
+    if (isLocalHost) {
+      try {
+        const res = await fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(state)
+        });
+        if (res.ok) {
+          state = await res.json();
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+          synced = true;
+        }
+      } catch (_) {}
+    }
+
+    try {
+      const curFbRes = await fetch(FIREBASE_CLOUD_URL, { cache: 'no-store' });
+      if (curFbRes.ok) {
+        const curFb = await curFbRes.json();
+        if (curFb && curFb.users) {
+          state = smartMergeClientState(curFb, state);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        }
+      }
+      const fbRes = await fetch(FIREBASE_CLOUD_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(state)
+      });
+      if (fbRes.ok) synced = true;
+    } catch (_) {}
+
+    if (synced) {
+      const count = pendingList.length;
+      clearPendingOfflineQueue();
+      isOnline = true;
+      updateUndoBaselineSnapshot(state);
+      updateSyncIndicator();
+      showLiveBannerAlert({
+        id: `offline_flush_${Date.now()}`,
+        userName: currentUser ? currentUser.name : 'النظام',
+        roleTitle: 'مزامنة تلقائية سحابية',
+        action: `☁️✅ توفر الإنترنت وتم رفع ومزامنة (${count}) عملية محفوظة تلقائياً إلى النظام وجميع المستخدمين بنجاح!`,
+        targetTab: activeTab || 'dashboard'
+      });
+      setTimeout(() => {
+        if (activeBannerAlert && String(activeBannerAlert.id || '').startsWith('offline_flush_')) {
+          dismissLiveBannerAlert();
+        }
+      }, 5000);
+      if (isSafeToAutoRenderFromPoll()) render();
+      return true;
+    }
+  } finally {
+    _isFlushingOfflineQueue = false;
+  }
+  return false;
+}
+
 async function saveState(logMessage = '', hiddenFromRoles = [], forceReplaceMode = false) {
   if (!state) return;
   window._isSavingState = true;
@@ -2420,7 +2758,10 @@ async function saveState(logMessage = '', hiddenFromRoles = [], forceReplaceMode
     if (!window._isPerformingUndoOrRedo && window._undoBaselineState) {
       createdUndoEntry = recordUndoStepFromBaseline(window._undoBaselineState, state, logMessage);
     }
-    if (logMessage) addAuditLog(logMessage, null, null, 'all', hiddenFromRoles, createdUndoEntry ? createdUndoEntry.id : '');
+    if (logMessage) {
+      addAuditLog(logMessage, null, null, 'all', hiddenFromRoles, createdUndoEntry ? createdUndoEntry.id : '');
+      addPendingOfflineOperation(logMessage);
+    }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     if (currentUser) {
       currentUser = state.users.find(u => u.id === currentUser.id) || currentUser;
@@ -2430,45 +2771,53 @@ async function saveState(logMessage = '', hiddenFromRoles = [], forceReplaceMode
     let synced = false;
     const isLocalHost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname.startsWith('192.168.') || location.hostname.endsWith('.trycloudflare.com');
 
-    if (isLocalHost) {
-      try {
-        const payload = forceReplaceMode ? { ...state, _forceReplace: true } : state;
-        const res = await fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        if (res.ok) {
-          const merged = await res.json();
-          state = merged;
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-          synced = true;
-        }
-      } catch (_) {}
-    }
-
-    try {
-      // Also sync directly with Firebase Cloud Database so Factory & Administration devices anywhere stay 100% in sync
-      if (!forceReplaceMode) {
+    if (navigator.onLine !== false) {
+      if (isLocalHost) {
         try {
-          const curFbRes = await fetch(FIREBASE_CLOUD_URL, { cache: 'no-store' });
-          if (curFbRes.ok) {
-            const curFb = await curFbRes.json();
-            if (curFb && curFb.users) {
-              state = smartMergeClientState(curFb, state);
-              localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-            }
+          const payload = forceReplaceMode ? { ...state, _forceReplace: true } : state;
+          const res = await fetch('/api/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (res.ok) {
+            const merged = await res.json();
+            state = merged;
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            synced = true;
           }
         } catch (_) {}
       }
 
-      const fbRes = await fetch(FIREBASE_CLOUD_URL, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(state)
-      });
-      if (fbRes.ok) synced = true;
-    } catch (_) {}
+      try {
+        // Also sync directly with Firebase Cloud Database so Factory & Administration devices anywhere stay 100% in sync
+        if (!forceReplaceMode) {
+          try {
+            const curFbRes = await fetch(FIREBASE_CLOUD_URL, { cache: 'no-store' });
+            if (curFbRes.ok) {
+              const curFb = await curFbRes.json();
+              if (curFb && curFb.users) {
+                state = smartMergeClientState(curFb, state);
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+              }
+            }
+          } catch (_) {}
+        }
+
+        const fbRes = await fetch(FIREBASE_CLOUD_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(state)
+        });
+        if (fbRes.ok) synced = true;
+      } catch (_) {}
+    }
+
+    if (synced) {
+      clearPendingOfflineQueue();
+    } else {
+      await persistPendingOfflineStateForSw(state);
+    }
 
     updateUndoBaselineSnapshot(state);
     isOnline = synced;
@@ -2478,20 +2827,67 @@ async function saveState(logMessage = '', hiddenFromRoles = [], forceReplaceMode
   }
 }
 
+function renderOfflineOutboxBannerHtml() {
+  const pendingOps = getPendingOfflineQueue();
+  if (isOnline && pendingOps.length === 0) return '';
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;background:${isOnline ? 'rgba(16,185,129,0.12)' : 'rgba(245,158,11,0.14)'};border:2px solid ${isOnline ? '#10b981' : '#d97706'};padding:10px 14px;border-radius:12px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span style="font-size:1.35rem;">${isOnline ? '☁️🔄' : '📴💾'}</span>
+        <div>
+          <div style="font-weight:900;font-size:0.9rem;color:${isOnline ? '#047857' : '#b45309'};">
+            ${isOnline
+              ? `جاري رفع (${pendingOps.length}) عملية محفوظة تلقائياً إلى السحابة...`
+              : `وضع العمل بدون إنترنت (Offline Mode): النظام يعمل بالكامل ويحفظ كل أوامرك وإضافاتك على جهازك تلقائياً`}
+          </div>
+          <small style="color:var(--text-main);font-weight:700;">
+            ${pendingOps.length > 0
+              ? `يوجد حالياً (${pendingOps.length}) عملية وأمر مسجل على الجهاز — سيتم رفعها وتسميعها في النظام عند جميع المستخدمين أوتوماتيكياً بمجرد توفر الإنترنت.`
+              : `يمكنك إدخال الأرصدة وإصدار أوامر التجهيز والموافقات، وسيتم رفعها أوتوماتيكياً فور توفر الإنترنت.`}
+          </small>
+        </div>
+      </div>
+      ${pendingOps.length > 0 ? `
+        <button type="button" class="btn btn-sm btn-primary" style="font-weight:900;" onclick="flushPendingOfflineQueueToCloud()">
+          ☁️ محاولة الرفع الآن (${pendingOps.length})
+        </button>
+      ` : ''}
+    </div>
+  `;
+}
+
 function updateSyncIndicator() {
   const pill = document.getElementById('sync-status-pill');
   if (!pill) return;
-  if (isOnline) {
+  const pendingCount = getPendingOfflineQueue().length;
+  if (isOnline && pendingCount === 0) {
     pill.className = 'sync-pill';
     pill.innerHTML = '● متصل ومتزامن لحظياً مع جميع المستخدمين';
+  } else if (isOnline && pendingCount > 0) {
+    pill.className = 'sync-pill';
+    pill.innerHTML = `● جاري رفع (${pendingCount}) عملية محفوظة...`;
   } else {
     pill.className = 'sync-pill offline';
-    pill.innerHTML = '● وضع أوفلاين (حفظ محلي تلقائي)';
+    pill.innerHTML = pendingCount > 0
+      ? `● بدون إنترنت — محفوظ (${pendingCount}) عملية للرفع التلقائي`
+      : '● وضع بدون إنترنت (النظام يعمل بحفظ محلي تلقائي)';
   }
 }
 
-window.addEventListener('online', () => { isOnline = true; saveState(); });
-window.addEventListener('offline', () => { isOnline = false; updateSyncIndicator(); });
+window.addEventListener('online', () => {
+  isOnline = true;
+  updateSyncIndicator();
+  if (getPendingOfflineQueue().length > 0) {
+    flushPendingOfflineQueueToCloud();
+  } else {
+    saveState();
+  }
+});
+window.addEventListener('offline', () => {
+  isOnline = false;
+  updateSyncIndicator();
+  if (isSafeToAutoRenderFromPoll()) render();
+});
 
 // 1-Click Install & Mobile QR Code Modal
 async function triggerOneClickInstall() {
@@ -3454,9 +3850,14 @@ function render() {
             <button class="btn btn-sm btn-outline" style="border-color:#a855f7;color:#7c3aed;" onclick="openFloatingDockPositionModal()" title="نقل أو إظهار/إخفاء أيقونة الشات والمساعد الذكي من أسفل يسار الصفحة لأي مكان">
               ✥ مكان الشات العائم
             </button>
-            <button class="btn btn-sm btn-outline" style="border-color:var(--primary);color:var(--primary);" onclick="openNotificationsCenterModal()" title="سجل الإشعارات المسموح لك برؤيتها وتجربة الصوت الطويل">
+            <button class="btn btn-sm btn-outline" style="border-color:var(--primary);color:var(--primary);" onclick="openNotificationsCenterModal()" title="سجل الإشعارات المسموح لك برؤيتها وتفعيل إشعارات الموبايل مثل الواتساب">
               🔔 الإشعارات والصوت (${authorizedLogsCount})
             </button>
+            ${(typeof Notification !== 'undefined' && Notification.permission !== 'granted') ? `
+              <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;border:none;" onclick="requestOsNotificationPermission(false)" title="تفعيل إشعارات الموبايل والكمبيوتر لتصلك في كل مراحل الشغل وإدخال الأرصدة والموافقات حتى لو التطبيق بالخلفية مثل الواتساب">
+                📲🔔 تفعيل إشعارات الخلفية
+              </button>
+            ` : ''}
             <button class="btn btn-sm btn-accent" onclick="openPasswordsManagerModal()" title="تغيير الباسورد الخاص بك وباسوردات الموبايلات">
               🔑 تغيير الباسوردات
             </button>
@@ -3478,6 +3879,7 @@ function render() {
         </header>
 
         <main class="content-container">
+          ${renderOfflineOutboxBannerHtml()}
           ${isExecRole ? renderUniversalUndoBarHtml() : ''}
           ${renderActiveTabContent()}
         </main>
@@ -3593,6 +3995,11 @@ function openNotificationsCenterModal() {
 
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;background:var(--bg-elevated);padding:12px 16px;border-radius:12px;margin-bottom:14px;">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm ${(typeof Notification !== 'undefined' && Notification.permission === 'granted') ? 'btn-success' : 'btn-primary'}" style="font-weight:900;" onclick="requestOsNotificationPermission(false)">
+              ${(typeof Notification !== 'undefined' && Notification.permission === 'granted')
+                ? '📲🔔 إشعارات الموبايل والكمبيوتر (مثل الواتساب): مفعّلة ✅ (اضغط للتجربة)'
+                : '📲🔔 تفعيل إشعارات الموبايل والكمبيوتر في الخلفية (مثل الواتساب)'}
+            </button>
             <button type="button" class="btn btn-sm ${soundEnabled ? 'btn-success' : 'btn-danger'}" onclick="toggleSoundPreference()">
               ${soundEnabled ? '🔊 الإشعار الصوتي الطويل: مفعّل' : '🔇 الإشعار الصوتي الطويل: مكتوم'}
             </button>
@@ -3604,6 +4011,9 @@ function openNotificationsCenterModal() {
             </button>
           </div>
           <button type="button" class="btn btn-sm btn-outline" onclick="stopLongAlertSound()">⏹️ إيقاف الصوت</button>
+        </div>
+        <div style="background:rgba(16,185,129,0.08);border:1px solid #10b981;padding:8px 12px;border-radius:8px;margin-bottom:12px;font-size:0.8rem;font-weight:700;color:var(--text-main);">
+          ✅ <strong>قواعد الإشعارات الذكية:</strong> تصلك إشعارات الموبايل والصوت في <strong>جميع مراحل الشغل وإدخال الأرصدة وأوامر التجهيز والموافقات وأذون الصرف فقط</strong> (حسب صلاحيات حسابك)، بينما يتم <strong>استثناء التعديلات</strong> تلقائياً لمنع الإزعاج.
         </div>
 
         <div class="table-responsive" style="max-height:55vh;overflow-y:auto;">
@@ -17033,7 +17443,7 @@ function buildRealPrintPageUrl(docHtml, docTitle, landscape, extraOptions = null
 
   const urlObj = new URL('./print.html', window.location.href);
   urlObj.searchParams.set('job', jobId);
-  urlObj.searchParams.set('v', '82');
+  urlObj.searchParams.set('v', '83');
   if (landscape) urlObj.searchParams.set('l', '1');
   if (extraOptions && extraOptions.orderId) {
     urlObj.searchParams.set('orderId', extraOptions.orderId);
