@@ -4024,6 +4024,8 @@ function render() {
   ).length;
   const authorizedLogsCount = (state.auditLogs || []).filter(l => canUserSeeNotification(currentUser, l)).length;
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const myDelayedApprovals = getMyDelayedApprovalsList();
+  const myDelayedCount = myDelayedApprovals.length;
 
   appEl.innerHTML = `
     <div class="app-layout">
@@ -4052,47 +4054,41 @@ function render() {
         </div>
 
         <nav class="sidebar-nav">
+          ${myDelayedCount > 0 ? `
+          <button class="nav-item flash-approval-nav" onclick="sidebarOpen=false; openDelayedApprovalsWindowModal();">
+            <span>🚨 موافقات متأخرة بانتظارك</span>
+            <span class="nav-badge flash-approval-badge">${myDelayedCount}</span>
+          </button>
+          ` : ''}
+
           <button class="nav-item ${activeTab === 'dashboard' ? 'active' : ''}" onclick="setTab('dashboard')">
             <span>${canSeeFinancialPrices() ? '📊 لوحة القيادة والمؤشرات' : '📊 لوحة متابعة كميات المخازن'}</span>
           </button>
 
           ${hasPerm('warehouses') ? `
-          <button class="nav-item ${activeTab === 'warehouses' ? 'active' : ''}" onclick="setTab('warehouses')">
+          <button class="nav-item ${activeTab === 'warehouses' ? 'active' : ''} ${pendingReturnsCount > 0 && canApproveSalesReturn(currentUser) ? 'flash-approval-nav' : ''}" onclick="setTab('warehouses')">
             <span>${canSeeFinancialPrices() ? '🏭 المخازن الأربعة والرصيد' : '🏭 أرصدة كميات المخازن'}</span>
-            ${pendingReturnsCount > 0 ? `<span class="nav-badge" style="background:#7c3aed;">${pendingReturnsCount}</span>` : ''}
+            ${pendingReturnsCount > 0 ? `<span class="nav-badge ${canApproveSalesReturn(currentUser) ? 'flash-approval-badge' : ''}" style="background:#7c3aed;">${pendingReturnsCount}</span>` : ''}
           </button>
           ` : ''}
 
           ${hasPerm('production') ? `
-          <button class="nav-item ${activeTab === 'production' ? 'active' : ''}" onclick="setTab('production')">
+          <button class="nav-item ${activeTab === 'production' ? 'active' : ''} ${pendingPrepOrdersCount > 0 ? 'flash-approval-nav' : ''}" onclick="setTab('production')">
             <span>📋 أوامر تجهيز طلبية للعميل</span>
-            ${pendingPrepOrdersCount > 0 ? `<span class="nav-badge" style="background:#d97706;">${pendingPrepOrdersCount}</span>` : ''}
+            ${pendingPrepOrdersCount > 0 ? `<span class="nav-badge flash-approval-badge" style="background:#d97706;">${pendingPrepOrdersCount}</span>` : ''}
           </button>
           ` : ''}
 
           ${hasPerm('approvals') ? `
-          <button class="nav-item ${activeTab === 'approvals' ? 'active' : ''}" onclick="setTab('approvals')">
+          <button class="nav-item ${activeTab === 'approvals' ? 'active' : ''} ${pendingApprovalsCount > 0 ? 'flash-approval-nav' : ''}" onclick="setTab('approvals')">
             <span>${canSeeFinancialPrices() ? '✅ اعتماد أذون الصرف والسيارات' : '✅ أذون تحميل وصرف السيارات'}</span>
-            ${pendingApprovalsCount > 0 ? `<span class="nav-badge">${pendingApprovalsCount}</span>` : ''}
+            ${pendingApprovalsCount > 0 ? `<span class="nav-badge flash-approval-badge">${pendingApprovalsCount}</span>` : ''}
           </button>
           ` : ''}
 
           ${canSeeFinancialPrices() && (hasPerm('salesAccounting') || hasPerm('clientsSuppliers')) ? `
           <button class="nav-item ${activeTab === 'accounting' ? 'active' : ''}" onclick="setTab('accounting')">
             <span>💰 حسابات ومبيعات العملاء</span>
-          </button>
-          ` : ''}
-
-          ${isExecRole ? `
-          <button class="nav-item" style="background:rgba(245,158,11,0.22);border:1.5px solid #f59e0b;color:#fde68a;font-weight:900;" onclick="sidebarOpen=false; openUndoHistoryModal();">
-            <span>↩️ تراجع فوري (Undo) / سجل الاسترجاع</span>
-            <span class="nav-badge" style="background:#d97706;">${getAvailableUndoEntries().length}</span>
-          </button>
-          <button class="nav-item" style="background:rgba(15,118,110,0.22);border:1px solid #14b8a6;color:#5eead4;font-weight:800;" onclick="sidebarOpen=false; openNewClientOrderPrepModal('', true);">
-            <span>📜 تنفيذ الطلبيات القديمة للعملاء</span>
-          </button>
-          <button class="nav-item" style="background:rgba(220,38,38,0.22);border:1px solid #f87171;color:#fca5a5;font-weight:800;" onclick="sidebarOpen=false; openClientPiecePriceAdjustmentModal();">
-            <span>💲 تعديل حسابات العملاء وأسعار القطع</span>
           </button>
           ` : ''}
 
@@ -4113,15 +4109,15 @@ function render() {
           </button>
           ` : ''}
 
-          <button class="nav-item" onclick="openPasswordsManagerModal()">
-            <span>🔑 تغيير الباسوردات</span>
-          </button>
-
-          ${!isRunningStandaloneApp() ? `
-          <button class="nav-item" style="background:linear-gradient(135deg,#059669,#047857);color:#fff;font-weight:900;border:1.5px solid #34d399;margin-top:4px;" onclick="sidebarOpen=false; triggerOneClickInstall();">
-            <span>💻📲 تثبيت البرنامج بدون متصفح</span>
+          ${isExecRole ? `
+          <button class="nav-item" style="background:rgba(245,158,11,0.18);border:1.5px solid #f59e0b;color:#fde68a;font-weight:900;margin-top:4px;" onclick="sidebarOpen=false; openExecutiveToolsWindowModal();">
+            <span>👑 شباك أدوات الإدارة والتحكم ▾</span>
           </button>
           ` : ''}
+
+          <button class="nav-item" style="background:rgba(59,130,246,0.14);border:1px solid rgba(59,130,246,0.4);color:#93c5fd;font-weight:800;" onclick="sidebarOpen=false; openSystemSettingsWindowModal();">
+            <span>⚙️ شباك الإعدادات وتثبيت البرنامج ▾</span>
+          </button>
         </nav>
 
         <div class="sidebar-footer">
@@ -4145,69 +4141,35 @@ function render() {
           </div>
 
           <div class="topbar-actions">
+            ${myDelayedCount > 0 ? `
+              <button type="button" class="btn btn-sm flash-approval-btn" style="background:#dc2626;color:#fff;padding:7px 14px;" onclick="openDelayedApprovalsWindowModal()" title="يوجد موافقات متأخرة بانتظار اعتمادك — اضغط لفتح شباك الموافقات الفورية">
+                🚨 موافقات متأخرة (${myDelayedCount}) ▾
+              </button>
+            ` : ''}
+
             ${isExecRole ? `
-              <button class="btn btn-sm" style="background:#f59e0b;color:#0f172a;font-weight:900;border:none;" onclick="triggerImmediateUndo()" title="تراجع فوري عن آخر عملية وإرجاع المخازن والحسابات لأصلها قبل التعديل (Ctrl+Z)">
-                ↩️ تراجع (Undo)
-              </button>
-              <button class="btn btn-sm" style="background:#2563eb;color:#fff;font-weight:800;border:none;" onclick="openUndoHistoryModal()" title="سجل التراجع الشامل وإرجاع أي بيان أو عملية سابقة لأصلها قبل التعديل">
-                🕒 سجل التراجع (${getAvailableUndoEntries().length})
-              </button>
-              <button class="btn btn-sm" style="background:#0f766e;color:#fff;font-weight:900;border:none;" onclick="openNewClientOrderPrepModal('', true)" title="تنفيذ الطلبيات القديمة للعملاء بعد الرصيد الافتتاحي مع السؤال هل تخرج من المخازن أم لا">
-                📜 تنفيذ طلبية قديمة
-              </button>
-              <button class="btn btn-sm" style="background:#dc2626;color:#fff;font-weight:900;border:none;" onclick="openClientPiecePriceAdjustmentModal()" title="تعديل حسابات العملاء والرصيد الافتتاحي وأسعار القطع والدفعات المسددة">
-                💲 تعديل حسابات العملاء
+              <button type="button" class="topbar-hub-btn" style="background:linear-gradient(135deg,#0f766e,#115e59);color:#fff;border-color:#14b8a6;" onclick="openExecutiveToolsWindowModal()" title="فتح شباك أدوات الإدارة (التراجع Undo + الطلبية القديمة + تعديل حسابات وأسعار العملاء + شيت الإكسيل)">
+                👑 أدوات الإدارة والتحكم ▾
               </button>
             ` : ''}
-            <button class="btn btn-sm btn-outline" onclick="openFactoryLogoModal()" title="رفع أو تغيير لوجو الشركة ليظهر في النظام وفي أعلى يسار جميع التقارير">
-              🖼️ لوجو الشركة
+
+            <button type="button" class="topbar-hub-btn" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;border-color:#a855f7;" onclick="openCommunicationHubWindowModal()" title="فتح شباك التواصل والإشعارات والمساعد الذكي">
+              💬🔔 الشات والإشعارات والمساعد ${openTasksForMeCount > 0 ? `<span class="badge badge-danger" style="padding:1px 6px;">${openTasksForMeCount}</span>` : ''} ▾
             </button>
-            <button class="btn btn-sm" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;font-weight:800;border:none;" onclick="openSmartAiAssistantModal()" title="فتح مساعد مصنع العاصمة الذكي (بالأوامر الصوتية والكتابية بالعربي)">
-              🤖 المساعد الذكي 🎤
+
+            <button type="button" class="topbar-hub-btn" onclick="openSystemSettingsWindowModal()" title="فتح شباك إعدادات النظام وتثبيت البرنامج والباسوردات واللوجو والوضع الليلي">
+              ⚙️ الإعدادات والبرنامج ▾
             </button>
-            <button class="btn btn-sm ${activeTab === 'chat' ? 'btn-primary' : 'btn-outline'}" onclick="setTab('chat')" title="فتح غرفة الشات وتكليف المهام بين الـ 8 حسابات">
-              💬 الشات والمهام ${openTasksForMeCount > 0 ? `<span class="badge badge-danger" style="margin-right:4px;">${openTasksForMeCount} مهمة</span>` : ''}
-            </button>
-            <button class="btn btn-sm btn-outline" style="border-color:#a855f7;color:#7c3aed;" onclick="openFloatingDockPositionModal()" title="نقل أو إظهار/إخفاء أيقونة الشات والمساعد الذكي من أسفل يسار الصفحة لأي مكان">
-              ✥ مكان الشات العائم
-            </button>
-            <button class="btn btn-sm btn-outline" style="border-color:var(--primary);color:var(--primary);" onclick="openNotificationsCenterModal()" title="سجل الإشعارات المسموح لك برؤيتها وتفعيل إشعارات الموبايل مثل الواتساب">
-              🔔 الإشعارات والصوت (${authorizedLogsCount})
-            </button>
-            ${(typeof Notification !== 'undefined' && Notification.permission !== 'granted') ? `
-              <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;border:none;" onclick="requestOsNotificationPermission(false)" title="تفعيل إشعارات الموبايل والكمبيوتر لتصلك في كل مراحل الشغل وإدخال الأرصدة والموافقات حتى لو التطبيق بالخلفية مثل الواتساب">
-                📲🔔 تفعيل إشعارات الخلفية
-              </button>
-            ` : ''}
-            <button class="btn btn-sm btn-accent" onclick="openPasswordsManagerModal()" title="تغيير الباسورد الخاص بك وباسوردات الموبايلات">
-              🔑 تغيير الباسوردات
-            </button>
-            ${!isRunningStandaloneApp() ? `
-              <button class="btn btn-sm" style="background:linear-gradient(135deg,#059669,#047857);color:#fff;font-weight:900;border:2px solid #34d399;box-shadow:0 3px 10px rgba(16,185,129,0.3);" onclick="triggerOneClickInstall()" title="تثبيت البرنامج على الكمبيوتر أو الأندرويد كبرنامج مستقل يفتح من سطح المكتب بدون متصفح">
-                💻📲 تثبيت البرنامج على الجهاز
-              </button>
-            ` : `
-              <span class="badge badge-success" style="padding:6px 10px;font-weight:900;cursor:pointer;" onclick="openMobileInstallModal()" title="النظام يعمل الآن كبرنامج مستقل — اضغط لعرض كود QR للموبايلات الأخرى">
-                💻 برنامج مثبت (QR)
-              </span>
-            `}
-            ${(currentUser && !['admin_manager', 'warehouse_keeper', 'operations_manager'].includes(currentUser.roleKey)) ? `
-              <a href="./Al_Asimah_Factory_Full_System.xlsx" download="Al_Asimah_Factory_Full_System.xlsx" class="btn btn-sm" style="background:#15803d;color:#fff;font-weight:900;text-decoration:none;border:none;" title="تحميل شيت الإكسيل الموحد الكامل للمصنع شامل جميع الجداول والحسابات والدوال الحية">
-                📊 شيت الإكسيل الكامل (.xlsx)
-              </a>
-            ` : ''}
+
             <span id="sync-status-pill" class="sync-pill ${isOnline ? '' : 'offline'}">
               ${isOnline ? '● متصل ومتزامن سحابياً' : '● وضع أوفلاين (حفظ محلي تلقائي)'}
             </span>
-            <button class="btn btn-sm btn-outline" onclick="toggleTheme()">
-              ${isDark ? '☀️' : '🌙'}
-            </button>
           </div>
         </header>
 
         <main class="content-container">
           ${renderOfflineOutboxBannerHtml()}
-          ${isExecRole ? renderUniversalUndoBarHtml() : ''}
+          ${renderFlashingDelayedApprovalsBannerHtml(myDelayedApprovals)}
           ${renderActiveTabContent()}
         </main>
       </div>
@@ -4295,6 +4257,864 @@ function renderActiveTabContent() {
     case 'settings': return renderSettings();
     default: return renderDashboard();
   }
+}
+
+// ============================================================================
+// v88: SMART WINDOW HUBS (الشبابيك المجمعة لتقليل الأيقونات) & FLASHING DELAYED APPROVALS
+// ============================================================================
+const _printShareRegistry = {};
+function registerPrintShareAction(key, title, printFn, phone = '', clientName = '') {
+  _printShareRegistry[key] = { title, printFn, phone, clientName };
+  return key;
+}
+
+function openPrintShareWindowByKey(key) {
+  const entry = _printShareRegistry[key];
+  if (!entry || typeof entry.printFn !== 'function') return;
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:520px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">📤 شباك الطباعة والمشاركة عبر واتساب</div>
+            <small style="color:var(--text-muted);font-weight:700;">${entry.title || 'اختر طريقة الطباعة أو الإرسال'}</small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <div class="hub-window-grid" style="grid-template-columns:1fr;">
+          <button type="button" class="hub-option-card" onclick="closeModal(); _printShareRegistry['${key}'].printFn();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#b45309,#d97706);">🖨️</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">طباعة أو حفظ ملف PDF رسمي</div>
+              <div class="hub-option-sub">فتح معاينة الطباعة الرسمية المتمركزة أو حفظها كملف PDF</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); sendReportViaWhatsAppImage(_printShareRegistry['${key}'].printFn, _printShareRegistry['${key}'].phone, _printShareRegistry['${key}'].clientName);">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#0284c7,#0369a1);">🖼️</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">إرسال عبر واتساب كصورة عالية الدقة (PNG)</div>
+              <div class="hub-option-sub">تحويل التقرير/البيان إلى صورة واضحة وإرسالها على واتساب مباشرة</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); sendReportViaWhatsApp(_printShareRegistry['${key}'].printFn, _printShareRegistry['${key}'].phone, _printShareRegistry['${key}'].clientName);">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#25D366,#128C7E);">📄</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">إرسال عبر واتساب كملف PDF</div>
+              <div class="hub-option-sub">تجهيز ملف PDF رسمي ومشاركته عبر واتساب${entry.clientName ? ' للعميل (' + entry.clientName + ')' : ''}</div>
+            </div>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderPrintShareHubButtonHtml(key, title, printFn, phone = '', clientName = '', btnLabel = '📤 طباعة وواتساب ▾', btnClass = 'btn btn-sm btn-primary') {
+  registerPrintShareAction(key, title, printFn, phone, clientName);
+  return `<button type="button" class="${btnClass}" style="font-weight:800;" onclick="openPrintShareWindowByKey('${key}')">${btnLabel}</button>`;
+}
+
+function getMyDelayedApprovalsList() {
+  if (!state || !currentUser) return [];
+  const isExec = canApproveExecutiveStage(currentUser);
+  const isWarehouseOrAdmin = canApproveWarehouseStage(currentUser);
+  const isAccountantOrExec = canApproveOrderAccounts(currentUser);
+  const canAppReturn = canApproveSalesReturn(currentUser);
+  const showPrices = canSeeFinancialPrices();
+  const list = [];
+
+  for (const ord of (state.productionOrders || [])) {
+    if (!ord) continue;
+    const st = ord.stage || ord.status;
+    if (st === 'pending_executive' && isExec) {
+      list.push({
+        id: `del_exec_${ord.id}`,
+        orderId: ord.id,
+        type: 'order_exec',
+        badgeText: '1️⃣ موافقة الإدارة التنفيذية',
+        badgeColor: '#d97706',
+        title: `طلبية (${ord.orderNumber}) — العميل: ${ord.clientName}`,
+        subtitle: `الكمية: ${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة${showPrices ? ' | الصافي: ' + fmtMoney(ord.netTotalAmount || 0) : ''} — بانتظار موافقة الإدارة لإرسالها للمخزن`,
+        actionLabel: '✅ موافقة الإدارة الآن',
+        onClickJs: `closeModal(); approveOrderExecutive('${ord.id}');`,
+        secondaryLabel: '📄 فتح البيان',
+        secondaryJs: `closeModal(); openClientOrderStatementModal('${ord.id}');`
+      });
+    } else if (st === 'pending_warehouse_prep' && isWarehouseOrAdmin) {
+      const sc = checkOrderStockAvailability(ord);
+      list.push({
+        id: `del_wh_${ord.id}`,
+        orderId: ord.id,
+        type: 'order_wh_prep',
+        badgeText: '2️⃣ موافقة تجهيز المخزن',
+        badgeColor: '#0284c7',
+        title: `أمر تجهيز طلبية (${ord.orderNumber}) — العميل: ${ord.clientName}`,
+        subtitle: `الكمية: ${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة — ${sc.isReadyToApprove ? 'الرصيد متوفر بالمخزن وجاهز لموافقة التجهيز' : '⚠️ يوجد عجز (' + fmtNum(sc.totalDeficitSheets, 0) + ' قطعة) يتطلب تغطية أو وضع بالسالب'}`,
+        actionLabel: sc.isReadyToApprove ? '✅ موافقة التجهيز والخروج' : '⚠️ معالجة العجز والموافقة',
+        onClickJs: sc.isReadyToApprove ? `closeModal(); approveOrderWarehousePrep('${ord.id}');` : `closeModal(); openOrderStockShortageModal('${ord.id}');`,
+        secondaryLabel: '📄 بيان الكميات',
+        secondaryJs: `closeModal(); openClientOrderStatementModal('${ord.id}');`
+      });
+    } else if (st === 'pending_accountant_release' && isAccountantOrExec) {
+      list.push({
+        id: `del_acc_${ord.id}`,
+        orderId: ord.id,
+        type: 'order_accountant',
+        badgeText: '3️⃣ اعتماد المحاسب للصرف',
+        badgeColor: '#7c3aed',
+        title: `اعتماد صرف طلبية (${ord.orderNumber}) — العميل: ${ord.clientName}`,
+        subtitle: `تم التجهيز بالمخزن (${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة)${showPrices ? ' — الصافي: ' + fmtMoney(ord.netTotalAmount || 0) : ''} — بانتظار اعتماد الحسابات وإذن الصرف`,
+        actionLabel: '💳 اعتماد الحسابات والصرف',
+        onClickJs: `closeModal(); openAccountantReleaseModal('${ord.id}');`,
+        secondaryLabel: '📄 فتح البيان',
+        secondaryJs: `closeModal(); openClientOrderStatementModal('${ord.id}');`
+      });
+    } else if (st === 'ready_for_car_dispatch' && isWarehouseOrAdmin) {
+      list.push({
+        id: `del_car_${ord.id}`,
+        orderId: ord.id,
+        type: 'order_car',
+        badgeText: '4️⃣ تحميل وصرف السيارة',
+        badgeColor: '#dc2626',
+        title: `أمر تحميل وصرف سيارة للطلبية (${ord.orderNumber}) — العميل: ${ord.clientName}`,
+        subtitle: `معتمدة مالياً (${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة) — بانتظار تسجيل بيانات السيارة والسائق والبالتات`,
+        actionLabel: '🚚 فتح إذن صرف السيارة',
+        onClickJs: `closeModal(); openVehicleDispatchVoucherModal('${ord.id}');`,
+        secondaryLabel: '📄 عرض الطلبية',
+        secondaryJs: `closeModal(); openClientOrderStatementModal('${ord.id}');`
+      });
+    }
+  }
+
+  if (canAppReturn) {
+    for (const ret of (state.salesReturns || [])) {
+      if (!ret || (ret.status || 'pending_approval') !== 'pending_approval') continue;
+      list.push({
+        id: `del_ret_${ret.id}`,
+        returnId: ret.id,
+        type: 'sales_return',
+        badgeText: '🔄 اعتماد مرتجع مبيعات',
+        badgeColor: '#6d28d9',
+        title: `مرتجع مبيعات (${ret.returnNumber || 'RET'}) — العميل: ${ret.clientName}`,
+        subtitle: `${fmtNum(ret.sheetsCount || 0, 0)} قطعة (${ret.thkMm} مم ${ret.direction === 'sada' ? 'سدا' : 'قص'} × ${ret.gradeName || ''}) — بانتظار الموافقة ليدخل رصيد المخزن`,
+        actionLabel: '✅ موافقة وإدخال للمخزن',
+        onClickJs: `closeModal(); approveSalesReturn('${ret.id}');`,
+        secondaryLabel: '❌ رفض المرتجع',
+        secondaryJs: `closeModal(); rejectSalesReturn('${ret.id}');`
+      });
+    }
+  }
+
+  return list;
+}
+
+function renderFlashingDelayedApprovalsBannerHtml(delayedList) {
+  const list = Array.isArray(delayedList) ? delayedList : getMyDelayedApprovalsList();
+  if (list.length === 0) return '';
+  const first = list[0];
+  return `
+    <div class="card flash-approval-banner" style="padding:12px 16px;margin-bottom:14px;border-radius:14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:250px;">
+          <span class="badge flash-approval-badge" style="font-size:0.86rem;padding:6px 12px;border-radius:999px;">
+            🚨 تنبيه موافقات متأخرة (${list.length})
+          </span>
+          <div>
+            <div style="font-weight:900;font-size:0.95rem;color:var(--text-main);">
+              يوجد (${list.length}) موافقة معلقة بانتظار اعتمادك الآن (${currentUser.name}):
+              <span style="color:var(--danger);">${first.title}</span>
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              ${first.subtitle}
+            </small>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button type="button" class="btn btn-sm flash-approval-btn" style="background:#16a34a;color:#fff;padding:7px 14px;" onclick="${first.onClickJs}">
+            ${first.actionLabel}
+          </button>
+          <button type="button" class="btn btn-sm btn-primary" style="background:#dc2626;border-color:#dc2626;font-weight:900;" onclick="openDelayedApprovalsWindowModal()">
+            🪟 فتح شباك كل الموافقات المتأخرة (${list.length})
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openDelayedApprovalsWindowModal() {
+  const list = getMyDelayedApprovalsList();
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:780px;">
+        <div class="card-header" style="border-bottom:2px solid #dc2626;padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:#dc2626;font-size:1.1rem;">
+              🚨 شباك الموافقات المتأخرة والمعلقة لحسابك (${currentUser?.name || ''}) — (${list.length}) موافقة
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              جميع الطلبيات وأذون الصرف والمرتجعات التي تنتظر موافقتك الفورية لإكمال مسار العمل
+            </small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        ${list.length === 0 ? `
+          <div style="text-align:center;padding:30px;color:var(--success);font-weight:800;">
+            ✅ ممتاز! لا توجد أي موافقات متأخرة أو معلقة على حسابك حالياً.
+          </div>
+        ` : `
+          <div style="display:flex;flex-direction:column;gap:10px;max-height:62vh;overflow-y:auto;margin-top:12px;">
+            ${list.map((item, idx) => `
+              <div class="flash-approval-row" style="border:2px solid ${item.badgeColor || '#dc2626'};border-radius:12px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+                <div style="flex:1;min-width:240px;">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                    <span class="badge" style="background:${item.badgeColor || '#dc2626'};color:#fff;font-weight:900;">${idx + 1}. ${item.badgeText}</span>
+                    <strong style="font-size:0.95rem;">${item.title}</strong>
+                  </div>
+                  <div style="font-size:0.82rem;color:var(--text-muted);font-weight:700;">${item.subtitle}</div>
+                </div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <button type="button" class="btn btn-sm flash-approval-btn" style="background:${item.badgeColor || '#16a34a'};color:#fff;" onclick="${item.onClickJs}">
+                    ${item.actionLabel}
+                  </button>
+                  ${item.secondaryLabel ? `
+                    <button type="button" class="btn btn-sm btn-outline" style="font-weight:800;" onclick="${item.secondaryJs}">
+                      ${item.secondaryLabel}
+                    </button>
+                  ` : ''}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+function openExecutiveToolsWindowModal() {
+  if (!isFullAdmin(currentUser)) return;
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  const undoEntries = getAvailableUndoEntries();
+  const redoList = window._localRedoStack || [];
+  const latestUndo = undoEntries[0] || null;
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:720px;">
+        <div class="card-header" style="border-bottom:2px solid #0f766e;padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:#0f766e;font-size:1.1rem;">
+              👑 شباك أدوات الإدارة التنفيذية ومدير المشروعات
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              اختر الأداة المطلوبة (تعديل حسابات وأسعار العملاء / تنفيذ طلبية قديمة / التراجع الفوري Undo / شيت الإكسيل)
+            </small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <div class="hub-window-grid">
+          <button type="button" class="hub-option-card" onclick="closeModal(); openClientPiecePriceAdjustmentModal();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#dc2626,#b91c1c);">💲</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">تعديل حسابات العملاء وأسعار القطع</div>
+              <div class="hub-option-sub">تعديل الرصيد الافتتاحي، أسعار القطع في الطلبيات، الدفعات المسددة، وحساب البالتات</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); openNewClientOrderPrepModal('', true);">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#0f766e,#115e59);">📜</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">تنفيذ طلبية قديمة لعميل</div>
+              <div class="hub-option-sub">إدراج طلبية سابقة بعد الرصيد الافتتاحي مع تحديد هل تخرج من المخزن أم حسابات فقط</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); triggerImmediateUndo();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#f59e0b,#d97706);">↩️</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">تراجع فوري عن آخر تعديل (Undo)</div>
+              <div class="hub-option-sub">${latestUndo ? 'آخر عملية: ' + latestUndo.actionLabel.slice(0, 65) + '...' : 'إرجاع المخازن والحسابات لأصلها قبل آخر تعديل (Ctrl+Z)'}</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); openUndoHistoryModal();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#2563eb,#1d4ed8);">🕒</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">سجل التراجع الشامل (${undoEntries.length} عملية)</div>
+              <div class="hub-option-sub">عرض سجل كافة التعديلات واسترجاع أي بيان أو عملية سابقة لأصلها${redoList.length > 0 ? ' + إعادة (Redo)' : ''}</div>
+            </div>
+          </button>
+
+          <a href="./Al_Asimah_Factory_Full_System.xlsx" download="Al_Asimah_Factory_Full_System.xlsx" class="hub-option-card" style="text-decoration:none;" onclick="closeModal();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#15803d,#166534);">📊</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">تحميل شيت الإكسيل الموحد (.xlsx)</div>
+              <div class="hub-option-sub">شيت الإكسيل الكامل للمصنع شامل جميع الجداول والحسابات والدوال الحية</div>
+            </div>
+          </a>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); openFactoryStampModal();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);">💮</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">ختم الشركة والحسابات البنكية</div>
+              <div class="hub-option-sub">تحديث صورة ختم الشركة وأرقام الحسابات البنكية في البيانات والتقارير</div>
+            </div>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openCommunicationHubWindowModal() {
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  const openTasksForMeCount = (state?.chatMessages || []).filter(c =>
+    c.msgType === 'task' && c.taskStatus !== 'completed' &&
+    canUserSeeChatMessage(currentUser, c) &&
+    (!c.assignedToUserId || c.assignedToUserId === 'all' || c.assignedToUserId === currentUser.id || isFullAdmin(currentUser))
+  ).length;
+  const authorizedLogsCount = (state?.auditLogs || []).filter(l => canUserSeeNotification(currentUser, l)).length;
+  const notifGranted = (typeof Notification !== 'undefined' && Notification.permission === 'granted');
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:680px;">
+        <div class="card-header" style="border-bottom:2px solid #7c3aed;padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:#7c3aed;font-size:1.1rem;">
+              💬🔔 شباك التواصل والشات والإشعارات والمساعد الذكي
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              تواصل مع الحسابات الـ 8، راجع الإشعارات والصوت، أو استخدم المساعد الذكي الصوتي
+            </small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <div class="hub-window-grid">
+          <button type="button" class="hub-option-card" onclick="closeModal(); setTab('chat');">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#d97706,#b45309);">💬</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">غرفة الشات والمهام ${openTasksForMeCount > 0 ? `<span class="badge badge-danger">${openTasksForMeCount} مهمة</span>` : ''}</div>
+              <div class="hub-option-sub">المحادثات المباشرة والغرف وتكليف المهام بين المستخدمين الـ 8</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); openNotificationsCenterModal();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#0f766e,#115e59);">🔔</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">مركز الإشعارات والصوت (${authorizedLogsCount})</div>
+              <div class="hub-option-sub">سجل إشعارات مراحل العمل والتحكم في نغمة التنبيه الصوتي الطويل</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); requestOsNotificationPermission(false);">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#25D366,#128C7E);">📲</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">${notifGranted ? 'إشعارات الخلفية: مفعّلة ✅ (تجربة)' : 'تفعيل إشعارات الخلفية (مثل الواتساب)'}</div>
+              <div class="hub-option-sub">وصول الإشعارات والصوت للموبايل والكمبيوتر حتى لو البرنامج في الخلفية</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); openSmartAiAssistantModal();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);">🤖</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">المساعد الذكي الصوتي 🎤</div>
+              <div class="hub-option-sub">تنفيذ الأوامر والاستعلام عن المخازن والحسابات بالصوت أو الكتابة بالعربي</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); openFloatingDockPositionModal();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#64748b,#475569);">✥</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">مكان أيقونة الشات العائمة</div>
+              <div class="hub-option-sub">تغيير مكان الشريط العائم أو إظهاره/إخفائه من الشاشة</div>
+            </div>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openSystemSettingsWindowModal() {
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const isStandalone = isRunningStandaloneApp();
+  const canDownloadExcel = Boolean(currentUser && !['admin_manager', 'warehouse_keeper', 'operations_manager'].includes(currentUser.roleKey));
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:680px;">
+        <div class="card-header" style="border-bottom:2px solid var(--primary);padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:var(--primary);font-size:1.1rem;">
+              ⚙️ شباك إعدادات النظام وتثبيت البرنامج
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              تثبيت البرنامج بدون متصفح، كود الموبايل QR، الباسوردات، لوجو الشركة، والمظهر
+            </small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <div class="hub-window-grid">
+          <button type="button" class="hub-option-card" onclick="closeModal(); triggerOneClickInstall();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#059669,#047857);">💻</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">${isStandalone ? 'البرنامج مثبت ويعمل بدون متصفح ✅' : 'تثبيت البرنامج على الجهاز (بدون متصفح)'}</div>
+              <div class="hub-option-sub">تثبيت أيقونة برنامج مصنع العاصمة على سطح مكتب الكمبيوتر أو شاشة الأندرويد</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); openMobileInstallModal();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#0284c7,#0369a1);">📷</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">كود الموبايل (QR) ومشاركة الرابط</div>
+              <div class="hub-option-sub">مسح الكود بكاميرا الموبايل أو إرسال رابط البرنامج عبر واتساب</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); openPasswordsManagerModal();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#d97706,#b45309);">🔑</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">تغيير الباسوردات (PIN)</div>
+              <div class="hub-option-sub">تغيير الباسورد الخاص بحسابك أو إدارة باسوردات المستخدمين</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); openFactoryLogoModal();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#4f46e5,#4338ca);">🖼️</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">لوجو وشعار الشركة</div>
+              <div class="hub-option-sub">عرض أو تحديث لوجو مصنع العاصمة الذي يظهر في النظام والتقارير</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); toggleTheme();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#334155,#0f172a);">${isDark ? '☀️' : '🌙'}</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">${isDark ? 'التحويل إلى الوضع النهاري (Light)' : 'التحويل إلى الوضع الليلي (Dark)'}</div>
+              <div class="hub-option-sub">تغيير ألوان وإضاءة واجهة النظام لراحة العين</div>
+            </div>
+          </button>
+
+          ${canDownloadExcel ? `
+            <a href="./Al_Asimah_Factory_Full_System.xlsx" download="Al_Asimah_Factory_Full_System.xlsx" class="hub-option-card" style="text-decoration:none;" onclick="closeModal();">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#15803d,#166534);">📊</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">تحميل شيت الإكسيل الكامل (.xlsx)</div>
+                <div class="hub-option-sub">تحميل نسخة شيت الإكسيل الشامل للمصنع</div>
+              </div>
+            </a>
+          ` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openClientActionsWindowModal(clientId) {
+  const pt = (state?.partners || []).find(p => p.id === clientId);
+  if (!pt) return;
+  const m = computeClientMetrics(pt);
+  const canEditFin = canEditFinancialAndClientRecords(currentUser);
+  const isExec = isFullAdmin(currentUser);
+  const canIssueOrders = canIssuePrepOrders(currentUser);
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:740px;">
+        <div class="card-header" style="border-bottom:2px solid var(--primary);padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:var(--primary);font-size:1.1rem;">
+              ⚡ شباك إجراءات وحسابات العميل: [${pt.code || 'CL'}] ${pt.name}
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              صافي الحساب: <strong style="color:${m.netDebt > 0 ? 'var(--danger)' : 'var(--success)'};">${m.netDebt > 0 ? 'عليه ' + fmtMoney(m.netDebt) : m.netDebt < 0 ? 'له ' + fmtMoney(Math.abs(m.netDebt)) : 'خالص (0 ج.م)'}</strong>
+              | البالتات طرفه: <strong>${m.netPalletsAtClient} بالتة</strong>
+            </small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <div class="hub-window-grid">
+          <button type="button" class="hub-option-card" onclick="closeModal(); openClientFullHistoryModal('${pt.id}', 'all');">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#b45309,#d97706);">📂</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">فتح كشف الحساب التفصيلي</div>
+              <div class="hub-option-sub">عرض جميع الطلبيات (${m.orders.length}) والفواتير والدفعات والشيكات والبالتات</div>
+            </div>
+          </button>
+
+          ${canEditFin ? `
+            <button type="button" class="hub-option-card" onclick="closeModal(); openClientPaymentModal('${pt.id}');">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#16a34a,#15803d);">💵</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">تسجيل تحصيل دفعة مالية</div>
+                <div class="hub-option-sub">تحصيل نقدي بالخزينة أو تحويل بنكي وتنزيله من مديونية العميل</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); openNewCheckUnderCollectionModal('${pt.id}');">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#d97706,#b45309);">📝</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">تسجيل شيك تحت التحصيل</div>
+                <div class="hub-option-sub">إضافة شيك بنكي للعميل ومتابعة تحصيله (${m.pendingChecks.length} شيك حالي)</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); openClientPalletMovementModal('${pt.id}');">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#0f766e,#115e59);">🪵</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">تسجيل تسليم / استلام بالتات</div>
+                <div class="hub-option-sub">تحديث حركة البالتات الخشبية المسلمة أو المرتجعة من العميل</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); openPalletDepositAccountModal('${pt.id}');">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);">🛡️</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">حساب تأمين البالتات</div>
+                <div class="hub-option-sub">تحصيل أو رد مبلغ تأمين البالتات الخشبية للعميل</div>
+              </div>
+            </button>
+          ` : ''}
+
+          ${canIssueOrders ? `
+            <button type="button" class="hub-option-card" onclick="closeModal(); openNewClientOrderPrepModal('${pt.id}');">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#0284c7,#0369a1);">📋</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">إنشاء أمر تجهيز طلبية جديدة</div>
+                <div class="hub-option-sub">إصدار بيان طلبية جديدة لهذا العميل</div>
+              </div>
+            </button>
+          ` : ''}
+
+          ${isExec ? `
+            <button type="button" class="hub-option-card" onclick="closeModal(); openClientPiecePriceAdjustmentModal('${pt.id}');">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#dc2626,#b91c1c);">💲</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">تعديل الحساب والرصيد الافتتاحي والأسعار</div>
+                <div class="hub-option-sub">تعديل سعر القطعة في الطلبيات والرصيد الافتتاحي والدفعات</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); openNewClientOrderPrepModal('${pt.id}', true);">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#0f766e,#0d9488);">📜</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">تنفيذ طلبية قديمة للعميل</div>
+                <div class="hub-option-sub">إضافة طلبية قديمة بعد الرصيد الافتتاحي (بخروج من المخزن أو بدون)</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); openEditPartnerModal('${pt.id}');">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#475569,#334155);">✏️</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">تعديل بيانات العميل أو حذفه</div>
+                <div class="hub-option-sub">تعديل الاسم، الكود، التليفون، المدينة، أو حذف السجل</div>
+              </div>
+            </button>
+          ` : ''}
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); printClientFullStatement('${pt.id}');">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#b45309,#92400e);">🖨️</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">طباعة كشف الحساب PDF</div>
+              <div class="hub-option-sub">طباعة أو حفظ كشف حساب العميل الشامل</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); sendReportViaWhatsAppImage(() => printClientFullStatement('${pt.id}'), '${pt.phone || ''}', '${pt.name || ''}');">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#0284c7,#0369a1);">🖼️</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">إرسال كشف الحساب واتساب (صورة)</div>
+              <div class="hub-option-sub">تحويل كشف الحساب لصورة عالية الدقة وإرسالها للعميل</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); sendReportViaWhatsApp(() => printClientFullStatement('${pt.id}'), '${pt.phone || ''}', '${pt.name || ''}');">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#25D366,#128C7E);">📄</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">إرسال كشف الحساب واتساب (PDF)</div>
+              <div class="hub-option-sub">إرسال ملف PDF بكشف حساب العميل عبر الواتساب</div>
+            </div>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openAccountingToolsWindowModal() {
+  const canEditFin = canEditFinancialAndClientRecords(currentUser);
+  const isExec = isFullAdmin(currentUser);
+  const defaultPalletPrice = getWoodenPalletUnitPrice();
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:720px;">
+        <div class="card-header" style="border-bottom:2px solid var(--primary);padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:var(--primary);font-size:1.1rem;">
+              💼 شباك العمليات المالية والسندات وتأمين البالتات
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              جميع أدوات الخزينة والشيكات وتأمين البالتات وتعديل الحسابات في شباك واحد منظم
+            </small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <div class="hub-window-grid">
+          ${isExec ? `
+            <button type="button" class="hub-option-card" onclick="closeModal(); openClientPiecePriceAdjustmentModal();">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#dc2626,#b91c1c);">💲</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">تعديل الحسابات والرصيد الافتتاحي وأسعار القطع</div>
+                <div class="hub-option-sub">تعديل أسعار القطع في الطلبيات والرصيد الافتتاحي والدفعات</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); openNewClientOrderPrepModal('', true);">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#0f766e,#115e59);">📜</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">تنفيذ طلبية قديمة لعميل</div>
+                <div class="hub-option-sub">إدراج طلبية سابقة بعد الرصيد الافتتاحي وربطها بالحساب</div>
+              </div>
+            </button>
+          ` : ''}
+
+          ${canEditFin ? `
+            <button type="button" class="hub-option-card" onclick="closeModal(); openPalletDepositAccountModal();">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);">🛡️</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">حساب تأمين البالتات (تحصيل / رد)</div>
+                <div class="hub-option-sub">تسجيل تحصيل أو رد تأمين بالتات خشبية لأي عميل</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); openNewCheckUnderCollectionModal();">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#d97706,#b45309);">📝</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">تسجيل شيك تحت التحصيل</div>
+                <div class="hub-option-sub">إضافة شيك جديد تحت التحصيل ومتابعة موعد استحقاقه</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); openSetDefaultPalletPriceModal();">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#b45309,#92400e);">🪵</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">تحديد قيمة البالتة (${fmtMoney(defaultPalletPrice)})</div>
+                <div class="hub-option-sub">تعديل السعر الافتراضي لتأمين البالتة الخشبية الواحدة</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); openNewFinancialTxModal();">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#16a34a,#15803d);">💵</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">تسجيل سند مالي عام بالخزينة</div>
+                <div class="hub-option-sub">تسجيل حركة إيداع أو صرف مالي في خزينة المصنع أو البنك</div>
+              </div>
+            </button>
+          ` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openVeneerMatrixPrintWindowModal() {
+  const showPrices = canSeeFinancialPrices();
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:660px;">
+        <div class="card-header" style="border-bottom:2px solid var(--primary);padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:var(--primary);font-size:1.08rem;">
+              📤 شباك طباعة ومشاركة جداول المخزن عبر واتساب
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              اختر الجدول وطريقة الطباعة أو الإرسال عبر واتساب (صورة أو PDF)
+            </small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <div class="hub-window-grid">
+          <button type="button" class="hub-option-card" onclick="closeModal(); printVeneerQuantitiesMatrixPdf();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#b45309,#d97706);">🖨️</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">طباعة جدول الكميات PDF</div>
+              <div class="hub-option-sub">طباعة أو حفظ جدول أرصدة كميات القشرة بالمخزن</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); sendReportViaWhatsAppImage(printVeneerQuantitiesMatrixPdf);">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#0284c7,#0369a1);">🖼️</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">إرسال جدول الكميات واتساب (صورة)</div>
+              <div class="hub-option-sub">تحويل جدول أرصدة الكميات لصورة واضحة وإرسالها عبر واتساب</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); sendReportViaWhatsApp(printVeneerQuantitiesMatrixPdf);">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#25D366,#128C7E);">📄</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">إرسال جدول الكميات واتساب (PDF)</div>
+              <div class="hub-option-sub">مشاركة ملف PDF لجدول أرصدة الكميات عبر واتساب</div>
+            </div>
+          </button>
+
+          ${showPrices ? `
+            <button type="button" class="hub-option-card" onclick="closeModal(); printVeneerPricesMatrixPdf();">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#0f766e,#115e59);">💰</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">طباعة جدول الأسعار PDF</div>
+                <div class="hub-option-sub">طباعة جدول أسعار القطع وتقييم المخزون والمبيعات</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); printBothMatricesPdf();">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#16a34a,#15803d);">📊</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">طباعة الكميات + الأسعار معاً PDF</div>
+                <div class="hub-option-sub">طباعة الجدولين معاً في تقرير رسمي واحد</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); sendReportViaWhatsAppImage(printBothMatricesPdf);">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#0284c7,#0369a1);">🖼️</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">إرسال الكميات + الأسعار واتساب (صورة)</div>
+                <div class="hub-option-sub">مشاركة الجدولين معاً كصورة عالية الدقة على واتساب</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); sendReportViaWhatsApp(printBothMatricesPdf);">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#25D366,#128C7E);">📄</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">إرسال الكميات + الأسعار واتساب (PDF)</div>
+                <div class="hub-option-sub">مشاركة الجدولين معاً كملف PDF على واتساب</div>
+              </div>
+            </button>
+          ` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openWarehouseOperationsHubModal() {
+  const canEditWh = canEditWarehouseAndCatalog(currentUser);
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:680px;">
+        <div class="card-header" style="border-bottom:2px solid var(--primary);padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:var(--primary);font-size:1.08rem;">
+              ⚙️ شباك حركات وإضافات مخزن القشرة التامة
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              إدخال الإنتاج، مرتجعات المبيعات، خروج المبيعات، إعادة التشغيل، وإضافة التخانات والمقاسات
+            </small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <div class="hub-window-grid">
+          ${canEditWh ? `
+            <button type="button" class="hub-option-card" onclick="closeModal(); openMultiProductionEntryModal();">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#b45309,#d97706);">📥</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">إضافة كميات إنتاج متعددة للمخازن</div>
+                <div class="hub-option-sub">تسجيل دفعات إنتاج جديدة في جدول أرصدة القشرة</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); openWarehouseOpShortcut('sales_return');">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);">🔄</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">إضافة مرتجع مبيعات</div>
+                <div class="hub-option-sub">تسجيل مرتجع من عميل وإرساله لاعتماد الإدارة/المحاسب</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); openWarehouseOpShortcut('out');">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#16a34a,#15803d);">📤</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">خروج الكميات حسب المبيعات</div>
+                <div class="hub-option-sub">صرف كميات مبيعات مباشرة من رصيد المخزن</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); openWarehouseOpShortcut('rework');">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#0f766e,#115e59);">♻️</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">خروج الكميات لإعادة التشغيل</div>
+                <div class="hub-option-sub">سحب كميات من المخزن لإعادة الفرز أو القص والتشغيل</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); openAddThicknessModal();">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#0284c7,#0369a1);">➕</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">إضافة تخانة جديدة (قص / سدا)</div>
+                <div class="hub-option-sub">إضافة صف تخانة جديد إلى مصفوفة المخزن</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); openCustomDimensionsModal();">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#d97706,#b45309);">📐</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">إضافة مقاس خاص للشركات</div>
+                <div class="hub-option-sub">تعريف مقاس قشرة خاص غير المقاس القياسي 250×125</div>
+              </div>
+            </button>
+
+            <button type="button" class="hub-option-card" onclick="closeModal(); addGradePrompt();">
+              <div class="hub-option-icon" style="background:linear-gradient(135deg,#4f46e5,#4338ca);">⭐</div>
+              <div class="hub-option-info">
+                <div class="hub-option-title">إضافة درجة جودة جديدة</div>
+                <div class="hub-option-sub">إضافة عمود جودة جديد في جدول المخزن</div>
+              </div>
+            </button>
+          ` : ''}
+
+          <button type="button" class="hub-option-card" onclick="closeModal(); activeWarehouseSubTab='production_log'; render();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#0284c7,#0369a1);">📊</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">جدول الإنتاج (يومي / أسبوعي / شهري)</div>
+              <div class="hub-option-sub">متابعة إحصائيات الإنتاج المنزّل بالمخزن بالتاريخ والمستخدم</div>
+            </div>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 // ============================================================================
@@ -4823,30 +5643,25 @@ function renderDashboard() {
 
   return `
     ${isExec ? `
-      <div class="card" style="background:linear-gradient(135deg, rgba(15,118,110,0.12), rgba(220,38,38,0.08));border:2px solid #0f766e;padding:16px 20px;margin-bottom:18px;">
+      <div class="card" style="background:linear-gradient(135deg, rgba(15,118,110,0.12), rgba(220,38,38,0.08));border:2px solid #0f766e;padding:14px 18px;margin-bottom:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
           <div>
-            <div style="font-weight:900;font-size:1.06rem;color:#0f766e;">
-              👑 صلاحيات المدير التنفيذي ومدير المشروعات: تنفيذ الطلبيات القديمة + تعديل الرصيد الافتتاحي وأسعار القطع والدفعات
+            <div style="font-weight:900;font-size:1.02rem;color:#0f766e;">
+              👑 صلاحيات المدير التنفيذي ومدير المشروعات (شباك التحكم السريع)
             </div>
             <small style="color:var(--text-main);">
-              تنفيذ طلبيات قديمة للعملاء (مع السؤال هل تخرج من المخازن أم لا)، وتعديل الرصيد الافتتاحي وربط حسابات الطلبيات به، وتعديل أسعار القطع والدفعات المسددة في أي وقت.
+              تنفيذ الطلبيات القديمة، تعديل الرصيد الافتتاحي وأسعار القطع والدفعات، وسجل التراجع الفوري (Undo).
             </small>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button type="button" class="btn" style="background:#0f766e;color:#fff;font-weight:900;" onclick="openNewClientOrderPrepModal('', true)">
-              📜 تنفيذ الطلبيات القديمة للعملاء (بعد الرصيد الافتتاحي)
-            </button>
-            <button type="button" class="btn" style="background:#dc2626;color:#fff;font-weight:900;" onclick="openClientPiecePriceAdjustmentModal()">
-              💲 تعديل حسابات العملاء (الرصيد الافتتاحي + أسعار القطع + الدفعات)
-            </button>
-          </div>
+          <button type="button" class="btn" style="background:linear-gradient(135deg,#0f766e,#115e59);color:#fff;font-weight:900;" onclick="openExecutiveToolsWindowModal()">
+            👑 فتح شباك أدوات الإدارة والتحكم ▾
+          </button>
         </div>
       </div>
     ` : ''}
 
     ${pendingSalesReturns.length > 0 && canApproveSalesReturn(currentUser) ? `
-      <div class="card" style="background:rgba(124,58,237,0.12);border:2px solid #7c3aed;padding:16px 20px;margin-bottom:18px;">
+      <div class="card flash-approval-banner" style="background:rgba(124,58,237,0.12);border:2px solid #7c3aed;padding:16px 20px;margin-bottom:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
           <div>
             <div style="font-weight:900;font-size:1.06rem;color:#6d28d9;">
@@ -4856,7 +5671,7 @@ function renderDashboard() {
               ${pendingSalesReturns.map(sr => `
                 <div>
                   • <strong>${sr.returnNumber}</strong> — العميل: <strong>${sr.clientName || 'عميل'}</strong> — الكمية: <strong>${fmtNum(sr.sheetsCount || 0, 0)} قطعة</strong> (${sr.thkMm} مم ${sr.directionLabel || ''} × ${sr.gradeName || ''}) — مسجل بواسطة: ${sr.requestedBy || ''}
-                  <button class="btn btn-sm btn-success" style="margin-right:8px;padding:3px 10px;" onclick="approveSalesReturn('${sr.id}')">✅ موافقة وإدخال الكمية للمخزن الآن</button>
+                  <button class="btn btn-sm btn-success flash-approval-btn" style="margin-right:8px;padding:3px 10px;" onclick="approveSalesReturn('${sr.id}')">✅ موافقة وإدخال الكمية للمخزن الآن</button>
                 </div>
               `).join('')}
             </div>
@@ -4885,7 +5700,7 @@ function renderDashboard() {
     ` : ''}
 
     ${isWarehouseOrAdmin && prepOrdersForWarehouse.length > 0 ? `
-      <div class="card" style="background:rgba(217,119,6,0.12);border:2px solid #d97706;padding:16px 20px;margin-bottom:18px;">
+      <div class="card flash-approval-banner" style="background:rgba(217,119,6,0.12);border:2px solid #d97706;padding:16px 20px;margin-bottom:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
           <div>
             <div style="font-weight:900;font-size:1.08rem;color:#b45309;">
@@ -4903,7 +5718,7 @@ function renderDashboard() {
                       ? `<span class="badge badge-danger" style="font-size:0.7rem;">⛔ عجز بالمخزن (${fmtNum(sc.totalDeficitSheets, 0)} ق)</span>`
                       : `<span class="badge badge-success" style="font-size:0.7rem;">✅ متوفرة بالمخزن</span>`}
                   <button type="button" class="btn btn-sm btn-outline" onclick="openClientOrderStatementModal('${o.id}')">📄 عرض الكميات</button>
-                  <button type="button" class="btn btn-sm ${!sc.isReadyToApprove ? 'btn-danger' : 'btn-success'}" onclick="approveOrderWarehousePrep('${o.id}')">
+                  <button type="button" class="btn btn-sm ${!sc.isReadyToApprove ? 'btn-danger' : 'btn-success'} flash-approval-btn" onclick="approveOrderWarehousePrep('${o.id}')">
                     ${!sc.isReadyToApprove ? '⚠️ تغطية الرصيد أو وضعها بالسالب للموافقة' : '✅ موافقة التجهيز والخروج الآن'}
                   </button>
                 </div>
@@ -4918,7 +5733,7 @@ function renderDashboard() {
     ` : ''}
 
     ${isWarehouseOrAdmin && carDispatchOrdersForWarehouse.length > 0 ? `
-      <div class="card" style="background:rgba(220,38,38,0.1);border:2px solid var(--danger);padding:16px 20px;margin-bottom:18px;">
+      <div class="card flash-approval-banner" style="background:rgba(220,38,38,0.1);border:2px solid var(--danger);padding:16px 20px;margin-bottom:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
           <div>
             <div style="font-weight:900;font-size:1.08rem;color:var(--danger);">
@@ -4928,7 +5743,7 @@ function renderDashboard() {
               ${carDispatchOrdersForWarehouse.map(o => `
                 <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                   <span>• <strong>${o.orderNumber}</strong> للعميل <strong>${o.clientName}</strong> (${fmtNum(o.totalSheetsCount || 0, 0)} قطعة)</span>
-                  <button type="button" class="btn btn-sm btn-danger" onclick="openVehicleDispatchVoucherModal('${o.id}')">🚚 عمل إذن صرف السيارة الآن</button>
+                  <button type="button" class="btn btn-sm btn-danger flash-approval-btn" onclick="openVehicleDispatchVoucherModal('${o.id}')">🚚 عمل إذن صرف السيارة الآن</button>
                 </div>
               `).join('')}
             </div>
@@ -4941,14 +5756,14 @@ function renderDashboard() {
     ` : ''}
 
     ${isExec && execPendingOrders.length > 0 ? `
-      <div class="card" style="background:rgba(37,99,235,0.1);border:2px solid #2563eb;padding:16px 20px;margin-bottom:18px;">
+      <div class="card flash-approval-banner" style="background:rgba(37,99,235,0.1);border:2px solid #2563eb;padding:16px 20px;margin-bottom:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
           <div>
             <div style="font-weight:900;font-size:1.05rem;color:#1d4ed8;">
               📋 بانتظار موافقة المدير التنفيذي / مدير المشروعات: يوجد (${execPendingOrders.length}) بيان طلبية جديد ليظهر للمدير الإداري وأمين المخزن!
             </div>
           </div>
-          <button class="btn btn-primary" onclick="setTab('production')">
+          <button class="btn btn-primary flash-approval-btn" onclick="setTab('production')">
             ✅ مراجعة وموافقة الآن
           </button>
         </div>
@@ -4956,14 +5771,14 @@ function renderDashboard() {
     ` : ''}
 
     ${isAccountantRole && accountantPendingOrders.length > 0 ? `
-      <div class="card" style="background:rgba(124,58,237,0.1);border:2px solid #7c3aed;padding:16px 20px;margin-bottom:18px;">
+      <div class="card flash-approval-banner" style="background:rgba(124,58,237,0.1);border:2px solid #7c3aed;padding:16px 20px;margin-bottom:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
           <div>
             <div style="font-weight:900;font-size:1.05rem;color:#7c3aed;">
               💳 تنبيه للحسابات: يوجد (${accountantPendingOrders.length}) طلبية تم تجهيزها بالمخزن وبانتظار عمل حسابات العميل واعتماد إذن الصرف!
             </div>
           </div>
-          <button class="btn btn-primary" style="background:#7c3aed;" onclick="setTab('approvals')">
+          <button class="btn btn-primary flash-approval-btn" style="background:#7c3aed;" onclick="setTab('approvals')">
             💳 فتح اعتماد أذون الصرف الآن
           </button>
         </div>
@@ -5587,13 +6402,9 @@ function renderFinishedVeneerWarehouse() {
           </small>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          ${canEditWh ? `<button class="btn btn-sm btn-primary" style="font-weight:900;" onclick="openMultiProductionEntryModal()">📥 إضافة كميات إنتاج متعددة للمخازن</button>` : ''}
-          <button class="btn btn-sm" style="background:#0284c7;color:#fff;font-weight:800;" onclick="activeWarehouseSubTab='production_log'; render();">📊 جدول الإنتاج (يومي / أسبوعي / شهري)</button>
-          ${canEditWh ? `
-            <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openWarehouseOpShortcut('sales_return')">🔄 إضافة مرتجع مبيعات</button>
-            <button class="btn btn-sm btn-success" onclick="openWarehouseOpShortcut('out')">📤 خروج الكميات حسب المبيعات</button>
-            <button class="btn btn-sm btn-accent" onclick="openWarehouseOpShortcut('rework')">♻️ خروج الكميات لإعادة التشغيل</button>
-          ` : ''}
+          ${canEditWh ? `<button class="btn btn-sm btn-primary" style="font-weight:900;" onclick="openMultiProductionEntryModal()">📥 إضافة كميات إنتاج للمخازن</button>` : ''}
+          <button class="btn btn-sm" style="background:#0284c7;color:#fff;font-weight:800;" onclick="activeWarehouseSubTab='production_log'; render();">📊 جدول الإنتاج</button>
+          <button class="btn btn-sm btn-accent" style="font-weight:900;" onclick="openWarehouseOperationsHubModal()">⚙️ شباك حركات وإضافات المخزن ▾</button>
         </div>
       </div>
     </div>
@@ -5610,37 +6421,13 @@ function renderFinishedVeneerWarehouse() {
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button class="btn btn-sm btn-outline" onclick="matrixCompactMode=!matrixCompactMode; render();" title="تبديل حجم الجداول">
-            ${matrixCompactMode ? '🔍 الحجم: مصغر ✓ (اضغط للتكبير)' : '🔍 الحجم: عادي (اضغط للتصغير)'}
+            ${matrixCompactMode ? '🔍 الحجم: مصغر ✓' : '🔍 الحجم: عادي'}
           </button>
-          <button class="btn btn-sm btn-primary" onclick="printVeneerQuantitiesMatrixPdf()">
-            🖨️ طباعة جدول الكميات PDF
+          <button class="btn btn-sm btn-primary" style="font-weight:900;" onclick="openVeneerMatrixPrintWindowModal()">
+            📤 طباعة ومشاركة واتساب (الكميات / الأسعار) ▾
           </button>
-          <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printVeneerQuantitiesMatrixPdf)">
-            ${getWhatsAppSvgIconHtml(15)}
-            <span>🖼️ إرسال واتساب صورة</span>
-          </button>
-          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printVeneerQuantitiesMatrixPdf)">
-            ${getWhatsAppSvgIconHtml(15)}
-            <span>📄 إرسال واتساب PDF</span>
-          </button>
-          ${canSeeFinancialPrices() ? `
-            <button class="btn btn-sm btn-accent" onclick="printVeneerPricesMatrixPdf()">
-              🖨️ طباعة جدول الأسعار PDF
-            </button>
-            <button class="btn btn-sm btn-success" onclick="printBothMatricesPdf()">
-              🖨️ طباعة الكميات + الأسعار PDF
-            </button>
-            <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printBothMatricesPdf)">
-              ${getWhatsAppSvgIconHtml(15)}
-              <span>🖼️ إرسال الكميات والأسعار صورة</span>
-            </button>
-            <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printBothMatricesPdf)">
-              ${getWhatsAppSvgIconHtml(15)}
-              <span>📄 إرسال الكميات والأسعار PDF</span>
-            </button>
-          ` : ''}
           <button class="btn btn-sm ${veneerViewMode === 'matrix' ? 'btn-primary' : 'btn-outline'}" onclick="veneerViewMode='matrix'; render();">
-            📊 عرض الجداول
+            📊 الجداول
           </button>
           <button class="btn btn-sm ${veneerViewMode === 'pallets' ? 'btn-primary' : 'btn-outline'}" onclick="veneerViewMode='pallets'; render();">
             🏷️ البالتات (${inStockPallets.length})
@@ -5668,10 +6455,7 @@ function renderFinishedVeneerWarehouse() {
 
         ${canEditWh ? `
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button class="btn btn-sm btn-primary" onclick="openAddThicknessModal()">➕ تخانة محددة (قص/سدا)</button>
-          <button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openCustomDimensionsModal()">📐 إضافة مقاس خاص للشركات</button>
-          <button class="btn btn-sm btn-accent" onclick="addGradePrompt()">➕ جودة جديدة</button>
-          <button class="btn btn-sm btn-outline" onclick="openAddPalletModal()">📦 بالتة بالباركود</button>
+          <button class="btn btn-sm btn-primary" onclick="openWarehouseOperationsHubModal()">➕ إضافة تخانة / جودة / مقاس خاص ▾</button>
         </div>
         ` : `<span class="badge badge-info">👁️ وضع الاطلاع والطباعة وإرسال الواتساب</span>`}
       </div>
@@ -6071,7 +6855,7 @@ function renderSalesReturnsSection() {
   const showPrices = canSeeFinancialPrices();
 
   return `
-    <div class="card" style="border:2px solid ${pendingCount > 0 ? '#7c3aed' : 'var(--border)'};background:${pendingCount > 0 ? 'rgba(124,58,237,0.04)' : 'var(--bg-surface)'};margin-bottom:18px;">
+    <div class="card ${pendingCount > 0 && canApprove ? 'flash-approval-banner' : ''}" style="border:2px solid ${pendingCount > 0 ? '#7c3aed' : 'var(--border)'};background:${pendingCount > 0 ? 'rgba(124,58,237,0.04)' : 'var(--bg-surface)'};margin-bottom:18px;">
       <div class="card-header">
         <div>
           <div class="card-title" style="color:#6d28d9;">
@@ -6117,7 +6901,7 @@ function renderSalesReturnsSection() {
                 const isPending = r.status === 'pending_approval';
                 const isApproved = r.status === 'approved';
                 return `
-                  <tr style="${isPending ? 'background:rgba(124,58,237,0.08);' : ''}">
+                  <tr class="${isPending && canApprove ? 'flash-approval-row' : ''}" style="${isPending ? 'background:rgba(124,58,237,0.08);' : ''}">
                     <td>
                       <strong>${r.returnNumber || 'RET'}</strong><br/>
                       <small style="color:var(--text-muted);">📅 ${r.date || fmtDate(r.createdAt)}</small>
@@ -6160,7 +6944,7 @@ function renderSalesReturnsSection() {
                     <td>
                       <div style="display:flex;gap:6px;flex-wrap:wrap;">
                         ${isPending && canApprove ? `
-                          <button class="btn btn-sm btn-success" onclick="approveSalesReturn('${r.id}')">
+                          <button class="btn btn-sm btn-success flash-approval-btn" onclick="approveSalesReturn('${r.id}')">
                             ✅ موافقة وإدخال الكمية للمخزن
                           </button>
                           <button class="btn btn-sm btn-danger" onclick="rejectSalesReturn('${r.id}')">
@@ -7112,9 +7896,7 @@ function renderProductionLogTableSection() {
                   <td><strong>👤 ${r.performedBy}</strong></td>
                   <td>
                     <div style="display:flex;gap:4px;">
-                      <button class="btn btn-sm btn-outline" onclick="printWarehouseVoucher('${r.id}')" title="طباعة إذن">🖨️</button>
-                      <button class="btn btn-sm" style="background:#0284c7;color:#fff;font-weight:800;padding:3px 7px;" onclick="sendReportViaWhatsAppImage(() => printWarehouseVoucher('${r.id}'))" title="إرسال الإذن كصورة عبر واتساب">🖼️</button>
-                      <button class="btn btn-sm" style="background:#16a34a;color:#fff;font-weight:800;padding:3px 7px;" onclick="sendReportViaWhatsApp(() => printWarehouseVoucher('${r.id}'))" title="إرسال الإذن PDF عبر واتساب">📄</button>
+                      ${renderPrintShareHubButtonHtml(`prod_log_vo_${r.id}`, `إذن دخول إنتاج (${r.voucherNumber})`, () => printWarehouseVoucher(r.id), '', '', '📤 طباعة/واتساب ▾', 'btn btn-sm btn-outline')}
                       ${isFullAdmin(currentUser) ? `
                         <button class="btn btn-sm btn-accent" onclick="openEditWarehouseMovementModal('${r.id}')" title="تعديل">✏️</button>
                         <button class="btn btn-sm btn-danger" onclick="deleteWarehouseMovementWithRestore('${r.id}')" title="حذف وإرجاع الرصيد">🗑️</button>
@@ -7250,9 +8032,7 @@ function renderWarehouseMovements() {
           ${(movementDateFilterFrom || movementDateFilterTo) ? `
             <button class="btn btn-sm btn-outline" onclick="movementDateFilterFrom=''; movementDateFilterTo=''; render();">إلغاء الفلتر</button>
           ` : ''}
-          <button class="btn btn-sm btn-primary" onclick="printWarehouseMovementsReportPdf()">🖨️ طباعة سجل الحركات PDF</button>
-          <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printWarehouseMovementsReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>🖼️ إرسال واتساب صورة</span></button>
-          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printWarehouseMovementsReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>📄 إرسال واتساب PDF</span></button>
+          ${renderPrintShareHubButtonHtml('wh_all_movements', 'سجل حركات المخازن وأذون الدخول والخروج', printWarehouseMovementsReportPdf, '', '', '📤 طباعة ومشاركة السجل ▾', 'btn btn-sm btn-primary')}
         </div>
       </div>
       <div class="table-responsive">
@@ -7288,16 +8068,10 @@ function renderWarehouseMovements() {
                 <td>${m.performedBy}</td>
                 <td>
                   <div style="display:flex;gap:5px;flex-wrap:wrap;">
-                    ${String(m.voucherNumber || '').startsWith('CAR-') || String(m.directionLabel || '').includes('سيارة') || String(m.warehouseLabel || '').includes('سيارة') ? `
-                      <button class="btn btn-sm btn-success" onclick="printWarehouseVoucher('${m.id}')">🚚 طباعة إذن السيارة</button>
-                    ` : `
-                      <button class="btn btn-sm btn-outline" onclick="printWarehouseVoucher('${m.id}')">🖨️ طباعة إذن</button>
-                    `}
-                    <button class="btn btn-sm" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(() => printWarehouseVoucher('${m.id}'))">🖼️ واتساب صورة</button>
-                    <button class="btn btn-sm" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(() => printWarehouseVoucher('${m.id}'))">📄 واتساب PDF</button>
+                    ${renderPrintShareHubButtonHtml(`wh_vo_${m.id}`, `إذن مخزن (${m.voucherNumber}) — ${m.directionLabel || ''}`, () => printWarehouseVoucher(m.id), '', '', '📤 طباعة ومشاركة الإذن ▾', 'btn btn-sm btn-primary')}
                     ${isFullAdmin(currentUser) ? `
-                      <button class="btn btn-sm btn-accent" onclick="openEditWarehouseMovementModal('${m.id}')">✏️ تعديل البيان والرصيد</button>
-                      <button class="btn btn-sm btn-danger" onclick="deleteWarehouseMovementWithRestore('${m.id}')">🗑️ حذف وإرجاع الرصيد</button>
+                      <button class="btn btn-sm btn-accent" onclick="openEditWarehouseMovementModal('${m.id}')" title="تعديل البيان والرصيد">✏️</button>
+                      <button class="btn btn-sm btn-danger" onclick="deleteWarehouseMovementWithRestore('${m.id}')" title="حذف وإرجاع الرصيد">🗑️</button>
                     ` : ''}
                   </div>
                 </td>
@@ -7627,15 +8401,10 @@ function renderProduction() {
           ${canIssueOrders ? `
             <button class="btn btn-primary" onclick="openNewClientOrderPrepModal()">➕ إنشاء أمر تجهيز طلبية للعميل (بيان جديد)</button>
             ${isExec ? `
-              <button class="btn" style="background:#0f766e;color:#fff;font-weight:800;" onclick="openNewClientOrderPrepModal('', true)">📜 تنفيذ طلبية قديمة لعميل (بعد الرصيد الافتتاحي)</button>
+              <button class="btn" style="background:#0f766e;color:#fff;font-weight:800;" onclick="openNewClientOrderPrepModal('', true)">📜 تنفيذ طلبية قديمة</button>
             ` : ''}
           ` : ''}
-          ${canEditFin ? `
-            <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="openFactoryStampModal()">💮 ختم الشركة والحسابات البنكية</button>
-          ` : ''}
-          <button class="btn btn-outline" onclick="printAllProductionOrdersReportPdf()">🖨️ طباعة سجل أوامر التجهيز PDF</button>
-          <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printAllProductionOrdersReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>🖼️ إرسال واتساب صورة</span></button>
-          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printAllProductionOrdersReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>📄 إرسال واتساب PDF</span></button>
+          ${renderPrintShareHubButtonHtml('prod_all_orders', 'سجل جميع أوامر تجهيز الطلبيات', printAllProductionOrdersReportPdf, '', '', '📤 طباعة ومشاركة السجل ▾', 'btn btn-accent')}
           <button class="btn btn-outline" onclick="setTab('approvals')">✅ الانتقال لاعتماد أذون الصرف والسيارات</button>
         </div>
       </div>
@@ -7683,9 +8452,14 @@ function renderProduction() {
                 const netTotal = Number(ord.netTotalAmount ?? subtotal);
                 const isMatched = matchesClientSearchQuery(ord.clientCode, ord.clientName, '', '', ord.orderNumber, ordersSearchQuery);
                 const stockCheck = st === 'pending_warehouse_prep' ? checkOrderStockAvailability(ord) : null;
+                const isWaitingForMe =
+                  (st === 'pending_executive' && isExec) ||
+                  (st === 'pending_warehouse_prep' && isWarehouseOrAdmin) ||
+                  (st === 'pending_accountant_release' && isAccountantOrExec) ||
+                  (st === 'ready_for_car_dispatch' && isWarehouseOrAdmin);
 
                 return `
-                  <tr data-order-search="1" data-code="${ord.clientCode || ''}" data-name="${ord.clientName || ''}" data-ordnum="${ord.orderNumber || ''}" style="${!isMatched ? 'display:none;' : ''}${st === 'ready_for_car_dispatch' ? 'background:rgba(220,38,38,0.06);' : ''}">
+                  <tr class="${isWaitingForMe ? 'flash-approval-row' : ''}" data-order-search="1" data-code="${ord.clientCode || ''}" data-name="${ord.clientName || ''}" data-ordnum="${ord.orderNumber || ''}" style="${!isMatched ? 'display:none;' : ''}${st === 'ready_for_car_dispatch' ? 'background:rgba(220,38,38,0.06);' : ''}">
                     <td>
                       <strong>${ord.orderNumber}</strong><br/>
                       <small style="color:var(--text-muted);font-size:0.7rem;">📅 ${ord.date || fmtDate(ord.createdAt)}</small><br/>
@@ -7732,65 +8506,50 @@ function renderProduction() {
                       ${ord.notes ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">📝 ${ord.notes}</div>` : ''}
                     </td>
                     <td>
-                      <div style="display:flex;flex-direction:column;gap:4px;">
-                        <button class="btn btn-sm btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="openClientOrderStatementModal('${ord.id}')">
-                          ${canSeeFinancialPrices() ? (canEditExistingOrderStatement(currentUser, ord) ? '📄 بيان العميل / تعديل' : '👁️ اطلاع وطباعة بيان العميل') : '📄 بيان الكميات للتجهيز'}
-                        </button>
-                        ${canSeeFinancialPrices() ? `
-                          <button class="btn btn-sm btn-accent" style="font-weight:800;" onclick="printClientOrderStatement('${ord.id}')">
-                            🖨️ تصدير وطباعة البيان PDF
-                          </button>
-                          <div style="display:flex;gap:4px;">
-                            <button class="btn btn-sm" style="flex:1;background:#0284c7;color:#fff;font-weight:800;font-size:0.7rem;padding:4px 6px;" onclick="sendReportViaWhatsAppImage(() => printClientOrderStatement('${ord.id}'), '${ord.clientPhone || ''}', '${ord.clientName || ''}')">🖼️ واتساب صورة</button>
-                            <button class="btn btn-sm" style="flex:1;background:#16a34a;color:#fff;font-weight:800;font-size:0.7rem;padding:4px 6px;" onclick="sendReportViaWhatsApp(() => printClientOrderStatement('${ord.id}'), '${ord.clientPhone || ''}', '${ord.clientName || ''}')">📄 واتساب PDF</button>
-                          </div>
-                        ` : ''}
-
+                      <div style="display:flex;flex-direction:column;gap:5px;">
                         ${st === 'pending_executive' && isExec ? `
-                          <button class="btn btn-sm btn-primary" onclick="approveOrderExecutive('${ord.id}')">
+                          <button class="btn btn-sm btn-primary flash-approval-btn" onclick="approveOrderExecutive('${ord.id}')">
                             ✅ موافقة الإدارة (إرسال للمخزن)
                           </button>
                         ` : ''}
 
                         ${st === 'pending_warehouse_prep' && isWarehouseOrAdmin ? `
                           ${stockCheck && !stockCheck.isReadyToApprove ? `
-                            <button class="btn btn-sm btn-danger" onclick="openOrderStockShortageModal('${ord.id}')" title="لا يسمح بالموافقة إلا بعد تغطية رصيد المخزن أو وضعها بالمخزن بالسالب">
+                            <button class="btn btn-sm btn-danger flash-approval-btn" onclick="openOrderStockShortageModal('${ord.id}')" title="لا يسمح بالموافقة إلا بعد تغطية رصيد المخزن أو وضعها بالمخزن بالسالب">
                               ⚠️ تغطية الرصيد أو وضعها بالسالب (${fmtNum(stockCheck.totalDeficitSheets, 0)} ق)
                             </button>
                           ` : `
-                            <button class="btn btn-sm btn-success" onclick="approveOrderWarehousePrep('${ord.id}')">
+                            <button class="btn btn-sm btn-success flash-approval-btn" onclick="approveOrderWarehousePrep('${ord.id}')">
                               ✅ موافقة التجهيز والخروج بالمخزن
                             </button>
                           `}
                         ` : ''}
 
                         ${st === 'pending_accountant_release' && isAccountantOrExec ? `
-                          <button class="btn btn-sm btn-accent" onclick="openAccountantReleaseModal('${ord.id}')">
+                          <button class="btn btn-sm btn-accent flash-approval-btn" onclick="openAccountantReleaseModal('${ord.id}')">
                             💳 حسابات العميل واعتماد الصرف
                           </button>
                         ` : ''}
 
                         ${st === 'ready_for_car_dispatch' && isWarehouseOrAdmin ? `
-                          <button class="btn btn-sm btn-danger" onclick="openVehicleDispatchVoucherModal('${ord.id}')">
+                          <button class="btn btn-sm btn-danger flash-approval-btn" onclick="openVehicleDispatchVoucherModal('${ord.id}')">
                             🚚 صرف الطلبية وإذن السيارة
                           </button>
                         ` : ''}
 
-                        ${st === 'completed' && ord.carDispatchVoucher ? `
-                          <button class="btn btn-sm btn-success" onclick="printVehicleDispatchVoucher('${ord.id}')">
-                            🖨️ طباعة إذن السيارة (${ord.carDispatchVoucher.carPlateNumber})
+                        <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                          <button class="btn btn-sm btn-outline" style="flex:1;border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="openClientOrderStatementModal('${ord.id}')">
+                            ${canSeeFinancialPrices() ? (canEditExistingOrderStatement(currentUser, ord) ? '📄 البيان / تعديل' : '👁️ عرض البيان') : '📄 بيان الكميات'}
                           </button>
-                          <div style="display:flex;gap:4px;">
-                            <button class="btn btn-sm" style="flex:1;background:#0284c7;color:#fff;font-weight:800;font-size:0.7rem;padding:4px 6px;" onclick="sendReportViaWhatsAppImage(() => printVehicleDispatchVoucher('${ord.id}'), '${ord.clientPhone || ''}', '${ord.clientName || ''}')">🖼️ إذن السيارة صورة</button>
-                            <button class="btn btn-sm" style="flex:1;background:#16a34a;color:#fff;font-weight:800;font-size:0.7rem;padding:4px 6px;" onclick="sendReportViaWhatsApp(() => printVehicleDispatchVoucher('${ord.id}'), '${ord.clientPhone || ''}', '${ord.clientName || ''}')">📄 إذن السيارة PDF</button>
-                          </div>
+                          ${canSeeFinancialPrices() ? renderPrintShareHubButtonHtml(`ord_stmt_${ord.id}`, `بيان الطلبية (${ord.orderNumber}) — ${ord.clientName || ''}`, () => printClientOrderStatement(ord.id), ord.clientPhone || '', ord.clientName || '', '📤 طباعة وواتساب ▾', 'btn btn-sm btn-accent') : ''}
+                        </div>
+
+                        ${st === 'completed' && ord.carDispatchVoucher ? `
+                          ${renderPrintShareHubButtonHtml(`ord_car_${ord.id}`, `إذن صرف السيارة (${ord.carDispatchVoucher.carPlateNumber}) — طلبية ${ord.orderNumber}`, () => printVehicleDispatchVoucher(ord.id), ord.clientPhone || '', ord.clientName || '', `🚚 إذن السيارة (${ord.carDispatchVoucher.carPlateNumber}) ▾`, 'btn btn-sm btn-success')}
                         ` : ''}
 
                         ${isExec ? `
-                          <div style="display:flex;gap:3px;">
-                            <button class="btn btn-sm btn-outline" style="flex:1;padding:2px 5px;font-size:0.68rem;" onclick="openClientOrderStatementModal('${ord.id}')">✏️ تعديل</button>
-                            <button class="btn btn-sm btn-danger" style="flex:1;padding:2px 5px;font-size:0.68rem;" onclick="deleteOrderWithStockRestore('${ord.id}')">🗑️ حذف</button>
-                          </div>
+                          <button class="btn btn-sm btn-danger" style="padding:2px 6px;font-size:0.68rem;" onclick="deleteOrderWithStockRestore('${ord.id}')">🗑️ حذف وإرجاع الرصيد</button>
                         ` : ''}
                       </div>
                     </td>
@@ -7828,7 +8587,7 @@ function renderApprovals() {
     ${renderSalesReturnsSection()}
 
     ${pendingPrepOrders.length > 0 && isWarehouseOrAdmin ? `
-      <div class="card" style="background:rgba(217,119,6,0.12);border:2px solid #d97706;padding:16px 20px;">
+      <div class="card flash-approval-banner" style="background:rgba(217,119,6,0.12);border:2px solid #d97706;padding:16px 20px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
           <div>
             <div style="font-weight:900;font-size:1.05rem;color:#b45309;">
@@ -7838,7 +8597,7 @@ function renderApprovals() {
               بمجرد الضغط على موافقة التجهيز سيتم خصم الكميات من جدول كميات القشرة فوراً وتحويل الطلبية للمحاسب لاعتماد إذن الصرف.
             </small>
           </div>
-          <button type="button" class="btn btn-success" onclick="approveOrderWarehousePrep('${pendingPrepOrders[0].id}')">
+          <button type="button" class="btn btn-success flash-approval-btn" onclick="approveOrderWarehousePrep('${pendingPrepOrders[0].id}')">
             ✅ موافقة التجهيز والخروج بالمخزن الآن (${pendingPrepOrders[0].orderNumber})
           </button>
         </div>
@@ -7846,7 +8605,7 @@ function renderApprovals() {
     ` : ''}
 
     ${readyForCarOrders.length > 0 && isWarehouseOrAdmin ? `
-      <div class="card" style="background:rgba(220,38,38,0.08);border:2px solid var(--danger);padding:16px 20px;">
+      <div class="card flash-approval-banner" style="background:rgba(220,38,38,0.08);border:2px solid var(--danger);padding:16px 20px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
           <div>
             <div style="font-weight:900;font-size:1.05rem;color:var(--danger);">
@@ -7856,7 +8615,7 @@ function renderApprovals() {
               تم عمل حسابات العميل والموافقة على إذن الصرف من المحاسب — يرجى صرف الطلبية وعمل إذن صرف للسيارة التي ستقوم بتحميل البضاعة.
             </small>
           </div>
-          <button class="btn btn-danger" onclick="openVehicleDispatchVoucherModal('${readyForCarOrders[0].id}')">
+          <button class="btn btn-danger flash-approval-btn" onclick="openVehicleDispatchVoucherModal('${readyForCarOrders[0].id}')">
             🚚 فتح إذن صرف السيارة الآن (${readyForCarOrders[0].orderNumber})
           </button>
         </div>
@@ -7864,7 +8623,7 @@ function renderApprovals() {
     ` : ''}
 
     ${waitingAccountantOrders.length > 0 && isAccountantOrExec ? `
-      <div class="card" style="background:rgba(124,58,237,0.08);border:2px solid #7c3aed;padding:16px 20px;">
+      <div class="card flash-approval-banner" style="background:rgba(124,58,237,0.08);border:2px solid #7c3aed;padding:16px 20px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
           <div>
             <div style="font-weight:900;font-size:1.05rem;color:#7c3aed;">
@@ -7874,7 +8633,7 @@ function renderApprovals() {
               بمجرد موافقتك على إذن الصرف بعد عمل حسابات العميل سيظهر أمر فوري لأمين المخزن والمدير الإداري بصرف الطلبية وعمل إذن صرف للسيارة.
             </small>
           </div>
-          <button class="btn btn-primary" style="background:#7c3aed;" onclick="openAccountantReleaseModal('${waitingAccountantOrders[0].id}')">
+          <button class="btn btn-primary flash-approval-btn" style="background:#7c3aed;" onclick="openAccountantReleaseModal('${waitingAccountantOrders[0].id}')">
             💳 عمل حسابات العميل واعتماد الصرف (${waitingAccountantOrders[0].orderNumber})
           </button>
         </div>
@@ -7890,12 +8649,7 @@ function renderApprovals() {
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          ${releaseOrders.some(o => o.carDispatchVoucher) ? `
-            <button class="btn btn-success" onclick="printVehicleDispatchVoucher('${releaseOrders.find(o => o.carDispatchVoucher).id}')">🚚 طباعة إذن صرف السيارة المعتمد</button>
-          ` : ''}
-          <button class="btn btn-outline" onclick="printAllApprovalsDispatchReportPdf()">🖨️ طباعة سجل أذون الصرف والسيارات PDF</button>
-          <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(printAllApprovalsDispatchReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>🖼️ إرسال واتساب صورة</span></button>
-          <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(printAllApprovalsDispatchReportPdf)">${getWhatsAppSvgIconHtml(15)}<span>📄 إرسال واتساب PDF</span></button>
+          ${renderPrintShareHubButtonHtml('app_all_vouchers', 'سجل أذون الصرف وأوامر تحميل السيارات', printAllApprovalsDispatchReportPdf, '', '', '📤 طباعة ومشاركة أذون الصرف ▾', 'btn btn-accent')}
           <button class="btn btn-primary" onclick="setTab('production')">📋 عرض جميع أوامر تجهيز الطلبيات</button>
         </div>
       </div>
@@ -7925,9 +8679,13 @@ function renderApprovals() {
                 const st = ord.stage || ord.status;
                 const items = Array.isArray(ord.items) ? ord.items : [];
                 const car = ord.carDispatchVoucher || null;
+                const isWaitingForMe =
+                  (st === 'pending_warehouse_prep' && isWarehouseOrAdmin) ||
+                  (st === 'pending_accountant_release' && isAccountantOrExec) ||
+                  (st === 'ready_for_car_dispatch' && isWarehouseOrAdmin);
 
                 return `
-                  <tr style="${st === 'ready_for_car_dispatch' ? 'background:rgba(220,38,38,0.06);' : st === 'pending_accountant_release' ? 'background:rgba(124,58,237,0.05);' : ''}">
+                  <tr class="${isWaitingForMe ? 'flash-approval-row' : ''}" style="${st === 'ready_for_car_dispatch' ? 'background:rgba(220,38,38,0.06);' : st === 'pending_accountant_release' ? 'background:rgba(124,58,237,0.05);' : ''}">
                     <td>
                       <strong>${ord.orderNumber}</strong><br/>
                       <small style="color:var(--text-muted);font-size:0.68rem;">📅 ${ord.date}</small>
@@ -7966,42 +8724,33 @@ function renderApprovals() {
                     </td>
                     <td>${getOrderStageBadge(ord)}</td>
                     <td>
-                      <div style="display:flex;flex-direction:column;gap:4px;">
-                        <button type="button" class="btn btn-sm btn-outline" onclick="openClientOrderStatementModal('${ord.id}')">${canSeeFinancialPrices() ? '📄 بيان العميل' : '📄 بيان الكميات'}</button>
-
+                      <div style="display:flex;flex-direction:column;gap:5px;">
                         ${st === 'pending_warehouse_prep' && isWarehouseOrAdmin ? `
-                          <button type="button" class="btn btn-sm btn-success" onclick="approveOrderWarehousePrep('${ord.id}')">
+                          <button type="button" class="btn btn-sm btn-success flash-approval-btn" onclick="approveOrderWarehousePrep('${ord.id}')">
                             ✅ موافقة التجهيز والخروج بالمخزن
                           </button>
                         ` : ''}
 
                         ${st === 'pending_accountant_release' && isAccountantOrExec ? `
-                          <button type="button" class="btn btn-sm btn-primary" style="background:#7c3aed;" onclick="openAccountantReleaseModal('${ord.id}')">
+                          <button type="button" class="btn btn-sm btn-primary flash-approval-btn" style="background:#7c3aed;" onclick="openAccountantReleaseModal('${ord.id}')">
                             💳 اعتماد الصرف
                           </button>
                         ` : ''}
 
                         ${st === 'ready_for_car_dispatch' && isWarehouseOrAdmin ? `
-                          <button type="button" class="btn btn-sm btn-danger" onclick="openVehicleDispatchVoucherModal('${ord.id}')">
+                          <button type="button" class="btn btn-sm btn-danger flash-approval-btn" onclick="openVehicleDispatchVoucherModal('${ord.id}')">
                             🚚 إذن صرف السيارة
                           </button>
                         ` : ''}
 
+                        <button type="button" class="btn btn-sm btn-outline" onclick="openClientOrderStatementModal('${ord.id}')">${canSeeFinancialPrices() ? '📄 بيان العميل' : '📄 بيان الكميات'}</button>
+
                         ${car ? `
-                          <button type="button" class="btn btn-sm btn-success" onclick="printVehicleDispatchVoucher('${ord.id}')">
-                            🖨️ طباعة إذن السيارة
-                          </button>
-                          <div style="display:flex;gap:4px;">
-                            <button type="button" class="btn btn-sm" style="flex:1;background:#0284c7;color:#fff;font-weight:800;font-size:0.7rem;padding:4px 6px;" onclick="sendReportViaWhatsAppImage(() => printVehicleDispatchVoucher('${ord.id}'), '${ord.clientPhone || ''}', '${ord.clientName || ''}')">🖼️ صورة</button>
-                            <button type="button" class="btn btn-sm" style="flex:1;background:#16a34a;color:#fff;font-weight:800;font-size:0.7rem;padding:4px 6px;" onclick="sendReportViaWhatsApp(() => printVehicleDispatchVoucher('${ord.id}'), '${ord.clientPhone || ''}', '${ord.clientName || ''}')">📄 PDF</button>
-                          </div>
+                          ${renderPrintShareHubButtonHtml(`app_car_${ord.id}`, `إذن صرف السيارة (${car.carPlateNumber}) — طلبية ${ord.orderNumber}`, () => printVehicleDispatchVoucher(ord.id), ord.clientPhone || '', ord.clientName || '', `🚚 إذن السيارة (${car.carPlateNumber}) ▾`, 'btn btn-sm btn-success')}
                         ` : ''}
 
                         ${isExec ? `
-                          <div style="display:flex;gap:3px;">
-                            <button class="btn btn-sm btn-outline" style="flex:1;padding:2px 5px;font-size:0.68rem;" onclick="openClientOrderStatementModal('${ord.id}')">✏️ تعديل</button>
-                            <button class="btn btn-sm btn-danger" style="flex:1;padding:2px 5px;font-size:0.68rem;" onclick="deleteOrderWithStockRestore('${ord.id}')">🗑️ حذف</button>
-                          </div>
+                          <button class="btn btn-sm btn-danger" style="padding:2px 5px;font-size:0.68rem;" onclick="deleteOrderWithStockRestore('${ord.id}')">🗑️ حذف وإرجاع الرصيد</button>
                         ` : ''}
                       </div>
                     </td>
@@ -8129,19 +8878,12 @@ function renderAccounting() {
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           ${canCodeClient ? `<button class="btn btn-primary" onclick="openNewPartnerModal()">➕ إضافة عميل جديد بالكود</button>` : ''}
           ${canIssueOrders ? `<button class="btn btn-accent" onclick="openNewClientOrderPrepModal()">📋 إنشاء أمر تجهيز طلبية لعميل</button>` : ''}
-          ${isFullAdmin(currentUser) ? `
-            <button class="btn" style="background:#0f766e;color:#fff;font-weight:800;" onclick="openNewClientOrderPrepModal('', true)">📜 تنفيذ طلبية قديمة لعميل (بعد الرصيد الافتتاحي)</button>
-            <button class="btn" style="background:#dc2626;color:#fff;font-weight:800;" onclick="openClientPiecePriceAdjustmentModal()">💲 تعديل الحسابات والرصيد الافتتاحي وأسعار القطع والدفعات</button>
+          ${(canEditFin || isFullAdmin(currentUser)) ? `
+            <button class="btn" style="background:linear-gradient(135deg,#0f766e,#115e59);color:#fff;font-weight:900;" onclick="openAccountingToolsWindowModal()">
+              💼 شباك العمليات المالية وتعديل الأسعار والبالتات ▾
+            </button>
           ` : ''}
-          ${canEditFin ? `
-            <button class="btn" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal()">🛡️ حساب تأمين البالتات (تحصيل / رد تأمين)</button>
-            <button class="btn" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal()">📝 تسجيل شيك تحت التحصيل</button>
-            <button class="btn btn-outline" style="border-color:#d97706;color:#b45309;font-weight:800;" onclick="openSetDefaultPalletPriceModal()">🪵 تحديد قيمة البالتة (${fmtMoney(defaultPalletPrice)})</button>
-            <button class="btn btn-outline" onclick="openNewFinancialTxModal()">💵 تسجيل سند مالي عام بالخزينة</button>
-          ` : ''}
-          <button class="btn btn-outline" onclick="printAllClientsAccountingReportPdf()">🖨️ طباعة كشف حسابات جميع العملاء PDF</button>
-          <button class="btn" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsAppImage(printAllClientsAccountingReportPdf)">${getWhatsAppSvgIconHtml(18)}<span>🖼️ إرسال واتساب صورة</span></button>
-          <button class="btn" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:6px;" onclick="sendReportViaWhatsApp(printAllClientsAccountingReportPdf)">${getWhatsAppSvgIconHtml(18)}<span>📄 إرسال واتساب PDF</span></button>
+          ${renderPrintShareHubButtonHtml('acc_all_clients', 'كشف حسابات جميع العملاء وأرصدة البالتات', printAllClientsAccountingReportPdf, '', '', '📤 طباعة ومشاركة كشف العملاء ▾', 'btn btn-outline')}
         </div>
       </div>
 
@@ -8258,41 +9000,13 @@ function renderAccounting() {
                     </div>
                   </td>
                   <td>
-                    <div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;">
-                      <button class="btn btn-sm btn-primary" onclick="openClientFullHistoryModal('${pt.id}', 'all')">
+                    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+                      <button class="btn btn-sm btn-primary" style="font-weight:900;" onclick="openClientFullHistoryModal('${pt.id}', 'all')">
                         📂 كشف الحساب
                       </button>
-                      ${canEditFin ? `
-                        <button class="btn btn-sm btn-success" onclick="openClientPaymentModal('${pt.id}')">
-                          💵 تحصيل
-                        </button>
-                        <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}')" title="تسجيل تحصيل أو رد تأمين بالتات في حساب تأمين البالتات">
-                          🛡️ تأمين البالتات
-                        </button>
-                        <button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal('${pt.id}')">
-                          📝 شيك
-                        </button>
-                        <button class="btn btn-sm btn-accent" onclick="openClientPalletMovementModal('${pt.id}')">
-                          🪵 بالتات
-                        </button>
-                      ` : ''}
-                      <button class="btn btn-sm btn-outline" onclick="printClientFullStatement('${pt.id}')">
-                        🖨️ طباعة
+                      <button class="btn btn-sm" style="background:linear-gradient(135deg,#0f766e,#115e59);color:#fff;font-weight:900;" onclick="openClientActionsWindowModal('${pt.id}')">
+                        ⚡ إجراءات العميل ▾
                       </button>
-                      <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(() => printClientFullStatement('${pt.id}'), '${pt.phone || ''}', '${pt.name || ''}')" title="تحويل كشف حساب العميل إلى صورة عالية الدقة وإرسالها عبر الواتساب">
-                        ${getWhatsAppSvgIconHtml(14)}
-                        <span>🖼️ واتساب صورة</span>
-                      </button>
-                      <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(() => printClientFullStatement('${pt.id}'), '${pt.phone || ''}', '${pt.name || ''}')" title="تحويل كشف حساب العميل إلى PDF وإرساله عبر الواتساب">
-                        ${getWhatsAppSvgIconHtml(15)}
-                        <span>📄 واتساب PDF</span>
-                      </button>
-                      ${isFullAdmin(currentUser) ? `
-                        <button class="btn btn-sm" style="background:#0f766e;color:#fff;font-weight:800;" onclick="openNewClientOrderPrepModal('${pt.id}', true)" title="تنفيذ طلبية قديمة للعميل بعد الرصيد الافتتاحي (مع سؤال الخروج من المخزن أم لا)">📜 طلبية قديمة</button>
-                        <button class="btn btn-sm" style="background:#dc2626;color:#fff;font-weight:800;" onclick="openClientPiecePriceAdjustmentModal('${pt.id}')" title="تعديل حساب العميل والرصيد الافتتاحي وأسعار القطع والدفعات (للمدير التنفيذي ومدير المشروعات)">💲 تعديل الحساب والأسعار</button>
-                        <button class="btn btn-sm btn-outline" onclick="openEditPartnerModal('${pt.id}')" title="تعديل">✏️</button>
-                        <button class="btn btn-sm btn-danger" onclick="deletePartnerRecord('${pt.id}')" title="حذف">🗑️</button>
-                      ` : ''}
                     </div>
                   </td>
                 </tr>
@@ -8696,51 +9410,159 @@ function renderReports() {
         </div>
         ${renderReportMetricsToggleBarHtml(false)}
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px;">
-        <button class="btn btn-success" style="font-weight:800;" onclick="printProductionLogReportPdf()">🖨️ جدول الإنتاج (يومي / أسبوعي / شهري) PDF</button>
-        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printProductionLogReportPdf)">🖼️ إرسال جدول الإنتاج صورة واتساب</button>
-        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printProductionLogReportPdf)">📄 إرسال جدول الإنتاج PDF واتساب</button>
-        <button class="btn btn-primary" onclick="printVeneerQuantitiesMatrixPdf()">🖨️ جدول كميات القشرة PDF</button>
-        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printVeneerQuantitiesMatrixPdf)">🖼️ إرسال جدول الكميات صورة واتساب</button>
-        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printVeneerQuantitiesMatrixPdf)">📄 إرسال جدول الكميات PDF واتساب</button>
+      <div class="hub-window-grid">
+        ${(() => {
+          registerPrintShareAction('rep_prod_log', 'جدول الإنتاج (يومي / أسبوعي / شهري)', printProductionLogReportPdf);
+          registerPrintShareAction('rep_veneer_qty', 'جدول أرصدة كميات القشرة بالمخزن', printVeneerQuantitiesMatrixPdf);
+          registerPrintShareAction('rep_pallets_inv', 'سجل البالتات بالمخزن', printPalletsInventoryPdf);
+          registerPrintShareAction('rep_sales_returns', 'سجل مرتجعات المبيعات', printSalesReturnsReportPdf);
+          registerPrintShareAction('rep_raw_materials', 'جرد مخزن الخامات', printRawMaterialsReportPdf);
+          registerPrintShareAction('rep_log_containers', 'بيان حاويات وسيريالات الجذوع', printLogContainersAndSerialsReportPdf);
+          registerPrintShareAction('rep_scrap', 'جرد مخزن الهالك', printScrapReportPdf);
+          registerPrintShareAction('rep_spare_parts', 'جرد مخزن قطع الغيار', printSparePartsReportPdf);
+          registerPrintShareAction('rep_wh_movements', 'سجل حركات المخازن وأذون الدخول والخروج', printWarehouseMovementsReportPdf);
+          registerPrintShareAction('rep_prod_orders', 'سجل أوامر تجهيز طلبيات العملاء', printAllProductionOrdersReportPdf);
+          registerPrintShareAction('rep_approvals_car', 'سجل أذون الصرف وأوامر تحميل السيارات', printAllApprovalsDispatchReportPdf);
+          registerPrintShareAction('rep_general_audit', 'تقرير الجرد العام والرقابة', printGeneralInventoryAndAuditReportPdf);
+          if (canSeeFinancialPrices()) {
+            registerPrintShareAction('rep_veneer_prices', 'جدول أسعار القشرة وتقييم المخزون', printVeneerPricesMatrixPdf);
+            registerPrintShareAction('rep_both_matrices', 'جدول الكميات + الأسعار معاً', printBothMatricesPdf);
+            registerPrintShareAction('rep_all_clients', 'كشف حسابات جميع العملاء وأرصدة البالتات', printAllClientsAccountingReportPdf);
+            registerPrintShareAction('rep_all_fin_txs', 'سجل الفواتير والتحصيلات والمعاملات المالية', printAllFinancialTransactionsReportPdf);
+            registerPrintShareAction('rep_all_pallets_mov', 'سجل حركة البالتات مع العملاء', printAllPalletMovementsReportPdf);
+          }
+          return '';
+        })()}
+
+        <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_prod_log')">
+          <div class="hub-option-icon" style="background:linear-gradient(135deg,#16a34a,#15803d);">📊</div>
+          <div class="hub-option-info">
+            <div class="hub-option-title">جدول الإنتاج (يومي / أسبوعي / شهري) ▾</div>
+            <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+          </div>
+        </button>
+
+        <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_veneer_qty')">
+          <div class="hub-option-icon" style="background:linear-gradient(135deg,#b45309,#d97706);">🪵</div>
+          <div class="hub-option-info">
+            <div class="hub-option-title">جدول أرصدة كميات القشرة ▾</div>
+            <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+          </div>
+        </button>
+
         ${canSeeFinancialPrices() ? `
-          <button class="btn btn-accent" onclick="printVeneerPricesMatrixPdf()">🖨️ جدول الأسعار PDF</button>
-          <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printVeneerPricesMatrixPdf)">🖼️ إرسال جدول الأسعار صورة واتساب</button>
-          <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="printBothMatricesPdf()">🖨️ جدول الكميات + الأسعار معاً PDF</button>
-          <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printBothMatricesPdf)">🖼️ إرسال الكميات + الأسعار صورة واتساب</button>
-          <button class="btn" style="background:#15803d;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printBothMatricesPdf)">📄 إرسال الكميات + الأسعار PDF واتساب</button>
+          <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_veneer_prices')">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#0f766e,#115e59);">💰</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">جدول أسعار القشرة ▾</div>
+              <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_both_matrices')">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#059669,#047857);">📑</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">جدول الكميات + الأسعار معاً ▾</div>
+              <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_all_clients')">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#dc2626,#b91c1c);">🤝</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">كشف حسابات جميع العملاء ▾</div>
+              <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_all_fin_txs')">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#2563eb,#1d4ed8);">💵</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">سجل الفواتير والتحصيلات ▾</div>
+              <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+            </div>
+          </button>
+
+          <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_all_pallets_mov')">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);">🪵</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">سجل حركة البالتات مع العملاء ▾</div>
+              <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+            </div>
+          </button>
         ` : ''}
-        <button class="btn btn-outline" onclick="printPalletsInventoryPdf()">🖨️ سجل البالتات بالمخزن PDF</button>
-        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printPalletsInventoryPdf)">🖼️ سجل البالتات صورة واتساب</button>
-        <button class="btn btn-outline" onclick="printSalesReturnsReportPdf()">🖨️ سجل مرتجعات المبيعات PDF</button>
-        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printSalesReturnsReportPdf)">🖼️ مرتجعات المبيعات صورة واتساب</button>
-        <button class="btn btn-outline" onclick="printRawMaterialsReportPdf()">🖨️ جرد مخزن الخامات PDF</button>
-        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printRawMaterialsReportPdf)">🖼️ مخزن الخامات صورة واتساب</button>
-        <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);font-weight:800;" onclick="printLogContainersAndSerialsReportPdf()">🖨️ بيان حاويات وسيريالات الجذوع PDF</button>
-        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printLogContainersAndSerialsReportPdf)">🖼️ إرسال بيان الجذوع صورة واتساب</button>
-        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printLogContainersAndSerialsReportPdf)">📄 إرسال بيان الجذوع PDF واتساب</button>
-        <button class="btn btn-outline" onclick="printScrapReportPdf()">🖨️ جرد مخزن الهالك PDF</button>
-        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printScrapReportPdf)">🖼️ مخزن الهالك صورة واتساب</button>
-        <button class="btn btn-outline" onclick="printSparePartsReportPdf()">🖨️ جرد قطع الغيار PDF</button>
-        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printSparePartsReportPdf)">🖼️ قطع الغيار صورة واتساب</button>
-        <button class="btn btn-outline" onclick="printWarehouseMovementsReportPdf()">🖨️ سجل حركات المخازن PDF</button>
-        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printWarehouseMovementsReportPdf)">🖼️ إرسال حركات المخازن صورة واتساب</button>
-        <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printWarehouseMovementsReportPdf)">📄 إرسال حركات المخازن PDF واتساب</button>
-        <button class="btn btn-outline" onclick="printAllProductionOrdersReportPdf()">🖨️ سجل أوامر التجهيز PDF</button>
-        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printAllProductionOrdersReportPdf)">🖼️ أوامر التجهيز صورة واتساب</button>
-        <button class="btn btn-outline" onclick="printAllApprovalsDispatchReportPdf()">🖨️ سجل أذون الصرف والسيارات PDF</button>
-        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printAllApprovalsDispatchReportPdf)">🖼️ أذون الصرف والسيارات صورة واتساب</button>
-        ${canSeeFinancialPrices() ? `
-          <button class="btn btn-outline" onclick="printAllClientsAccountingReportPdf()">🖨️ كشف حسابات جميع العملاء PDF</button>
-          <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printAllClientsAccountingReportPdf)">🖼️ إرسال حسابات جميع العملاء صورة واتساب</button>
-          <button class="btn" style="background:#16a34a;color:#fff;font-weight:800;" onclick="sendReportViaWhatsApp(printAllClientsAccountingReportPdf)">📄 إرسال حسابات جميع العملاء PDF واتساب</button>
-          <button class="btn btn-outline" onclick="printAllFinancialTransactionsReportPdf()">🖨️ سجل الفواتير والتحصيلات PDF</button>
-          <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printAllFinancialTransactionsReportPdf)">🖼️ الفواتير والتحصيلات صورة واتساب</button>
-          <button class="btn btn-outline" onclick="printAllPalletMovementsReportPdf()">🖨️ سجل حركة البالتات مع العملاء PDF</button>
-          <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printAllPalletMovementsReportPdf)">🖼️ حركة البالتات صورة واتساب</button>
-        ` : ''}
-        <button class="btn btn-outline" onclick="printGeneralInventoryAndAuditReportPdf()">🖨️ تقرير الجرد العام والرقابة PDF</button>
-        <button class="btn" style="background:#0284c7;color:#fff;font-weight:800;" onclick="sendReportViaWhatsAppImage(printGeneralInventoryAndAuditReportPdf)">🖼️ الجرد العام صورة واتساب</button>
+
+        <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_log_containers')">
+          <div class="hub-option-icon" style="background:linear-gradient(135deg,#0284c7,#0369a1);">🚢</div>
+          <div class="hub-option-info">
+            <div class="hub-option-title">بيان حاويات وسيريالات الجذوع ▾</div>
+            <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+          </div>
+        </button>
+
+        <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_wh_movements')">
+          <div class="hub-option-icon" style="background:linear-gradient(135deg,#4f46e5,#4338ca);">📋</div>
+          <div class="hub-option-info">
+            <div class="hub-option-title">سجل حركات المخازن والأذون ▾</div>
+            <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+          </div>
+        </button>
+
+        <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_prod_orders')">
+          <div class="hub-option-icon" style="background:linear-gradient(135deg,#d97706,#b45309);">📦</div>
+          <div class="hub-option-info">
+            <div class="hub-option-title">سجل أوامر التجهيز ▾</div>
+            <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+          </div>
+        </button>
+
+        <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_approvals_car')">
+          <div class="hub-option-icon" style="background:linear-gradient(135deg,#059669,#047857);">🚚</div>
+          <div class="hub-option-info">
+            <div class="hub-option-title">سجل أذون الصرف والسيارات ▾</div>
+            <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+          </div>
+        </button>
+
+        <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_sales_returns')">
+          <div class="hub-option-icon" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);">🔄</div>
+          <div class="hub-option-info">
+            <div class="hub-option-title">سجل مرتجعات المبيعات ▾</div>
+            <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+          </div>
+        </button>
+
+        <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_raw_materials')">
+          <div class="hub-option-icon" style="background:linear-gradient(135deg,#0f766e,#115e59);">🌲</div>
+          <div class="hub-option-info">
+            <div class="hub-option-title">جرد مخزن الخامات ▾</div>
+            <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+          </div>
+        </button>
+
+        <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_scrap')">
+          <div class="hub-option-icon" style="background:linear-gradient(135deg,#64748b,#475569);">♻️</div>
+          <div class="hub-option-info">
+            <div class="hub-option-title">جرد مخزن الهالك ▾</div>
+            <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+          </div>
+        </button>
+
+        <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_spare_parts')">
+          <div class="hub-option-icon" style="background:linear-gradient(135deg,#334155,#1e293b);">⚙️</div>
+          <div class="hub-option-info">
+            <div class="hub-option-title">جرد مخزن قطع الغيار ▾</div>
+            <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+          </div>
+        </button>
+
+        <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_general_audit')">
+          <div class="hub-option-icon" style="background:linear-gradient(135deg,#0f172a,#1e293b);">🛡️</div>
+          <div class="hub-option-info">
+            <div class="hub-option-title">تقرير الجرد العام والرقابة ▾</div>
+            <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+          </div>
+        </button>
       </div>
     </div>
 
@@ -12970,9 +13792,7 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
             </small>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <button class="btn btn-sm btn-accent" onclick="printClientFullStatement('${pt.id}')">🖨️ طباعة كشف حساب وبيان للعميل</button>
-            <button class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(() => printClientFullStatement('${pt.id}'), '${pt.phone || ''}', '${pt.name || ''}')">${getWhatsAppSvgIconHtml(15)}<span>🖼️ إرسال واتساب صورة</span></button>
-            <button class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(() => printClientFullStatement('${pt.id}'), '${pt.phone || ''}', '${pt.name || ''}')">${getWhatsAppSvgIconHtml(16)}<span>📄 إرسال واتساب PDF</span></button>
+            ${renderPrintShareHubButtonHtml(`client_stmt_${pt.id}`, `كشف حساب العميل [${pt.code || 'CL'}] ${pt.name}`, () => printClientFullStatement(pt.id), pt.phone || '', pt.name || '', '📤 طباعة ومشاركة كشف الحساب ▾', 'btn btn-sm btn-accent')}
             <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
           </div>
         </div>
@@ -13013,16 +13833,10 @@ function openClientFullHistoryModal(clientId, activeSection = 'all') {
 
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
           ${canIssueOrders ? `<button class="btn btn-sm btn-primary" onclick="closeModal(); openNewClientOrderPrepModal('${pt.id}');">📋 إنشاء طلبية جديدة لهذا العميل</button>` : ''}
-          ${isFullAdmin(currentUser) ? `
-            <button class="btn btn-sm" style="background:#0f766e;color:#fff;font-weight:800;" onclick="closeModal(); openNewClientOrderPrepModal('${pt.id}', true);">📜 تنفيذ طلبية قديمة لهذا العميل (بعد الرصيد الافتتاحي)</button>
-            <button class="btn btn-sm" style="background:#dc2626;color:#fff;font-weight:800;" onclick="openClientPiecePriceAdjustmentModal('${pt.id}')">💲 تعديل الرصيد الافتتاحي وأسعار القطع والدفعات والحسابات</button>
-          ` : ''}
-          ${canEditFin ? `
-            <button class="btn btn-sm btn-success" onclick="openClientPaymentModal('${pt.id}')">💵 تسجيل تحصيل دفعة مالية / تسوية مديونية</button>
-            <button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="openPalletDepositAccountModal('${pt.id}')">🛡️ تسجيل تحصيل / رد في حساب تأمين البالتات</button>
-            <button class="btn btn-sm" style="background:#d97706;color:#fff;font-weight:800;" onclick="openNewCheckUnderCollectionModal('${pt.id}')">📝 تسجيل شيك تحت التحصيل</button>
-            <button class="btn btn-sm btn-accent" onclick="openClientPalletMovementModal('${pt.id}')">🪵 تسجيل تسليم / استلام بالتات خشبية</button>
-          ` : ''}
+          ${canEditFin ? `<button class="btn btn-sm btn-success" onclick="openClientPaymentModal('${pt.id}')">💵 تسجيل تحصيل دفعة مالية</button>` : ''}
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#0f766e,#115e59);color:#fff;font-weight:900;" onclick="openClientActionsWindowModal('${pt.id}')">
+            ⚡ شباك جميع إجراءات وتعديلات العميل ▾
+          </button>
         </div>
 
         <div style="max-height:58vh;overflow-y:auto;padding-left:4px;">
