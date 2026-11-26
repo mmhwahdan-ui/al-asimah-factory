@@ -1282,85 +1282,166 @@ body.is-printing-mode #print-area {
 }
 
 /* ==========================================================================
-   v88: FLASHING / PULSING DELAYED APPROVALS & SMART WINDOW HUBS
+   v89: CONTROLLABLE / SOFT / STRONG / MUTED DELAYED APPROVAL FLASHING
    ========================================================================== */
-@keyframes urgentApprovalFlash {
+/* 1. Soft / Calm Mode (Default: هادئ وخفيف لراحة العين) */
+@keyframes softApprovalPulse {
   0%, 100% {
-    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.85), 0 0 18px rgba(220, 38, 38, 0.55);
-    transform: scale(1);
-    filter: brightness(1);
+    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.25);
   }
   50% {
-    box-shadow: 0 0 0 10px rgba(220, 38, 38, 0), 0 0 28px rgba(245, 158, 11, 0.9);
-    transform: scale(1.03);
-    filter: brightness(1.18);
+    box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.22);
+  }
+}
+
+@keyframes softNavPulse {
+  0%, 100% {
+    background: rgba(220, 38, 38, 0.14);
+    border-color: rgba(239, 68, 68, 0.45);
+  }
+  50% {
+    background: rgba(245, 158, 11, 0.24);
+    border-color: rgba(251, 191, 36, 0.65);
+  }
+}
+
+@keyframes softRowGlow {
+  0%, 100% {
+    background-color: rgba(220, 38, 38, 0.03);
+  }
+  50% {
+    background-color: rgba(245, 158, 11, 0.08);
+  }
+}
+
+@keyframes softBannerPulse {
+  0%, 100% {
+    border-color: rgba(220, 38, 38, 0.45);
+    box-shadow: 0 2px 10px rgba(220, 38, 38, 0.08);
+    background: linear-gradient(135deg, rgba(220, 38, 38, 0.05), rgba(245, 158, 11, 0.04));
+  }
+  50% {
+    border-color: rgba(245, 158, 11, 0.75);
+    box-shadow: 0 4px 14px rgba(245, 158, 11, 0.16);
+    background: linear-gradient(135deg, rgba(220, 38, 38, 0.09), rgba(245, 158, 11, 0.09));
+  }
+}
+
+/* 2. Strong Mode (قوي عند الرغبة) */
+@keyframes urgentApprovalFlash {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.65), 0 0 12px rgba(220, 38, 38, 0.35);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(220, 38, 38, 0), 0 0 20px rgba(245, 158, 11, 0.65);
+    transform: scale(1.015);
   }
 }
 
 @keyframes urgentNavFlash {
   0%, 100% {
-    background: linear-gradient(135deg, rgba(220, 38, 38, 0.35), rgba(217, 119, 6, 0.25));
+    background: linear-gradient(135deg, rgba(220, 38, 38, 0.25), rgba(217, 119, 6, 0.18));
     border-color: #ef4444;
-    box-shadow: 0 0 12px rgba(239, 68, 68, 0.45);
   }
   50% {
-    background: linear-gradient(135deg, rgba(220, 38, 38, 0.78), rgba(245, 158, 11, 0.65));
+    background: linear-gradient(135deg, rgba(220, 38, 38, 0.55), rgba(245, 158, 11, 0.45));
     border-color: #fde047;
-    box-shadow: 0 0 22px rgba(250, 204, 21, 0.85);
     color: #ffffff !important;
   }
 }
 
 @keyframes urgentRowGlow {
   0%, 100% {
-    background-color: rgba(220, 38, 38, 0.05);
+    background-color: rgba(220, 38, 38, 0.04);
   }
   50% {
-    background-color: rgba(245, 158, 11, 0.19);
+    background-color: rgba(245, 158, 11, 0.14);
   }
 }
 
 @keyframes urgentBannerBlink {
   0%, 100% {
     border-color: #dc2626;
-    box-shadow: 0 4px 18px rgba(220, 38, 38, 0.28);
-    background: linear-gradient(135deg, rgba(220, 38, 38, 0.12), rgba(245, 158, 11, 0.08));
+    box-shadow: 0 3px 12px rgba(220, 38, 38, 0.18);
+    background: linear-gradient(135deg, rgba(220, 38, 38, 0.08), rgba(245, 158, 11, 0.06));
   }
   50% {
     border-color: #f59e0b;
-    box-shadow: 0 6px 26px rgba(245, 158, 11, 0.55);
-    background: linear-gradient(135deg, rgba(220, 38, 38, 0.24), rgba(245, 158, 11, 0.22));
+    box-shadow: 0 5px 18px rgba(245, 158, 11, 0.35);
+    background: linear-gradient(135deg, rgba(220, 38, 38, 0.16), rgba(245, 158, 11, 0.15));
   }
 }
 
+/* Default / Soft Mode Classes */
 .flash-approval-btn {
-  animation: urgentApprovalFlash 1.15s infinite ease-in-out !important;
-  border: 2px solid #fde047 !important;
+  animation: softApprovalPulse 2.8s infinite ease-in-out !important;
+  border: 1.5px solid rgba(253, 224, 71, 0.7) !important;
   font-weight: 900 !important;
 }
 
 .flash-approval-nav {
-  animation: urgentNavFlash 1.2s infinite ease-in-out !important;
-  border: 1.5px solid #ef4444 !important;
-  font-weight: 900 !important;
+  animation: softNavPulse 3s infinite ease-in-out !important;
+  border: 1px solid rgba(239, 68, 68, 0.6) !important;
+  font-weight: 800 !important;
 }
 
 .flash-approval-badge {
-  animation: urgentApprovalFlash 1s infinite ease-in-out !important;
+  animation: softApprovalPulse 2.8s infinite ease-in-out !important;
   background: #dc2626 !important;
   color: #ffffff !important;
-  border: 1.5px solid #fde047 !important;
   font-weight: 900 !important;
 }
 
 .flash-approval-row {
-  animation: urgentRowGlow 1.5s infinite ease-in-out !important;
+  animation: softRowGlow 3.2s infinite ease-in-out !important;
 }
 
 .flash-approval-banner {
-  animation: urgentBannerBlink 1.35s infinite ease-in-out !important;
-  border-width: 2.5px !important;
+  animation: softBannerPulse 3.2s infinite ease-in-out !important;
+  border-width: 1.5px !important;
   border-style: solid !important;
+}
+
+/* Strong Mode Overrides */
+[data-flash-mode="strong"] .flash-approval-btn {
+  animation: urgentApprovalFlash 1.4s infinite ease-in-out !important;
+  border: 2px solid #fde047 !important;
+}
+[data-flash-mode="strong"] .flash-approval-nav {
+  animation: urgentNavFlash 1.5s infinite ease-in-out !important;
+  border: 1.5px solid #ef4444 !important;
+}
+[data-flash-mode="strong"] .flash-approval-badge {
+  animation: urgentApprovalFlash 1.3s infinite ease-in-out !important;
+}
+[data-flash-mode="strong"] .flash-approval-row {
+  animation: urgentRowGlow 1.8s infinite ease-in-out !important;
+}
+[data-flash-mode="strong"] .flash-approval-banner {
+  animation: urgentBannerBlink 1.7s infinite ease-in-out !important;
+  border-width: 2px !important;
+}
+
+/* Static / Off Mode Overrides (ثابت بدون وميض نهائياً) */
+[data-flash-mode="off"] .flash-approval-btn,
+[data-flash-mode="off"] .flash-approval-nav,
+[data-flash-mode="off"] .flash-approval-badge,
+[data-flash-mode="off"] .flash-approval-row,
+[data-flash-mode="off"] .flash-approval-banner {
+  animation: none !important;
+  transform: none !important;
+  filter: none !important;
+}
+[data-flash-mode="off"] .flash-approval-banner {
+  border-color: var(--border-color) !important;
+  box-shadow: var(--shadow-sm) !important;
+  background: var(--bg-card) !important;
+}
+[data-flash-mode="off"] .flash-approval-nav {
+  background: rgba(220, 38, 38, 0.14) !important;
+  border-color: rgba(239, 68, 68, 0.4) !important;
+  box-shadow: none !important;
 }
 
 /* Smart Window Hub Grid & Option Cards */

@@ -3268,10 +3268,41 @@ async function openMobileInstallModal() {
   `;
 }
 
-// Theme Management
+// Theme & Approval Flash Mode Management
+const FLASH_MODE_KEY = 'al_asimah_flash_mode'; // 'soft' (default) | 'strong' | 'off'
+
+function getApprovalFlashMode() {
+  const saved = localStorage.getItem(FLASH_MODE_KEY);
+  if (saved === 'strong' || saved === 'off' || saved === 'soft') return saved;
+  return 'soft';
+}
+
+function setApprovalFlashMode(mode, reopenModalFn = null) {
+  const valid = (mode === 'strong' || mode === 'off') ? mode : 'soft';
+  localStorage.setItem(FLASH_MODE_KEY, valid);
+  document.documentElement.setAttribute('data-flash-mode', valid);
+  render();
+  if (typeof reopenModalFn === 'function') {
+    reopenModalFn();
+  }
+}
+
+function cycleApprovalFlashMode(reopenModalFn = null) {
+  const cur = getApprovalFlashMode();
+  const next = cur === 'soft' ? 'off' : cur === 'off' ? 'strong' : 'soft';
+  setApprovalFlashMode(next, reopenModalFn);
+}
+
+function getApprovalFlashModeLabel(mode = getApprovalFlashMode()) {
+  if (mode === 'off') return '🔕 ثابت (بدون وميض)';
+  if (mode === 'strong') return '🚨 وميض قوي';
+  return '✨ وميض هادئ وخفيف';
+}
+
 function initTheme() {
   const savedTheme = localStorage.getItem(THEME_KEY) || 'light';
   document.documentElement.setAttribute('data-theme', savedTheme);
+  document.documentElement.setAttribute('data-flash-mode', getApprovalFlashMode());
 }
 
 function toggleTheme() {
@@ -4417,6 +4448,7 @@ function renderFlashingDelayedApprovalsBannerHtml(delayedList) {
   const list = Array.isArray(delayedList) ? delayedList : getMyDelayedApprovalsList();
   if (list.length === 0) return '';
   const first = list[0];
+  const flashMode = getApprovalFlashMode();
   return `
     <div class="card flash-approval-banner" style="padding:12px 16px;margin-bottom:14px;border-radius:14px;">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
@@ -4439,7 +4471,10 @@ function renderFlashingDelayedApprovalsBannerHtml(delayedList) {
             ${first.actionLabel}
           </button>
           <button type="button" class="btn btn-sm btn-primary" style="background:#dc2626;border-color:#dc2626;font-weight:900;" onclick="openDelayedApprovalsWindowModal()">
-            🪟 فتح شباك كل الموافقات المتأخرة (${list.length})
+            🪟 شباك الموافقات (${list.length})
+          </button>
+          <button type="button" class="btn btn-sm btn-outline" style="font-weight:800;font-size:0.76rem;padding:5px 10px;" onclick="cycleApprovalFlashMode()" title="التحكم في قوة وميض الموافقات المتأخرة (هادئ / ثابت بدون وميض / قوي)">
+            💡 الإضاءة: ${flashMode === 'off' ? 'ثابت 🔕' : flashMode === 'strong' ? 'قوي 🚨' : 'هادئ ✨'}
           </button>
         </div>
       </div>
@@ -4449,6 +4484,7 @@ function renderFlashingDelayedApprovalsBannerHtml(delayedList) {
 
 function openDelayedApprovalsWindowModal() {
   const list = getMyDelayedApprovalsList();
+  const flashMode = getApprovalFlashMode();
   const modalRoot = document.getElementById('modal-root');
   if (!modalRoot) return;
   modalRoot.innerHTML = `
@@ -4466,12 +4502,27 @@ function openDelayedApprovalsWindowModal() {
           <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
         </div>
 
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;background:var(--bg-elevated);padding:10px 14px;border-radius:10px;margin-top:10px;">
+          <span style="font-weight:800;font-size:0.84rem;">💡 التحكم في إضاءة ووميض الموافقات المتأخرة:</span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm ${flashMode === 'soft' ? 'btn-primary' : 'btn-outline'}" style="font-weight:800;" onclick="setApprovalFlashMode('soft', openDelayedApprovalsWindowModal)">
+              ✨ وميض هادئ وخفيف (موصى به)
+            </button>
+            <button type="button" class="btn btn-sm ${flashMode === 'off' ? 'btn-primary' : 'btn-outline'}" style="font-weight:800;" onclick="setApprovalFlashMode('off', openDelayedApprovalsWindowModal)">
+              🔕 ثابت (إيقاف الوميض)
+            </button>
+            <button type="button" class="btn btn-sm ${flashMode === 'strong' ? 'btn-primary' : 'btn-outline'}" style="font-weight:800;" onclick="setApprovalFlashMode('strong', openDelayedApprovalsWindowModal)">
+              🚨 وميض قوي
+            </button>
+          </div>
+        </div>
+
         ${list.length === 0 ? `
           <div style="text-align:center;padding:30px;color:var(--success);font-weight:800;">
             ✅ ممتاز! لا توجد أي موافقات متأخرة أو معلقة على حسابك حالياً.
           </div>
         ` : `
-          <div style="display:flex;flex-direction:column;gap:10px;max-height:62vh;overflow-y:auto;margin-top:12px;">
+          <div style="display:flex;flex-direction:column;gap:10px;max-height:58vh;overflow-y:auto;margin-top:12px;">
             ${list.map((item, idx) => `
               <div class="flash-approval-row" style="border:2px solid ${item.badgeColor || '#dc2626'};border-radius:12px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
                 <div style="flex:1;min-width:240px;">
@@ -4655,6 +4706,7 @@ function openSystemSettingsWindowModal() {
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
   const isStandalone = isRunningStandaloneApp();
   const canDownloadExcel = Boolean(currentUser && !['admin_manager', 'warehouse_keeper', 'operations_manager'].includes(currentUser.roleKey));
+  const flashMode = getApprovalFlashMode();
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
@@ -4672,6 +4724,14 @@ function openSystemSettingsWindowModal() {
         </div>
 
         <div class="hub-window-grid">
+          <button type="button" class="hub-option-card" onclick="cycleApprovalFlashMode(openSystemSettingsWindowModal);">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#f59e0b,#d97706);">💡</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">إضاءة الموافقات المتأخرة: ${getApprovalFlashModeLabel(flashMode)}</div>
+              <div class="hub-option-sub">اضغط للتبديل بين (✨ وميض هادئ وخفيف / 🔕 ثابت بدون وميض / 🚨 وميض قوي)</div>
+            </div>
+          </button>
+
           <button type="button" class="hub-option-card" onclick="closeModal(); triggerOneClickInstall();">
             <div class="hub-option-icon" style="background:linear-gradient(135deg,#059669,#047857);">💻</div>
             <div class="hub-option-info">
