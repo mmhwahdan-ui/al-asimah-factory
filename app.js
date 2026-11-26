@@ -39,6 +39,14 @@ function getMonotonicIso(prevIso = '') {
       const t = new Date(o?.updatedAt || 0).getTime() || 0;
       if (t >= maxMs) maxMs = t + 1000;
     }
+    for (const tx of (state.financialTransactions || [])) {
+      const t = new Date(tx?.updatedAt || 0).getTime() || 0;
+      if (t >= maxMs) maxMs = t + 1000;
+    }
+    for (const pt of (state.partners || [])) {
+      const t = new Date(pt?.updatedAt || 0).getTime() || 0;
+      if (t >= maxMs) maxMs = t + 1000;
+    }
     for (const l of (state.logItems || [])) {
       const t = new Date(l?.updatedAt || 0).getTime() || 0;
       if (t >= maxMs) maxMs = t + 1000;
@@ -1701,11 +1709,22 @@ function normalizeState(s) {
     if (ord.id === 'ord-mwnd26kc-s2ki' && ord.orderNumber === 'ORD-2026-108') {
       ord.orderNumber = 'ORD-2026-109';
     }
+    // Fix مصنع الفنيه (CL-101) piece price 124 -> 121 on ORD-2026-105 (1000 pcs) and ORD-2026-111 (500 pcs)
+    if ((ord.id === 'ord-mwl3t92n-h13u' || ord.id === 'ord-mwrn2o42-m73q') && Array.isArray(ord.items)) {
+      for (const it of ord.items) {
+        if (it && Number(it.thicknessMm) === 1.5 && Number(it.unitPrice) === 124) {
+          it.unitPrice = 121;
+          it.totalItemAmount = +(Number(it.sheetsCount || 0) * 121).toFixed(2);
+        }
+      }
+    }
     activeOrdersById.set(ord.id, ord);
   }
 
   if (Array.isArray(s.financialTransactions)) {
     const delTxSet = new Set(Array.isArray(s.deletedIds) ? s.deletedIds : []);
+    // Purge the 3 duplicate standalone ADJ-* vouchers that were created while ORD-2026-105 & ORD-2026-111 are now directly adjusted to 121 EGP
+    ['fin-mwx7e6gp-p8gr', 'fin-mwx7c4l8-jm67', 'fin-mwx79ckx-r8jv'].forEach(adjId => delTxSet.add(adjId));
     const seenInvoiceOrderIds = new Set();
     const cleanedTxs = [];
     for (const tx of s.financialTransactions) {
@@ -1784,6 +1803,37 @@ function normalizeState(s) {
   for (const ord of (s.productionOrders || [])) {
     if (!ord) continue;
     ord.bankAccountsText = sanitizeBankAccountsText(ord.bankAccountsText);
+    // Keep item totals, order netTotalAmount, and linked sales_invoice transaction 100% synchronized with item unitPrices
+    if (Array.isArray(ord.items) && ord.items.length > 0) {
+      let calcSub = 0;
+      let calcSh = 0;
+      for (const it of ord.items) {
+        if (!it) continue;
+        const sh = Number(it.sheetsCount || 0);
+        const pr = Number(it.unitPrice || 0);
+        it.totalItemAmount = +(sh * pr).toFixed(2);
+        calcSub += it.totalItemAmount;
+        calcSh += sh;
+      }
+      ord.totalSheetsCount = calcSh;
+      ord.subtotalAmount = +calcSub.toFixed(2);
+      const discAmt = Number(ord.discountAmount || 0);
+      const delivCost = ord.deliveryMode === 'paid_delivery' ? Math.max(0, Number(ord.deliveryCost || 0)) : 0;
+      ord.netTotalAmount = Math.max(0, +(calcSub - discAmt + delivCost).toFixed(2));
+      if (ord.financialSettlement) {
+        ord.financialSettlement.netTotal = ord.netTotalAmount;
+        ord.financialSettlement.remainingDebt = Math.max(0, +(ord.netTotalAmount - Number(ord.financialSettlement.paidAmount || 0)).toFixed(2));
+      }
+      const linkedInv = (s.financialTransactions || []).find(tx =>
+        tx && tx.type === 'sales_invoice' && (tx.orderId === ord.id || (!tx.orderId && tx.voucherNo === `INV-${ord.orderNumber}`))
+      );
+      if (linkedInv) {
+        linkedInv.totalAmount = ord.netTotalAmount;
+        linkedInv.remainingAmount = Math.max(0, +(ord.netTotalAmount - Number(linkedInv.paidAmount || 0)).toFixed(2));
+        const itemsSummary = ord.items.map(i => `${i.sheetsCount} قطعة (${i.thicknessMm}مم ${i.direction === 'sada' ? 'سدا' : 'قص'} - ${i.gradeName} [${formatVeneerDimensions(i.lengthCm, i.widthCm, false)}] × ${fmtNum(i.unitPrice || 0, 2)} ج)`).join(' + ');
+        linkedInv.description = `فاتورة الطلبية (${ord.orderNumber}): ${itemsSummary}${discAmt > 0 ? ' (شامل خصم ' + fmtMoney(discAmt) + ')' : ''}`;
+      }
+    }
     // Completely separate pallets from veneer order statements
     ord.oldPalletsCount = 0;
     ord.oldPalletsDepositAmount = 0;
@@ -1800,6 +1850,9 @@ function normalizeState(s) {
       ord.paidTowardOrderAmount = paidTowardOrd;
       ord.totalRequiredAmount = +(Number(ord.netTotalAmount ?? ord.subtotalAmount ?? 0) + ord.previousDebtAmount - paidTowardOrd).toFixed(2);
       ord.totalRequiredInWords = numberToArabicTafqeet(Math.max(0, ord.totalRequiredAmount));
+      if (ord.financialSettlement) {
+        ord.financialSettlement.cumulativeClientDebt = ord.totalRequiredAmount;
+      }
     }
   }
 
@@ -20913,7 +20966,7 @@ function openClientPiecePriceAdjustmentModal(preselectedClientId = '', focusOrde
     r.clientName && selectedClient.name && r.clientName.trim() === selectedClient.name.trim()
   );
   const clientPayments = (m.txs || []).filter(tx =>
-    tx.type === 'client_payment' || tx.type === 'receipt' || isPalletDepositTransaction(tx)
+    tx.type === 'client_payment' || tx.type === 'receipt' || tx.type === 'client_credit' || isPalletDepositTransaction(tx)
   );
   const openDebitVal = Number(selectedClient.openingDebit ?? (Number(selectedClient.balance || 0) > 0 ? Number(selectedClient.balance) : 0));
   const openCreditVal = Number(selectedClient.openingCredit ?? (Number(selectedClient.balance || 0) < 0 ? Math.abs(Number(selectedClient.balance)) : 0));
@@ -21273,7 +21326,7 @@ function recalcClientPiecePriceModalLive(clientId) {
     r.clientName && pt.name && r.clientName.trim() === pt.name.trim()
   );
   const clientPayments = (m.txs || []).filter(tx =>
-    tx.type === 'client_payment' || tx.type === 'receipt' || isPalletDepositTransaction(tx)
+    tx.type === 'client_payment' || tx.type === 'receipt' || tx.type === 'client_credit' || isPalletDepositTransaction(tx)
   );
 
   let totalNetDebtDelta = 0;
@@ -21420,7 +21473,7 @@ function submitClientOrderPiecePricesBatch(e, clientId) {
     r.clientName && pt.name && r.clientName.trim() === pt.name.trim()
   );
   const clientPayments = (m.txs || []).filter(tx =>
-    tx.type === 'client_payment' || tx.type === 'receipt' || isPalletDepositTransaction(tx)
+    tx.type === 'client_payment' || tx.type === 'receipt' || tx.type === 'client_credit' || isPalletDepositTransaction(tx)
   );
 
   const now = getMonotonicIso();
@@ -21666,7 +21719,7 @@ function submitClientOrderPiecePricesBatch(e, clientId) {
       tx.description = newDesc;
       tx.updatedAt = now;
 
-      if (diffAmt !== 0 && state.treasuryBalances) {
+      if (diffAmt !== 0 && state.treasuryBalances && tx.type !== 'client_credit') {
         const signedDiff = tx.type === 'pallet_deposit_refund' ? -diffAmt : diffAmt;
         if ((newMethod || '').includes('بنك')) {
           state.treasuryBalances.bankAccount = Math.max(0, Number(state.treasuryBalances.bankAccount || 0) + signedDiff);
