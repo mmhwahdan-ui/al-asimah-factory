@@ -5015,6 +5015,13 @@ function openAccountingToolsWindowModal() {
               </div>
             </button>
           ` : ''}
+          <button type="button" class="hub-option-card" onclick="closeModal(); openDebtAgingAndCollectionWindowModal();">
+            <div class="hub-option-icon" style="background:linear-gradient(135deg,#dc2626,#b91c1c);">⏳</div>
+            <div class="hub-option-info">
+              <div class="hub-option-title">شباك أعمار الديون وجدول التحصيل والسقف الائتماني</div>
+              <div class="hub-option-sub">تصنيف المديونيات (حديثة / متوسطة / متأخرة +30 يوم) وإرسال تذكير واتساب</div>
+            </div>
+          </button>
         </div>
       </div>
     </div>
@@ -5927,6 +5934,7 @@ function renderDashboard() {
     </div>
 
     ${renderSmartFinancialAndPalletAlertsBannerHtml()}
+    ${renderActiveShipmentBatchBannerHtml()}
 
     <!-- Interactive Wood Veneer Calculator -->
     <div class="card">
@@ -6473,7 +6481,9 @@ function renderFinishedVeneerWarehouse() {
       </div>
     ` : ''}
 
-    <!-- Quick Warehouse Operations Bar (إضافة كميات إنتاج | إضافة مرتجع مبيعات | خروج حسب المبيعات | خروج لإعادة التشغيل) -->
+        <!-- Quick Warehouse Operations Bar (إضافة كميات إنتاج | إضافة مرتجع مبيعات | خروج حسب المبيعات | خروج لإعادة التشغيل) -->
+    ${renderActiveShipmentBatchBannerHtml()}
+
     <div class="card" style="background:linear-gradient(135deg, rgba(15,118,110,0.08), rgba(124,58,237,0.08));border:2px solid var(--primary);padding:12px 16px;margin-bottom:14px;">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
         <div>
@@ -6546,6 +6556,7 @@ function renderFinishedVeneerWarehouse() {
       </div>
 
       ${veneerViewMode === 'matrix' ? `
+        ${renderFastAndSlowMovingVeneerCardHtml()}
         <!-- TABLE 1: 2D WAREHOUSE STOCK MATRIX (THICKNESS [QAS/SADA] x GRADE) -->
         <div style="margin-bottom:8px;font-weight:800;font-size:0.9rem;color:var(--primary);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
           <span>1️⃣ جدول أرصدة كميات القشرة بالقطعة (الفرخ) — يدعم المقاس المعتمد (125×250 سم) والمقاسات الخاصة</span>
@@ -8967,10 +8978,17 @@ function renderAccounting() {
           ${canCodeClient ? `<button class="btn btn-primary" onclick="openNewPartnerModal()">➕ إضافة عميل جديد بالكود</button>` : ''}
           ${canIssueOrders ? `<button class="btn btn-accent" onclick="openNewClientOrderPrepModal()">📋 إنشاء أمر تجهيز طلبية لعميل</button>` : ''}
           ${(canEditFin || isFullAdmin(currentUser)) ? `
+            <button class="btn" style="background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;font-weight:900;" onclick="openDebtAgingAndCollectionWindowModal()">
+              ⏳ أعمار الديون وجدول التحصيل الذكي ▾
+            </button>
             <button class="btn" style="background:linear-gradient(135deg,#0f766e,#115e59);color:#fff;font-weight:900;" onclick="openAccountingToolsWindowModal()">
               💼 شباك العمليات المالية وتعديل الأسعار والبالتات ▾
             </button>
-          ` : ''}
+          ` : `
+            <button class="btn btn-outline" style="font-weight:800;" onclick="openDebtAgingAndCollectionWindowModal()">
+              ⏳ أعمار الديون وجدول التحصيل ▾
+            </button>
+          `}
           ${renderPrintShareHubButtonHtml('acc_all_clients', 'كشف حسابات جميع العملاء وأرصدة البالتات', printAllClientsAccountingReportPdf, '', '', '📤 طباعة ومشاركة كشف العملاء ▾', 'btn btn-outline')}
         </div>
       </div>
@@ -10385,6 +10403,8 @@ function submitAddPallet(e) {
     unitPricePerM3: metrics.totalVolumeM3 > 0 ? +((sheets * piecePrice) / metrics.totalVolumeM3).toFixed(2) : 0,
     totalValue: +(sheets * piecePrice).toFixed(2),
     batchNumber: batch,
+    shipmentBatchKey: getActiveShipmentBatchTag().shipmentBatchKey,
+    shipmentBatchLabel: getActiveShipmentBatchTag().shipmentBatchLabel,
     status: 'in_stock',
     location: loc,
     entryDate: opDate,
@@ -10408,6 +10428,9 @@ function submitAddPallet(e) {
     sheetsCount: sheets,
     unitSheetPrice: piecePrice,
     totalSaleAmount: +(sheets * piecePrice).toFixed(2),
+    shipmentBatchKey: getActiveShipmentBatchTag().shipmentBatchKey,
+    shipmentBatchLabel: getActiveShipmentBatchTag().shipmentBatchLabel,
+    sourceContainerIds: getActiveShipmentBatchTag().containerIds,
     itemSummary: `بالتة ${newPallet.woodTypeName} مقاس (${formatVeneerDimensions(len, wid, true)}) - تخانة ${thkMm} مم (${dirLabel}) - ${newPallet.gradeName}`,
     referenceCode: code,
     quantitySummary: `1 بالتة | ${sheets} قطعة (${formatVeneerDimensions(len, wid, false)}) | ${metrics.totalVolumeM3} م³`,
@@ -11422,6 +11445,19 @@ function recalcDraftOrderTotals(triggerSource = '') {
         <strong style="color:${finalBalanceAfterPaid > 0 ? 'var(--danger)' : 'var(--success)'};font-size:1.12rem;">${finalBalanceAfterPaid >= 0 ? 'عليه: ' + fmtMoney(finalBalanceAfterPaid) : 'له: ' + fmtMoney(Math.abs(finalBalanceAfterPaid))}</strong>
       </div>
       ` : ''}
+      ${(() => {
+        if (!selectedClientObj) return '';
+        const credLim = Number(selectedClientObj.creditLimit || 0);
+        if (credLim > 0 && finalBalanceAfterPaid > credLim) {
+          return `
+            <div class="calc-preview-item" style="grid-column: 1 / -1;background:rgba(220,38,38,0.12);border:2px solid var(--danger);border-radius:8px;padding:8px 12px;">
+              <span style="font-weight:900;color:var(--danger);">⚠️ تنبيه سقف ائتماني للعميل (${selectedClientObj.name}):</span>
+              <strong style="color:var(--danger);font-size:0.88rem;">إجمالي مديونية العميل بعد هذه الطلبية (${fmtMoney(finalBalanceAfterPaid)}) يتخطى السقف الائتماني المحدد له (${fmtMoney(credLim)}) بمقدار (${fmtMoney(finalBalanceAfterPaid - credLim)})!</strong>
+            </div>
+          `;
+        }
+        return '';
+      })()}
     `;
   }
 }
@@ -16733,6 +16769,9 @@ function submitMatrixCellOperation(e) {
       volumeM3: m.totalVolumeM3,
       unitSheetPrice: unitPrice,
       totalSaleAmount: totalAmount,
+      shipmentBatchKey: getActiveShipmentBatchTag().shipmentBatchKey,
+      shipmentBatchLabel: getActiveShipmentBatchTag().shipmentBatchLabel,
+      sourceContainerIds: getActiveShipmentBatchTag().containerIds,
       itemSummary: `إضافة كميات إنتاج قشرة ${woodObj.name} — مقاس (${dimLabel}) — تخانة ${ctx.thkMm} مم (${ctx.directionLabel}) × ${ctx.gradeName} (${notes || 'إنتاج جديد'})`,
       referenceCode: `${ctx.thkMm}mm-${ctx.direction}-${ctx.gradeCode}`,
       quantitySummary: `${sheets} قطعة (${formatVeneerDimensions(len, wid, false)}) | ${m.totalVolumeM3} م³`,
@@ -24329,8 +24368,11 @@ function renderLogContainersAndSerialsSection() {
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;font-weight:900;border:2px solid #c4b5fd;" onclick="openActiveShipmentBatchSelectorModal()">
+            📌 ${state.factoryInfo?.activeShipmentBatch?.active && state.factoryInfo?.activeShipmentBatch?.containerIds?.length ? 'الرسالة قيد التشغيل: ' + (state.factoryInfo.activeShipmentBatch.label || '').slice(0, 26) : 'تحديد الرسالة قيد التشغيل حالياً'}
+          </button>
           <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#0f766e,#0d9488);color:#fff;font-weight:900;border:2px solid #5eead4;" onclick="openContainerShipmentYieldWindowModal()">
-            🚢📊 شباك حساب تصافي وهالك رسالة الحاويات المجمعة (عدة أيام)
+            🚢📊 شباك حساب تصافي وهالك وفرز الرسالة المجمعة
           </button>
           <button type="button" class="btn btn-sm btn-outline" onclick="printLogContainersAndSerialsReportPdf()">
             🖨️ طباعة بيان الحاويات والجذوع PDF
@@ -24379,6 +24421,8 @@ function renderLogContainersAndSerialsSection() {
           </div>
         </div>
       </div>
+
+      ${renderActiveShipmentBatchBannerHtml()}
 
       ${canOperateLogs ? `
         <!-- Instant Serial Bar for CEO, Projects Manager, Admin Manager -->
@@ -27022,7 +27066,7 @@ function recalcShipmentYieldAnalyzerLive() {
     </div>
 
     <!-- Visual Percentage Bar -->
-    <div style="background:var(--bg-card);padding:10px 14px;border-radius:10px;border:1px solid var(--border-color);">
+    <div style="background:var(--bg-card);padding:10px 14px;border-radius:10px;border:1px solid var(--border-color);margin-bottom:12px;">
       <div style="display:flex;justify-content:space-between;font-size:0.78rem;font-weight:900;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
         <span style="color:#16a34a;">🟢 إنتاج قشرة تامة: ${fmtNum(m.netYieldPct, 1)}% (${fmtNum(m.netVeneerM3, 3)} م³)</span>
         <span style="color:#dc2626;">🔴 هالك فعلي (نصف الفرق): ${fmtNum(m.actualScrapPct, 1)}% (${fmtNum(m.actualScrapM3, 3)} م³ = ${fmtNum(m.actualScrapTon, 3)} طن)</span>
@@ -27034,6 +27078,8 @@ function recalcShipmentYieldAnalyzerLive() {
         <div style="width:${m.vanishedLossPct}%;background:linear-gradient(90deg,#475569,#64748b);height:100%;" title="الفاقد المنعدم (انكماش + حرق الكلف) ${m.vanishedLossPct}%"></div>
       </div>
     </div>
+
+    ${renderShipmentGradeBreakdownInsideYieldModalHtml(m)}
   `;
 }
 
@@ -27574,6 +27620,9 @@ function executeLogAndMultiPalletProductionBatch({ logIds = [], palletRows = [],
       totalSaleAmount: totalAmount,
       sourceLogSerials: processedSerials,
       sourceContainerNumber: containerNums.join(', '),
+      shipmentBatchKey: getActiveShipmentBatchTag().shipmentBatchKey,
+      shipmentBatchLabel: getActiveShipmentBatchTag().shipmentBatchLabel,
+      sourceContainerIds: matchedLogs.length > 0 ? Array.from(new Set(matchedLogs.map(l => l.containerId).filter(Boolean))) : getActiveShipmentBatchTag().containerIds,
       itemSummary: `إضافة كميات إنتاج قشرة ${woodObj.name} — مقاس (${dimLabel}) — تخانة ${thkMm} مم (${dirLabel}) × ${gradeObj.name} (${palletsCnt} بالتة — ${rowNote})`,
       referenceCode: `${thkMm}mm-${dir}-${gradeObj.code}`,
       quantitySummary: `${palletsCnt} بالتة | ${sheets} قطعة (${formatVeneerDimensions(len, wid, false)}) | ${m.totalVolumeM3} م³`,
@@ -28723,6 +28772,827 @@ function renderGlobalQuickSearchResults() {
                 <button type="button" class="btn btn-sm btn-outline" onclick="closeModal(); setTab('accounting');">💰 عرض بالحسابات</button>
               </div>
             `).join('')}
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+// ============================================================================
+// v92: ITEMS 1, 2, 3 & 4
+// 1) ACTIVE SHIPMENT BATCH LINK TO DAILY PRODUCTION (ربط الرسالة قيد التشغيل بالإنتاج اليومي تلقائياً)
+// 2) SHIPMENT GRADE BREAKDOWN ANALYZER (تحليل فرز وجودة الرسالة: كام % درجة أولى ABC+ وكام % C و R)
+// 3) DEBT AGING & SMART COLLECTION SCHEDULE + CREDIT LIMIT (أعمار الديون وجدول التحصيل الذكي والسقف الائتماني)
+// 4) FAST VS SLOW MOVING VENEER INSIGHTS (الأصناف الأكثر طلباً مقابل الراكد بالمخزن)
+// ============================================================================
+
+function getActiveShipmentBatchTag() {
+  const b = state?.factoryInfo?.activeShipmentBatch;
+  if (!b || !b.active || !Array.isArray(b.containerIds) || b.containerIds.length === 0) {
+    return { shipmentBatchKey: '', shipmentBatchLabel: '', containerIds: [] };
+  }
+  return {
+    shipmentBatchKey: b.key || 'active_batch',
+    shipmentBatchLabel: b.label || 'الرسالة النشطة قيد التشغيل',
+    containerIds: b.containerIds
+  };
+}
+
+function computeProductionAndGradesForShipment(containerIds = [], fromDate = '', toDate = '', batchKey = '') {
+  const targetContSet = new Set(Array.isArray(containerIds) ? containerIds : []);
+  const containers = (state?.logContainers || []).filter(c => targetContSet.has(c.id));
+  const contNumSet = new Set(containers.map(c => String(c.containerNumber || '').trim()).filter(Boolean));
+  const logSerialSet = new Set(
+    (state?.logItems || [])
+      .filter(l => l && targetContSet.has(l.containerId))
+      .map(l => String(l.serialNumber || '').trim())
+      .filter(Boolean)
+  );
+
+  const movs = (state?.warehouseMovements || []).filter(m => {
+    if (!m || m.warehouseType !== 'finished_veneers' || m.direction !== 'in') return false;
+    if (m.movementCategory === 'sales_return_in') return false;
+    const dStr = String(m.operationDate || m.date || m.updatedAt || '').slice(0, 10);
+
+    // 1. Direct tag match by shipmentBatchKey
+    if (batchKey && m.shipmentBatchKey && m.shipmentBatchKey === batchKey) return true;
+    // 2. Direct containerId match
+    if (Array.isArray(m.sourceContainerIds) && m.sourceContainerIds.some(cid => targetContSet.has(cid))) return true;
+    // 3. Direct containerNumber match
+    if (m.sourceContainerNumber) {
+      const parts = String(m.sourceContainerNumber).split(',').map(s => s.trim());
+      if (parts.some(p => contNumSet.has(p))) return true;
+    }
+    // 4. Direct log serial match
+    if (Array.isArray(m.sourceLogSerials) && m.sourceLogSerials.some(ser => logSerialSet.has(String(ser).trim()))) return true;
+    // 5. Fallback to date range if specified
+    if (fromDate || toDate) {
+      if (fromDate && dStr < fromDate) return false;
+      if (toDate && dStr > toDate) return false;
+      return true;
+    }
+    return false;
+  });
+
+  const gradesMap = new Map();
+  let totalSheets = 0;
+  let totalVolumeM3 = 0;
+  let totalValue = 0;
+
+  for (const m of movs) {
+    const det = extractProductionEntryDetails(m);
+    if (!det) continue;
+    const sh = Number(det.sheetsCount || 0);
+    const vol = Number(det.volumeM3 || 0);
+    const val = Number(det.totalAmount || 0);
+    totalSheets += sh;
+    totalVolumeM3 += vol;
+    totalValue += val;
+
+    const gCode = det.gradeCode || 'عام';
+    if (!gradesMap.has(gCode)) {
+      gradesMap.set(gCode, {
+        gradeCode: gCode,
+        gradeName: det.gradeName || gCode,
+        sheets: 0,
+        volumeM3: 0,
+        totalValue: 0,
+        byThicknessMap: new Map()
+      });
+    }
+    const gEntry = gradesMap.get(gCode);
+    gEntry.sheets += sh;
+    gEntry.volumeM3 = +(gEntry.volumeM3 + vol).toFixed(4);
+    gEntry.totalValue = +(gEntry.totalValue + val).toFixed(2);
+
+    const thkLbl = `${det.thkMm ?? det.thicknessMm ?? 1.5} مم ${det.direction === 'sada' ? 'سدا' : 'قص'}`;
+    gEntry.byThicknessMap.set(thkLbl, (gEntry.byThicknessMap.get(thkLbl) || 0) + sh);
+  }
+
+  totalVolumeM3 = +totalVolumeM3.toFixed(4);
+  totalValue = +totalValue.toFixed(2);
+
+  const gradeBreakdown = Array.from(gradesMap.values())
+    .map(g => ({
+      ...g,
+      pctOfSheets: totalSheets > 0 ? +((g.sheets / totalSheets) * 100).toFixed(1) : 0,
+      pctOfVolume: totalVolumeM3 > 0 ? +((g.volumeM3 / totalVolumeM3) * 100).toFixed(1) : 0,
+      thicknessSummary: Array.from(g.byThicknessMap.entries()).map(([k, v]) => `${k}: ${fmtNum(v, 0)} ق`).join(' | ')
+    }))
+    .sort((a, b) => b.volumeM3 - a.volumeM3);
+
+  return {
+    movementsCount: movs.length,
+    totalSheets: Math.round(totalSheets),
+    totalVolumeM3,
+    totalValue,
+    gradeBreakdown
+  };
+}
+
+function renderActiveShipmentBatchBannerHtml() {
+  const b = state?.factoryInfo?.activeShipmentBatch;
+  const canManage = canManageLogSerialsAndProduction(currentUser) || canEditWarehouseAndCatalog(currentUser);
+  if (!b || !b.active || !Array.isArray(b.containerIds) || b.containerIds.length === 0) {
+    if (!canManage) return '';
+    return `
+      <div class="card" style="padding:10px 14px;margin-bottom:14px;border:1.5px dashed #7c3aed;background:rgba(124,58,237,0.05);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:1.2rem;">📌</span>
+          <div>
+            <strong style="color:#5b21b6;font-size:0.88rem;">ربط الإنتاج اليومي بالرسالة قيد التشغيل (على عدة أيام):</strong>
+            <small style="color:var(--text-muted);display:block;">لم يتم تحديد رسالة حاويات نشطة حالياً. حدد الرسالة قيد التشغيل ليتم ربط كل إنتاج القشرة الجديد بها وحساب تصافيها وفرز جوداتها تلقائياً.</small>
+          </div>
+        </div>
+        <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;font-weight:900;" onclick="openActiveShipmentBatchSelectorModal()">
+          📌 تحديد الرسالة قيد التشغيل الآن
+        </button>
+      </div>
+    `;
+  }
+
+  const containers = (state?.logContainers || []).filter(c => b.containerIds.includes(c.id));
+  let totalRawM3 = 0;
+  let processedRawM3 = 0;
+  let totalLogs = 0;
+  let processedLogs = 0;
+  for (const c of containers) {
+    const cm = getContainerMetrics(c);
+    totalRawM3 += cm.totalVolumeM3;
+    processedRawM3 += cm.processedVolumeM3;
+    totalLogs += cm.totalLogsCount;
+    processedLogs += cm.processedLogsCount;
+  }
+  totalRawM3 = +totalRawM3.toFixed(4);
+  processedRawM3 = +processedRawM3.toFixed(4);
+
+  const prodStats = computeProductionAndGradesForShipment(b.containerIds, b.startedDate || '', '', b.key || '');
+  const baseRaw = processedRawM3 > 0 ? processedRawM3 : totalRawM3;
+  const liveYieldPct = baseRaw > 0 && prodStats.totalVolumeM3 > 0 ? +Math.min(100, (prodStats.totalVolumeM3 / baseRaw) * 100).toFixed(1) : 0;
+  const liveLossPct = liveYieldPct > 0 ? +(100 - liveYieldPct).toFixed(1) : 0;
+  const liveActualScrapPct = +(liveLossPct * 0.5).toFixed(1);
+  const liveVanishedPct = +(liveLossPct * 0.5).toFixed(1);
+
+  return `
+    <div class="card" style="padding:12px 16px;margin-bottom:14px;border:2px solid #7c3aed;background:linear-gradient(135deg,rgba(124,58,237,0.08),rgba(15,118,110,0.06));">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div style="flex:1;min-width:260px;">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+            <span class="badge" style="background:#7c3aed;color:#fff;font-weight:900;padding:4px 10px;">📌 الرسالة النشطة قيد التشغيل حالياً</span>
+            <strong style="font-size:0.95rem;color:var(--primary);">${b.label}</strong>
+            <small style="color:var(--text-muted);font-weight:700;">(منذ: ${b.startedDate || todayStr()} | ${containers.length} حاوية = ${totalLogs} جذع [${fmtNum(totalRawM3, 3)} م³ خام])</small>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;font-size:0.8rem;font-weight:800;margin-top:4px;">
+            <span style="color:#0284c7;">⚙️ المشغل: ${processedLogs} جذع (${fmtNum(processedRawM3, 3)} م³)</span>
+            <span style="color:#16a34a;">🪵 الإنتاج المربوط بالرسالة: ${fmtNum(prodStats.totalSheets, 0)} قطعة (${fmtNum(prodStats.totalVolumeM3, 3)} م³)</span>
+            ${liveYieldPct > 0 ? `
+              <span style="color:#0f766e;">📊 التصافي اللحظي: ${liveYieldPct}%</span>
+              <span style="color:#dc2626;">♻️ هالك فعلي (50%): ${liveActualScrapPct}%</span>
+              <span style="color:#475569;">🔥 منعدم انكماش+كَلَف (50%): ${liveVanishedPct}%</span>
+            ` : ''}
+          </div>
+          ${prodStats.gradeBreakdown.length > 0 ? `
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">
+              <small style="font-weight:900;color:#5b21b6;">⭐ فرز وجودات الرسالة حتى الآن:</small>
+              ${prodStats.gradeBreakdown.map(g => `
+                <span class="badge" style="background:var(--bg-surface);color:var(--text-main);border:1px solid #7c3aed;font-weight:800;font-size:0.73rem;">
+                  ${g.gradeCode}: ${fmtNum(g.sheets, 0)} ق (${g.pctOfVolume}% = ${fmtNum(g.volumeM3, 3)} م³)
+                </span>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-sm" style="background:#0f766e;color:#fff;font-weight:900;" onclick="openActiveBatchInYieldAnalyzer()">
+            📊 تحليل التصافي وفرز الجودات
+          </button>
+          ${canManage ? `
+            <button type="button" class="btn btn-sm btn-outline" style="border-color:#7c3aed;color:#5b21b6;font-weight:800;" onclick="openActiveShipmentBatchSelectorModal()">
+              ⚙️ تغيير / إيقاف الرسالة النشطة
+            </button>
+          ` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openActiveBatchInYieldAnalyzer() {
+  const b = state?.factoryInfo?.activeShipmentBatch;
+  if (b && b.active && Array.isArray(b.containerIds) && b.containerIds.length > 0) {
+    shipmentYieldSelectedGroupKey = b.groupKey || 'custom';
+    shipmentYieldSelectedContainerIds = [...b.containerIds];
+    shipmentYieldDateFrom = b.startedDate || '';
+    shipmentYieldDateTo = todayStr();
+    const prodStats = computeProductionAndGradesForShipment(b.containerIds, b.startedDate || '', '', b.key || '');
+    if (prodStats.totalVolumeM3 > 0) {
+      shipmentYieldCustomProductionM3 = prodStats.totalVolumeM3;
+      shipmentYieldCustomSheets = prodStats.totalSheets;
+    }
+  }
+  openContainerShipmentYieldWindowModal();
+}
+
+let draftActiveBatchContainerIds = [];
+let draftActiveBatchLabel = '';
+let draftActiveBatchStartDate = '';
+
+function openActiveShipmentBatchSelectorModal() {
+  const containers = state?.logContainers || [];
+  const groups = getShipmentGroupsFromContainers();
+  const cur = state?.factoryInfo?.activeShipmentBatch;
+  if (cur && cur.active && Array.isArray(cur.containerIds) && cur.containerIds.length > 0) {
+    draftActiveBatchContainerIds = [...cur.containerIds];
+    draftActiveBatchLabel = cur.label || '';
+    draftActiveBatchStartDate = cur.startedDate || todayStr();
+  } else {
+    draftActiveBatchContainerIds = containers.map(c => c.id);
+    draftActiveBatchLabel = groups[0]?.label || 'رسالة الحاويات قيد التشغيل';
+    draftActiveBatchStartDate = todayStr();
+  }
+
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:760px;">
+        <div class="card-header" style="border-bottom:2px solid #7c3aed;padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:#5b21b6;font-size:1.1rem;">
+              📌 تحديد الرسالة / دفعة الحاويات قيد التشغيل حالياً (لربط الإنتاج اليومي بها تلقائياً)
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              عند تفعيل رسالة هنا، يتم ربط أي إنتاج قشرة جديد يدخل المخزن خلال أيام التشغيل بهذه الرسالة تلقائياً لحساب تصافيها ونسبة كل جودة (ABC+ / C / R)
+            </small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <form onsubmit="submitActiveShipmentBatchModal(event)">
+          <div style="margin-bottom:12px;">
+            <label style="font-weight:800;font-size:0.84rem;color:var(--primary);display:block;margin-bottom:6px;">⚡ اختيار سريع لرسالة كاملة:</label>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button type="button" class="btn btn-sm btn-outline" style="font-weight:800;" onclick="selectDraftActiveBatchGroup('all', 'جميع الحاويات المسجلة')">
+                🚢 كل الحاويات (${containers.length})
+              </button>
+              ${groups.map(g => `
+                <button type="button" class="btn btn-sm btn-primary" style="font-weight:800;" onclick="selectDraftActiveBatchGroup('${g.key.replace(/'/g, "\\'")}', '${g.supplierName.replace(/'/g, "\\'")} (${g.containerIds.length} حاوية)')">
+                  📦 ${g.supplierName.slice(0, 30)} (${g.containerIds.length} حاوية — ${g.arrivalDate || '-'})
+                </button>
+              `).join('')}
+            </div>
+          </div>
+
+          <div class="form-grid" style="margin-bottom:12px;">
+            <div class="form-group">
+              <label style="font-weight:800;color:#5b21b6;">🏷️ اسم / بيان الرسالة قيد التشغيل</label>
+              <input id="ab-label-input" class="form-control" value="${draftActiveBatchLabel}" required style="font-weight:800;border-color:#7c3aed;" placeholder="مثال: رسالة بلجيكا فاتورة 5559 (13 حاوية)" />
+            </div>
+            <div class="form-group">
+              <label style="font-weight:800;">📅 تاريخ بداية تشغيل الرسالة</label>
+              <input id="ab-start-date" type="date" class="form-control" value="${draftActiveBatchStartDate}" required style="font-weight:800;" />
+            </div>
+          </div>
+
+          <div style="margin-bottom:14px;">
+            <label style="font-weight:800;font-size:0.84rem;display:block;margin-bottom:6px;">🚢 الحاويات المشمولة في هذه الرسالة:</label>
+            <div id="ab-containers-checkboxes" style="display:flex;flex-wrap:wrap;gap:6px;max-height:160px;overflow-y:auto;padding:10px;background:var(--bg-elevated);border-radius:10px;border:1px solid var(--border-color);">
+              ${containers.map(c => {
+                const cm = getContainerMetrics(c);
+                const isChk = draftActiveBatchContainerIds.includes(c.id);
+                return `
+                  <label style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:8px;border:1.5px solid ${isChk ? '#7c3aed' : 'var(--border-color)'};background:${isChk ? 'rgba(124,58,237,0.1)' : 'var(--bg-card)'};cursor:pointer;font-size:0.78rem;font-weight:800;">
+                    <input type="checkbox" value="${c.id}" ${isChk ? 'checked' : ''} onchange="toggleDraftActiveBatchCont('${c.id}', this.checked)" />
+                    <span>${c.containerNumber} (${cm.totalLogsCount} جذع = ${fmtNum(cm.totalVolumeM3, 3)} م³)</span>
+                  </label>
+                `;
+              }).join('')}
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+            ${cur && cur.active ? `
+              <button type="button" class="btn btn-danger" onclick="deactivateActiveShipmentBatch()">
+                ⏹️ إيقاف ربط الرسالة النشطة
+              </button>
+            ` : '<div></div>'}
+            <div style="display:flex;gap:8px;">
+              <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+              <button type="submit" class="btn btn-primary" style="background:#7c3aed;border-color:#7c3aed;font-weight:900;">
+                📌 تفعيل الرسالة وربط الإنتاج اليومي بها
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function selectDraftActiveBatchGroup(groupKey, labelStr) {
+  const containers = state?.logContainers || [];
+  if (groupKey === 'all') {
+    draftActiveBatchContainerIds = containers.map(c => c.id);
+  } else {
+    const g = getShipmentGroupsFromContainers().find(x => x.key === groupKey);
+    if (g) draftActiveBatchContainerIds = [...g.containerIds];
+  }
+  draftActiveBatchLabel = labelStr;
+  const lblEl = document.getElementById('ab-label-input');
+  if (lblEl) lblEl.value = labelStr;
+  const box = document.getElementById('ab-containers-checkboxes');
+  if (box) {
+    box.querySelectorAll('input[type="checkbox"]').forEach(chk => {
+      chk.checked = draftActiveBatchContainerIds.includes(chk.value);
+    });
+  }
+}
+
+function toggleDraftActiveBatchCont(cId, checked) {
+  if (checked) {
+    if (!draftActiveBatchContainerIds.includes(cId)) draftActiveBatchContainerIds.push(cId);
+  } else {
+    draftActiveBatchContainerIds = draftActiveBatchContainerIds.filter(id => id !== cId);
+  }
+}
+
+function submitActiveShipmentBatchModal(e) {
+  if (e) e.preventDefault();
+  if (draftActiveBatchContainerIds.length === 0) {
+    alert('يرجى تحديد حاوية واحدة على الأقل للرسالة النشطة!');
+    return;
+  }
+  const label = (document.getElementById('ab-label-input')?.value || 'رسالة الحاويات النشطة').trim();
+  const startedDate = document.getElementById('ab-start-date')?.value || todayStr();
+  const now = getMonotonicIso();
+
+  state.factoryInfo = state.factoryInfo || {};
+  state.factoryInfo.activeShipmentBatch = {
+    active: true,
+    key: `batch_${draftActiveBatchContainerIds.slice().sort().join('_').slice(0, 40)}`,
+    label,
+    startedDate,
+    containerIds: [...draftActiveBatchContainerIds],
+    updatedAt: now,
+    updatedBy: currentUser?.name || 'الإدارة'
+  };
+  state.factoryInfo.updatedAt = now;
+  closeModal();
+  saveState(`📌 تفعيل الرسالة قيد التشغيل حالياً: (${label}) بعدد (${draftActiveBatchContainerIds.length} حاوية) لربط الإنتاج اليومي بها تلقائياً`);
+}
+
+function deactivateActiveShipmentBatch() {
+  if (!state?.factoryInfo?.activeShipmentBatch) return;
+  const oldLbl = state.factoryInfo.activeShipmentBatch.label || '';
+  state.factoryInfo.activeShipmentBatch.active = false;
+  state.factoryInfo.updatedAt = getMonotonicIso();
+  closeModal();
+  saveState(`⏹️ إيقاف ربط الرسالة النشطة (${oldLbl})`);
+}
+
+// Item 2: Shipment Grade Breakdown inside Yield Modal (فرز وجودات الرسالة: ABC+ / C / R / P-C)
+function renderShipmentGradeBreakdownInsideYieldModalHtml(m) {
+  const activeBatchKey = (state?.factoryInfo?.activeShipmentBatch?.active &&
+    JSON.stringify((state.factoryInfo.activeShipmentBatch.containerIds || []).slice().sort()) === JSON.stringify(shipmentYieldSelectedContainerIds.slice().sort()))
+    ? state.factoryInfo.activeShipmentBatch.key
+    : '';
+  const prodStats = computeProductionAndGradesForShipment(
+    shipmentYieldSelectedContainerIds,
+    shipmentYieldDateFrom,
+    shipmentYieldDateTo,
+    activeBatchKey
+  );
+  const showPrices = canSeeFinancialPrices();
+
+  return `
+    <div style="background:var(--bg-card);padding:12px 14px;border-radius:12px;border:1.5px solid #7c3aed;margin-top:10px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+        <div>
+          <div style="font-weight:900;color:#5b21b6;font-size:0.94rem;">
+            ⭐ تحليل فرز وجودات قشرة الرسالة (طلعت كام % درجة أولى ABC+ وكام % درجة C و R):
+          </div>
+          <small style="color:var(--text-muted);">
+            تقييم جودة خشب المورد بناءً على توزيع درجات الفرز الناتجة من تشغيل الرسالة (${prodStats.movementsCount} دفعة إنتاج = ${fmtNum(prodStats.totalSheets, 0)} قطعة = ${fmtNum(prodStats.totalVolumeM3, 3)} م³)
+          </small>
+        </div>
+        ${prodStats.totalVolumeM3 > 0 && Math.abs(Number(shipmentYieldCustomProductionM3 || 0) - prodStats.totalVolumeM3) > 0.01 ? `
+          <button type="button" class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="shipmentYieldCustomProductionM3=${prodStats.totalVolumeM3}; shipmentYieldCustomSheets=${prodStats.totalSheets}; const el=document.getElementById('sy-actual-prod-m3'); if(el) el.value=${prodStats.totalVolumeM3}; recalcShipmentYieldAnalyzerLive();">
+            📥 اعتماد هذا الإنتاج (${fmtNum(prodStats.totalVolumeM3, 3)} م³) لحساب التصافي
+          </button>
+        ` : ''}
+      </div>
+
+      ${prodStats.gradeBreakdown.length === 0 ? `
+        <div style="padding:12px;text-align:center;color:var(--text-muted);background:var(--bg-elevated);border-radius:8px;font-size:0.82rem;">
+          لا توجد دفعات إنتاج مربوطة مباشرة بهذه الحاويات أو الفترة الزمنية بعد. يمكنك تحديد <strong>"من تاريخ / إلى تاريخ"</strong> أعلاه والضغط على <strong>"📥 سحب إنتاج الفترة من المخزن"</strong> أو تفعيل <strong>"📌 الرسالة قيد التشغيل"</strong> ليظهر لك تفصيل نسب الجودات (ABC+ و C و R) تلقائياً.
+        </div>
+      ` : `
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>درجة الجودة (الفرز)</th>
+                <th>إجمالي القطع المنتجة</th>
+                <th>الحجم بالمتر المكعب (م³)</th>
+                <th>نسبتها من إجمالي الإنتاج (%)</th>
+                <th>نسبتها من خشب الرسالة الخام (%)</th>
+                <th>تفصيل التخانات (قص / سدا)</th>
+                ${showPrices ? '<th>القيمة التقديرية</th>' : ''}
+              </tr>
+            </thead>
+            <tbody>
+              ${prodStats.gradeBreakdown.map(g => {
+                const pctOfRaw = m.baseRawM3 > 0 ? +((g.volumeM3 / m.baseRawM3) * 100).toFixed(1) : 0;
+                const isTopGrade = String(g.gradeCode).toUpperCase().includes('ABC');
+                return `
+                  <tr style="${isTopGrade ? 'background:rgba(22,163,74,0.06);' : ''}">
+                    <td>
+                      <span class="badge" style="background:${isTopGrade ? '#16a34a' : '#0284c7'};color:#fff;font-weight:900;">${g.gradeCode}</span>
+                      <strong style="margin-right:4px;">${g.gradeName}</strong>
+                    </td>
+                    <td><strong>${fmtNum(g.sheets, 0)} قطعة</strong></td>
+                    <td><strong style="color:var(--primary);">${fmtNum(g.volumeM3, 4)} م³</strong></td>
+                    <td>
+                      <div style="display:flex;align-items:center;gap:6px;">
+                        <strong style="color:${isTopGrade ? '#16a34a' : '#0f766e'};font-size:0.92rem;">${fmtNum(g.pctOfVolume, 1)}%</strong>
+                        <div style="flex:1;min-width:55px;height:8px;background:#e2e8f0;border-radius:99px;overflow:hidden;">
+                          <div style="width:${Math.min(100, g.pctOfVolume)}%;height:100%;background:${isTopGrade ? '#16a34a' : '#0284c7'};"></div>
+                        </div>
+                      </div>
+                    </td>
+                    <td><strong>${fmtNum(pctOfRaw, 1)}% من الجذوع</strong></td>
+                    <td><small style="font-weight:700;">${g.thicknessSummary || '-'}</small></td>
+                    ${showPrices ? `<td><strong style="color:var(--success);">${fmtMoney(g.totalValue)}</strong></td>` : ''}
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+// Item 3: Debt Aging & Smart Collection Schedule + Credit Limit Window (أعمار الديون وجدول التحصيل الذكي والسقف الائتماني)
+let debtAgingBucketFilter = 'all'; // 'all' | 'over30' | '15to30' | 'under15' | 'over_limit'
+
+function computeAllClientsDebtAgingData() {
+  const clients = (state?.partners || []).filter(p => p && p.type !== 'supplier');
+  const rows = [];
+  let totalRecentUnder15 = 0;
+  let totalMedium15To30 = 0;
+  let totalOverdueOver30 = 0;
+  let totalOverLimitCount = 0;
+
+  for (const pt of clients) {
+    const m = computeClientMetrics(pt);
+    if (m.netDebt <= 0) continue;
+    const daysSincePay = getClientDaysSinceLastPayment(pt.id);
+    // If client never paid, check days since oldest order or entryDate
+    let effectiveDays = daysSincePay;
+    if (effectiveDays === null) {
+      const oldestOrd = m.orders && m.orders.length > 0 ? m.orders[m.orders.length - 1] : null;
+      const refDate = String(oldestOrd?.date || pt.entryDate || todayStr()).slice(0, 10);
+      const diff = Math.floor((new Date(todayStr()).getTime() - new Date(refDate).getTime()) / 86400000);
+      effectiveDays = Math.max(0, isNaN(diff) ? 0 : diff);
+    }
+
+    let bucket = 'under15';
+    let bucketLabel = '🟢 حديثة (أقل من 15 يوم)';
+    let bucketColor = '#16a34a';
+    if (effectiveDays > 30) {
+      bucket = 'over30';
+      bucketLabel = `🔴 متأخرة (${effectiveDays} يوم بدون سداد)`;
+      bucketColor = '#dc2626';
+      totalOverdueOver30 += m.netDebt;
+    } else if (effectiveDays >= 15) {
+      bucket = '15to30';
+      bucketLabel = `🟡 متوسطة (${effectiveDays} يوم)`;
+      bucketColor = '#d97706';
+      totalMedium15To30 += m.netDebt;
+    } else {
+      bucketLabel = `🟢 حديثة (${effectiveDays === 0 ? 'اليوم' : effectiveDays + ' يوم'})`;
+      totalRecentUnder15 += m.netDebt;
+    }
+
+    const creditLimit = Number(pt.creditLimit || 500000);
+    const isOverLimit = creditLimit > 0 && m.netDebt > creditLimit;
+    if (isOverLimit) totalOverLimitCount++;
+
+    rows.push({
+      partner: pt,
+      metrics: m,
+      daysSincePay,
+      effectiveDays,
+      bucket,
+      bucketLabel,
+      bucketColor,
+      creditLimit,
+      isOverLimit
+    });
+  }
+
+  rows.sort((a, b) => b.effectiveDays - a.effectiveDays || b.metrics.netDebt - a.metrics.netDebt);
+
+  return {
+    rows,
+    totalRecentUnder15: +totalRecentUnder15.toFixed(2),
+    totalMedium15To30: +totalMedium15To30.toFixed(2),
+    totalOverdueOver30: +totalOverdueOver30.toFixed(2),
+    totalOverLimitCount
+  };
+}
+
+function openDebtAgingAndCollectionWindowModal(filterBucket = '') {
+  if (filterBucket) debtAgingBucketFilter = filterBucket;
+  const data = computeAllClientsDebtAgingData();
+  const canEditFin = canEditFinancialAndClientRecords(currentUser);
+  const filtered = data.rows.filter(r => {
+    if (debtAgingBucketFilter === 'over30') return r.bucket === 'over30';
+    if (debtAgingBucketFilter === '15to30') return r.bucket === '15to30';
+    if (debtAgingBucketFilter === 'under15') return r.bucket === 'under15';
+    if (debtAgingBucketFilter === 'over_limit') return r.isOverLimit;
+    return true;
+  });
+
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:980px;">
+        <div class="card-header" style="border-bottom:2.5px solid #dc2626;padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:#dc2626;font-size:1.12rem;">
+              ⏳ شباك أعمار الديون وجدول التحصيل الذكي والسقف الائتماني للعملاء
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              تصنيف مديونيات العملاء حسب فترة التوقف عن السداد (حديثة / متوسطة 15-30 يوم / متأخرة +30 يوم) مع إرسال تذكير واتساب وتحديد السقف الائتماني
+            </small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <!-- Aging Buckets Summary Cards -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:14px;">
+          <div style="background:rgba(22,163,74,0.08);padding:12px;border-radius:10px;border:2px solid ${debtAgingBucketFilter === 'under15' ? '#16a34a' : 'rgba(22,163,74,0.3)'};cursor:pointer;" onclick="openDebtAgingAndCollectionWindowModal('under15')">
+            <small style="color:#15803d;font-weight:900;">🟢 مديونيات حديثة (أقل من 15 يوم)</small>
+            <div style="font-weight:900;font-size:1.15rem;color:#16a34a;margin-top:2px;">${fmtMoney(data.totalRecentUnder15)}</div>
+            <small style="font-weight:700;">اضغط للتصفية</small>
+          </div>
+
+          <div style="background:rgba(217,119,6,0.08);padding:12px;border-radius:10px;border:2px solid ${debtAgingBucketFilter === '15to30' ? '#d97706' : 'rgba(217,119,6,0.3)'};cursor:pointer;" onclick="openDebtAgingAndCollectionWindowModal('15to30')">
+            <small style="color:#b45309;font-weight:900;">🟡 مديونيات متوسطة (15 إلى 30 يوم)</small>
+            <div style="font-weight:900;font-size:1.15rem;color:#d97706;margin-top:2px;">${fmtMoney(data.totalMedium15To30)}</div>
+            <small style="font-weight:700;">تحتاج متابعة تحصيل</small>
+          </div>
+
+          <div style="background:rgba(220,38,38,0.08);padding:12px;border-radius:10px;border:2px solid ${debtAgingBucketFilter === 'over30' ? '#dc2626' : 'rgba(220,38,38,0.3)'};cursor:pointer;" onclick="openDebtAgingAndCollectionWindowModal('over30')">
+            <small style="color:#b91c1c;font-weight:900;">🔴 مديونيات متأخرة (أكثر من 30 يوم)</small>
+            <div style="font-weight:900;font-size:1.15rem;color:#dc2626;margin-top:2px;">${fmtMoney(data.totalOverdueOver30)}</div>
+            <small style="font-weight:700;">أولوية قصوى للتحصيل</small>
+          </div>
+
+          <div style="background:rgba(124,58,237,0.08);padding:12px;border-radius:10px;border:2px solid ${debtAgingBucketFilter === 'over_limit' ? '#7c3aed' : 'rgba(124,58,237,0.3)'};cursor:pointer;" onclick="openDebtAgingAndCollectionWindowModal('over_limit')">
+            <small style="color:#5b21b6;font-weight:900;">⚠️ تخطي السقف الائتماني</small>
+            <div style="font-weight:900;font-size:1.15rem;color:#7c3aed;margin-top:2px;">${data.totalOverLimitCount} عميل</div>
+            <small style="font-weight:700;">تجاوزوا الحد الائتماني المسموح</small>
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm ${debtAgingBucketFilter === 'all' ? 'btn-primary' : 'btn-outline'}" onclick="openDebtAgingAndCollectionWindowModal('all')">الكل (${data.rows.length})</button>
+            <button type="button" class="btn btn-sm ${debtAgingBucketFilter === 'over30' ? 'btn-danger' : 'btn-outline'}" onclick="openDebtAgingAndCollectionWindowModal('over30')">🔴 متأخرة +30 يوم</button>
+            <button type="button" class="btn btn-sm ${debtAgingBucketFilter === '15to30' ? 'btn-accent' : 'btn-outline'}" onclick="openDebtAgingAndCollectionWindowModal('15to30')">🟡 15 - 30 يوم</button>
+            <button type="button" class="btn btn-sm ${debtAgingBucketFilter === 'under15' ? 'btn-success' : 'btn-outline'}" onclick="openDebtAgingAndCollectionWindowModal('under15')">🟢 أقل من 15 يوم</button>
+          </div>
+        </div>
+
+        <div class="table-responsive" style="max-height:48vh;overflow-y:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>الكود والعميل</th>
+                <th>صافي المديونية</th>
+                <th>عمر المديونية / آخر دفعة</th>
+                <th>السقف الائتماني للعميل</th>
+                <th>البالتات طرفه</th>
+                <th>إجراءات التحصيل والتذكير</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filtered.length === 0 ? `
+                <tr><td colspan="6" style="text-align:center;padding:22px;color:var(--text-muted);">لا توجد مديونيات مطابقة لهذا التصنيف.</td></tr>
+              ` : filtered.map(r => `
+                <tr style="${r.bucket === 'over30' ? 'background:rgba(220,38,38,0.05);' : ''}">
+                  <td>
+                    <span class="badge badge-info">${r.partner.code || 'CL'}</span>
+                    <strong>${r.partner.name}</strong><br/>
+                    <small style="color:var(--text-muted);">📞 ${r.partner.phone || '-'}</small>
+                  </td>
+                  <td><strong style="color:var(--danger);font-size:0.95rem;">${fmtMoney(r.metrics.netDebt)}</strong></td>
+                  <td>
+                    <span class="badge" style="background:${r.bucketColor};color:#fff;font-weight:900;">${r.bucketLabel}</span>
+                    <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">
+                      ${r.daysSincePay === null ? 'لم يسجل دفعات سداد بعد' : `آخر سداد منذ ${r.daysSincePay} يوم`}
+                    </div>
+                  </td>
+                  <td>
+                    <div style="display:flex;align-items:center;gap:4px;">
+                      <strong style="color:${r.isOverLimit ? 'var(--danger)' : 'var(--primary)'};">${fmtMoney(r.creditLimit)}</strong>
+                      ${canEditFin ? `<button type="button" class="btn btn-sm btn-outline" style="padding:1px 6px;font-size:0.65rem;" onclick="promptUpdateClientCreditLimit('${r.partner.id}')" title="تعديل السقف الائتماني للعميل">✏️</button>` : ''}
+                    </div>
+                    ${r.isOverLimit ? `<span class="badge badge-danger" style="font-size:0.64rem;margin-top:2px;">⚠️ متجاوز بـ ${fmtMoney(r.metrics.netDebt - r.creditLimit)}</span>` : ''}
+                  </td>
+                  <td>
+                    <span class="badge ${r.metrics.netPalletsAtClient >= 20 ? 'badge-danger' : 'badge-warning'}">🪵 ${r.metrics.netPalletsAtClient} بالتة</span>
+                  </td>
+                  <td>
+                    <div style="display:flex;gap:5px;flex-wrap:wrap;">
+                      ${canEditFin ? `
+                        <button type="button" class="btn btn-sm btn-success" style="font-weight:800;" onclick="closeModal(); openClientPaymentModal('${r.partner.id}');">
+                          💵 تحصيل دفعة
+                        </button>
+                      ` : ''}
+                      <button type="button" class="btn btn-sm" style="background:#25D366;color:#fff;font-weight:800;" onclick="sendWhatsAppDebtReminderToClient('${r.partner.id}')">
+                        📲 تذكير واتساب
+                      </button>
+                      <button type="button" class="btn btn-sm btn-outline" onclick="closeModal(); sendReportViaWhatsAppImage(() => printClientFullStatement('${r.partner.id}'), '${r.partner.phone || ''}', '${r.partner.name || ''}');">
+                        🖼️ كشف حساب صورة
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function promptUpdateClientCreditLimit(clientId) {
+  const pt = (state?.partners || []).find(p => p.id === clientId);
+  if (!pt) return;
+  const raw = prompt(`اكتب السقف الائتماني المسموح للعميل (${pt.name}) بالجنيه:`, String(pt.creditLimit || 500000));
+  if (raw === null) return;
+  const val = Math.max(0, Number(normalizeNumericInputString(raw) || 0));
+  pt.creditLimit = val;
+  pt.updatedAt = getMonotonicIso();
+  saveState(`💳 تحديث السقف الائتماني للعميل (${pt.name}) إلى ${fmtMoney(val)}`);
+  openDebtAgingAndCollectionWindowModal();
+}
+
+function sendWhatsAppDebtReminderToClient(clientId) {
+  const pt = (state?.partners || []).find(p => p.id === clientId);
+  if (!pt) return;
+  const m = computeClientMetrics(pt);
+  const phone = formatEgyptianWhatsAppPhone(pt.phone || '');
+  const msg =
+    `تحية طيبة من *${state?.factoryInfo?.name || 'مصنع العاصمة للصناعات المتخصصة'}*\n` +
+    `السادة / *${pt.name}* (${pt.code || ''})\n\n` +
+    `نود تذكيركم بالرصيد المستحق لحساب القشرة الخشبية:\n` +
+    `• *صافي المديونية المستحقة:* ${fmtMoney(m.netDebt)}\n` +
+    (m.netPalletsAtClient > 0 ? `• *رصيد البالتات الخشبية طرفكم:* ${m.netPalletsAtClient} بالتة\n` : '') +
+    `\nبرجاء التكرم بمراجعة الحساب وترتيب دفعة سداد. شاكرين حسن تعاونكم الدائم معنا.`;
+  const url = phone
+    ? `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`
+    : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  window.open(url, '_blank');
+}
+
+// Item 4: Fast vs Slow Moving Veneer Insights Card (الأصناف الأكثر طلباً مقابل الراكد بالمخزن)
+let showFastSlowVeneerInsights = true;
+
+function computeFastAndSlowMovingVeneerInsights() {
+  const thicknesses = state?.catalog?.thicknesses || [];
+  const grades = state?.catalog?.grades || [];
+  const inStockPallets = (state?.pallets || []).filter(p => p && p.status === 'in_stock' && Number(p.sheetsCount || 0) > 0);
+
+  // Aggregate demand from all productionOrders items + sales_exit warehouseMovements
+  const demandMap = new Map();
+  const lastSaleDateMap = new Map();
+
+  for (const ord of (state?.productionOrders || [])) {
+    if (!ord || !Array.isArray(ord.items)) continue;
+    const dStr = String(ord.date || '').slice(0, 10);
+    for (const it of ord.items) {
+      if (!it) continue;
+      const dir = it.direction === 'sada' ? 'sada' : 'qas';
+      const mm = Number(it.thicknessMm || 1.5);
+      const gObj = grades.find(g => g.id === it.gradeId || g.code === it.gradeCode || g.name === it.gradeName);
+      const gCode = gObj ? gObj.code : (it.gradeCode || it.gradeName || 'عام');
+      const gId = gObj ? gObj.id : (it.gradeId || '');
+      const key = `${mm}__${dir}__${gCode}`;
+      const cur = demandMap.get(key) || {
+        key,
+        thkMm: mm,
+        direction: dir,
+        directionLabel: dir === 'sada' ? 'سدا' : 'قص',
+        gradeId: gId,
+        gradeCode: gCode,
+        orderedSheets: 0,
+        ordersCount: 0
+      };
+      cur.orderedSheets += Number(it.sheetsCount || 0);
+      cur.ordersCount += 1;
+      demandMap.set(key, cur);
+      if (dStr && (!lastSaleDateMap.get(key) || dStr > lastSaleDateMap.get(key))) {
+        lastSaleDateMap.set(key, dStr);
+      }
+    }
+  }
+
+  // Compute current stock per (mm, dir, gradeCode)
+  const stockMap = new Map();
+  for (const t of thicknesses) {
+    const dir = t.direction === 'sada' ? 'sada' : 'qas';
+    const mm = Number(t.mm);
+    for (const g of grades) {
+      const cellPals = inStockPallets.filter(p => matchPalletToThicknessRow(p, t) && matchPalletToGrade(p, g.id));
+      const sh = cellPals.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
+      const key = `${mm}__${dir}__${g.code}`;
+      stockMap.set(key, {
+        key,
+        thkId: t.id,
+        thkMm: mm,
+        direction: dir,
+        directionLabel: dir === 'sada' ? 'سدا' : 'قص',
+        gradeId: g.id,
+        gradeCode: g.code,
+        stockSheets: sh
+      });
+    }
+  }
+
+  const fastMoving = Array.from(demandMap.values())
+    .map(d => ({
+      ...d,
+      currentStock: stockMap.get(d.key)?.stockSheets || 0
+    }))
+    .sort((a, b) => b.orderedSheets - a.orderedSheets)
+    .slice(0, 5);
+
+  const slowMoving = Array.from(stockMap.values())
+    .filter(s => s.stockSheets > 0)
+    .map(s => ({
+      ...s,
+      orderedSheets: demandMap.get(s.key)?.orderedSheets || 0,
+      lastSaleDate: lastSaleDateMap.get(s.key) || ''
+    }))
+    .filter(s => s.orderedSheets === 0 || s.stockSheets >= s.orderedSheets * 2)
+    .sort((a, b) => a.orderedSheets - b.orderedSheets || b.stockSheets - a.stockSheets)
+    .slice(0, 5);
+
+  return { fastMoving, slowMoving };
+}
+
+function renderFastAndSlowMovingVeneerCardHtml() {
+  const { fastMoving, slowMoving } = computeFastAndSlowMovingVeneerInsights();
+  if (fastMoving.length === 0 && slowMoving.length === 0) return '';
+
+  return `
+    <div class="card" style="padding:10px 14px;margin-bottom:12px;border:1.5px solid rgba(15,118,110,0.35);background:linear-gradient(135deg,rgba(245,158,11,0.06),rgba(2,132,199,0.06));">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div style="font-weight:900;font-size:0.88rem;color:var(--primary);">
+          📊 مؤشر الأصناف الأكثر طلباً وسحباً في الطلبيات 🔥 مقابل الأصناف الراكدة بالمخزن ❄️:
+        </div>
+        <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;" onclick="showFastSlowVeneerInsights=!showFastSlowVeneerInsights; render();">
+          ${showFastSlowVeneerInsights ? '🔼 إخفاء المؤشر' : '🔽 إظهار مؤشر الأكثر طلباً والراكد'}
+        </button>
+      </div>
+
+      ${showFastSlowVeneerInsights ? `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px;margin-top:8px;">
+          <div style="background:var(--bg-card);padding:8px 10px;border-radius:10px;border-right:4px solid #ea580c;">
+            <div style="font-weight:900;font-size:0.8rem;color:#c2410c;margin-bottom:6px;">
+              🔥 أكثر 5 أصناف (تخانة × جودة) طلباً وسحباً في الطلبيات (ركز عليها في التشغيل):
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:5px;">
+              ${fastMoving.length === 0 ? `<small style="color:var(--text-muted);">لا توجد طلبيات مسجلة بعد.</small>` : fastMoving.map(f => `
+                <span class="badge" style="background:rgba(234,88,12,0.1);color:#9a3412;border:1px solid rgba(234,88,12,0.35);font-weight:800;font-size:0.73rem;padding:4px 8px;">
+                  ${f.thkMm} مم ${f.directionLabel} × ${f.gradeCode}: سحب ${fmtNum(f.orderedSheets, 0)} ق (بالمخزن: ${fmtNum(f.currentStock, 0)})
+                </span>
+              `).join('')}
+            </div>
+          </div>
+
+          <div style="background:var(--bg-card);padding:8px 10px;border-radius:10px;border-right:4px solid #0284c7;">
+            <div style="font-weight:900;font-size:0.8rem;color:#0369a1;margin-bottom:6px;">
+              ❄️ أصناف متوفرة بالمخزن وسحبها منخفض / راكد (جاهزة للتسويق السريع):
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:5px;">
+              ${slowMoving.length === 0 ? `<small style="color:var(--text-muted);">جميع الأصناف المتوفرة عليها حركة سحب نشطة.</small>` : slowMoving.map(s => `
+                <span class="badge" style="background:rgba(2,132,199,0.1);color:#075985;border:1px solid rgba(2,132,199,0.35);font-weight:800;font-size:0.73rem;padding:4px 8px;">
+                  ${s.thkMm} مم ${s.directionLabel} × ${s.gradeCode}: متاح ${fmtNum(s.stockSheets, 0)} ق (مسحوب: ${fmtNum(s.orderedSheets, 0)})
+                </span>
+              `).join('')}
+            </div>
           </div>
         </div>
       ` : ''}
