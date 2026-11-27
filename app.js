@@ -7325,7 +7325,7 @@ function extractProductionEntryDetails(m) {
     else direction = 'qas';
   }
 
-  const directionLabel = direction === 'sada' ? 'اتجاه سدا' : 'اتجاه قص';
+  const directionLabel = direction === 'sada' ? 'سدا' : 'قص';
 
   // Lookup grade in state.catalog.grades
   const gradesList = state?.catalog?.grades || [];
@@ -7393,6 +7393,7 @@ function extractProductionEntryDetails(m) {
     lengthCm,
     widthCm,
     thkMm: thkMm !== null && !isNaN(thkMm) ? thkMm : 1.5,
+    thicknessMm: thkMm !== null && !isNaN(thkMm) ? thkMm : 1.5,
     direction,
     directionLabel,
     gradeId,
@@ -28445,7 +28446,7 @@ function openDailyFactorySummaryWindowModal(selectedDate = '') {
                   <tbody>
                     ${s.prodDetails.map(d => `
                       <tr>
-                        <td><strong>${d.thicknessMm} مم (${d.directionLabel})</strong></td>
+                        <td><strong>${d.thkMm ?? d.thicknessMm ?? 1.5} مم ${d.direction === 'sada' ? 'سدا' : 'قص'}</strong></td>
                         <td><span class="badge badge-info">${d.gradeCode}</span></td>
                         <td>${d.widthCm}×${d.lengthCm} سم</td>
                         <td><strong style="color:var(--success);">${fmtNum(d.sheetsCount, 0)} قطعة</strong></td>
@@ -28505,7 +28506,7 @@ function printDailyFactorySummaryReportPdf(dateStr = '') {
   const prodRows = s.prodDetails.map((d, i) => `
     <tr>
       <td>${i + 1}</td>
-      <td>${d.thicknessMm} مم (${d.directionLabel})</td>
+      <td><strong>${d.thkMm ?? d.thicknessMm ?? 1.5} مم ${d.direction === 'sada' ? 'سدا' : 'قص'}</strong></td>
       <td>${d.gradeName}</td>
       <td>${d.widthCm}×${d.lengthCm} سم</td>
       <td><strong>${fmtNum(d.sheetsCount, 0)} قطعة</strong></td>
