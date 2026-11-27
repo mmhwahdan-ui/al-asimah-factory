@@ -4418,14 +4418,15 @@ function getMyDelayedApprovalsList() {
         secondaryJs: `closeModal(); openClientOrderStatementModal('${ord.id}');`
       });
     } else if (st === 'pending_accountant_release' && isAccountantOrExec) {
+      const isDeficitOrder = Boolean(ord.placedInNegativeStock);
       list.push({
         id: `del_acc_${ord.id}`,
         orderId: ord.id,
         type: 'order_accountant',
-        badgeText: '3️⃣ اعتماد المحاسب للصرف',
-        badgeColor: '#7c3aed',
+        badgeText: isDeficitOrder ? '3️⃣ اعتماد المحاسب (📉 عجز بالمخزن)' : '3️⃣ اعتماد المحاسب للصرف',
+        badgeColor: isDeficitOrder ? '#dc2626' : '#7c3aed',
         title: `اعتماد صرف طلبية (${ord.orderNumber}) — العميل: ${ord.clientName}`,
-        subtitle: `تم التجهيز بالمخزن (${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة)${showPrices ? ' — الصافي: ' + fmtMoney(ord.netTotalAmount || 0) : ''} — بانتظار اعتماد الحسابات وإذن الصرف`,
+        subtitle: `${isDeficitOrder ? '📉 موضوعة عجز بالمخزن بالسالب لحين الإضافة' : 'تم التجهيز بالمخزن'} (${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة)${showPrices ? ' — الصافي: ' + fmtMoney(ord.netTotalAmount || 0) : ''} — بانتظار اعتماد الحسابات وإذن الصرف`,
         actionLabel: '💳 اعتماد الحسابات والصرف',
         onClickJs: `closeModal(); openAccountantReleaseModal('${ord.id}');`,
         secondaryLabel: '📄 فتح البيان',
@@ -5870,7 +5871,7 @@ function renderDashboard() {
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
           <div>
             <div style="font-weight:900;font-size:1.05rem;color:#7c3aed;">
-              💳 تنبيه للحسابات: يوجد (${accountantPendingOrders.length}) طلبية تم تجهيزها بالمخزن وبانتظار عمل حسابات العميل واعتماد إذن الصرف!
+              💳 تنبيه للحسابات: يوجد (${accountantPendingOrders.length}) طلبية محولة من المخزن (${accountantPendingOrders.some(o => o.placedInNegativeStock) ? 'منها عجز بالمخزن موضوع بالسالب لحين الإضافة' : 'تم تجهيزها بالمخزن'}) وبانتظار عمل حسابات العميل واعتماد إذن الصرف!
             </div>
           </div>
           <button class="btn btn-primary flash-approval-btn" style="background:#7c3aed;" onclick="setTab('approvals')">
@@ -8436,6 +8437,9 @@ function getOrderStageBadge(order) {
     return `<span class="badge badge-info">2️⃣ قيد التجهيز بالمخزن (${order.executiveApprovedBy || 'معتمد'})</span>`;
   }
   if (st === 'pending_accountant_release') {
+    if (order.placedInNegativeStock) {
+      return `<span class="badge badge-danger">3️⃣ 📉 عجز بالمخزن (موضوعة بالسالب — ${fmtNum(order.totalSheetsCount || 0, 0)} ق) ⬅ بانتظار المحاسب</span>`;
+    }
     return `<span class="badge" style="background:#7c3aed;color:#fff;">3️⃣ جاهز (${order.warehousePrepApprovedBy || 'المخزن'}) ⬅ بانتظار المحاسب</span>`;
   }
   if (st === 'ready_for_car_dispatch') {
@@ -8732,15 +8736,22 @@ function renderApprovals() {
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
           <div>
             <div style="font-weight:900;font-size:1.05rem;color:#7c3aed;">
-              💳 تنبيه للمحاسب: يوجد (${waitingAccountantOrders.length}) طلبية تم تجهيزها وموافقة المخزن/المدير الإداري عليها وبانتظار عمل حسابات العميل واعتماد إذن الصرف!
+              💳 تنبيه للمحاسب: يوجد (${waitingAccountantOrders.length}) طلبية محولة من المخزن (${waitingAccountantOrders.some(o => o.placedInNegativeStock) ? '⚠️ منها طلبية عجز بالمخزن موضوعة بالسالب لحين الإضافة' : 'تم تجهيزها بالمخزن'}) وبانتظار عمل حسابات العميل واعتماد إذن الصرف!
             </div>
             <small style="color:var(--text-main);">
-              بمجرد موافقتك على إذن الصرف بعد عمل حسابات العميل سيظهر أمر فوري لأمين المخزن والمدير الإداري بصرف الطلبية وعمل إذن صرف للسيارة.
+              ${waitingAccountantOrders.map(o => `• <strong>${o.orderNumber}</strong> (${o.clientName}): ${o.placedInNegativeStock ? `<strong style="color:var(--danger);">📉 عجز بالمخزن (-${fmtNum(o.totalSheetsCount || 0, 0)} قطعة موضوعة بالسالب لحين الإضافة)</strong>` : `<strong style="color:var(--success);">✅ متوفرة وتم تجهيزها (${fmtNum(o.totalSheetsCount || 0, 0)} قطعة)</strong>`}`).join(' | ')}
             </small>
           </div>
-          <button class="btn btn-primary flash-approval-btn" style="background:#7c3aed;" onclick="openAccountantReleaseModal('${waitingAccountantOrders[0].id}')">
-            💳 عمل حسابات العميل واعتماد الصرف (${waitingAccountantOrders[0].orderNumber})
-          </button>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn-primary flash-approval-btn" style="background:#7c3aed;" onclick="openAccountantReleaseModal('${waitingAccountantOrders[0].id}')">
+              💳 عمل حسابات العميل واعتماد الصرف (${waitingAccountantOrders[0].orderNumber})
+            </button>
+            ${isExec ? `
+              <button type="button" class="btn btn-outline" style="border-color:var(--danger);color:var(--danger);font-weight:800;" onclick="revertOrderToWarehousePrep('${waitingAccountantOrders[0].id}')">
+                ↩️ إرجاعها لمرحلة التجهيز وإلغاء السالب
+              </button>
+            ` : ''}
+          </div>
         </div>
       </div>
     ` : ''}
@@ -8800,7 +8811,8 @@ function renderApprovals() {
                       <strong style="font-size:0.8rem;">${ord.clientName}</strong>
                     </td>
                     <td>
-                      <strong>${items.length} بنود</strong> (${fmtNum(ord.totalSheetsCount || 0, 0)} ق)<br/>
+                      <strong>${items.length} بنود</strong> (${fmtNum(ord.totalSheetsCount || 0, 0)} ق)
+                      ${ord.placedInNegativeStock ? `<span class="badge badge-danger" style="font-size:0.68rem;margin-right:4px;">📉 عجز بالمخزن (موضوعة بالسالب)</span>` : ''}<br/>
                       <small style="color:var(--text-muted);font-size:0.7rem;">
                         ${items.map(i => `${i.thicknessMm}مم (${i.direction === 'sada' ? 'سدا' : 'قص'}) ${i.gradeName} [${formatVeneerDimensions(i.lengthCm, i.widthCm, false)}]: ${i.sheetsCount} ق`).join(' + ')}
                       </small>
@@ -8855,6 +8867,9 @@ function renderApprovals() {
                         ` : ''}
 
                         ${isExec ? `
+                          ${(st === 'pending_accountant_release' || st === 'ready_for_car_dispatch') ? `
+                            <button type="button" class="btn btn-sm btn-outline" style="padding:2px 5px;font-size:0.68rem;border-color:#d97706;color:#b45309;font-weight:800;" onclick="revertOrderToWarehousePrep('${ord.id}')">↩️ إرجاعها لمرحلة التجهيز بالمخزن</button>
+                          ` : ''}
                           <button class="btn btn-sm btn-danger" style="padding:2px 5px;font-size:0.68rem;" onclick="deleteOrderWithStockRestore('${ord.id}')">🗑️ حذف وإرجاع الرصيد</button>
                         ` : ''}
                       </div>
@@ -12991,6 +13006,62 @@ function resolveOrderShortageByNegativeStock(orderId, alsoApprove = true) {
 }
 
 // STAGE 3 -> STAGE 4: Accountant completes Client Accounting & Approves Dispatch Voucher -> Alerts Warehouse Keeper & Admin Manager to dispatch Car
+function revertOrderToWarehousePrep(orderId) {
+  if (!isFullAdmin(currentUser) && !canApproveWarehouseStage(currentUser)) {
+    alert('⛔ هذه الصلاحية للإدارة أو أمين المخزن فقط.');
+    return;
+  }
+  const ord = (state.productionOrders || []).find(o => o.id === orderId);
+  if (!ord) return;
+  const now = getMonotonicIso(ord.updatedAt);
+
+  // Restore any deducted or negative-balance stock created by this order
+  const carVoucherNo = ord.carDispatchVoucher?.voucherNo || `CAR-${ord.orderNumber}`;
+  if (ord.stockDeducted && !ord.skipWarehouseDeduction) {
+    for (const it of (ord.items || [])) {
+      const sh = Number(it.sheetsCount || 0);
+      if (sh > 0) {
+        const thkId = it.thicknessId || `th-${it.thicknessMm}-${it.direction || 'qas'}`;
+        addSheetsToCellPallets(
+          thkId,
+          it.gradeId,
+          it.woodTypeId || 'wt-general',
+          sh,
+          `إرجاع رصيد الطلبية ${ord.orderNumber} لمرحلة التجهيز`,
+          ord.date || todayStr(),
+          Number(it.unitPrice || 0),
+          Number(it.lengthCm || 250),
+          Number(it.widthCm || 125)
+        );
+      }
+    }
+  }
+
+  // Remove exit warehouse movements for this order
+  (state.warehouseMovements || []).forEach(m => {
+    if (m && m.direction === 'out' && (m.voucherNumber === carVoucherNo || m.voucherNumber === `CAR-${ord.orderNumber}` || m.voucherNumber === ord.orderNumber)) {
+      markRecordIdDeleted(m.id);
+    }
+  });
+  state.warehouseMovements = (state.warehouseMovements || []).filter(m =>
+    !(m && m.direction === 'out' && (m.voucherNumber === carVoucherNo || m.voucherNumber === `CAR-${ord.orderNumber}` || m.voucherNumber === ord.orderNumber))
+  );
+
+  ord.stage = 'pending_warehouse_prep';
+  ord.status = 'in_progress';
+  ord.stockDeducted = false;
+  ord.stockDeductedAt = '';
+  ord.placedInNegativeStock = false;
+  ord.placedInNegativeStockBy = '';
+  ord.placedInNegativeStockAt = '';
+  ord.warehousePrepApprovedBy = '';
+  ord.warehousePrepApprovedAt = '';
+  ord.updatedAt = now;
+
+  closeModal();
+  saveState(`↩️ إرجاع الطلبية (${ord.orderNumber}) للعميل (${ord.clientName}) إلى مرحلة (قيد التجهيز بالمخزن) لحين توفر وتغطية كمياتها بالمخزن`);
+}
+
 function openAccountantReleaseModal(orderId) {
   if (!canApproveOrderAccounts(currentUser)) {
     alert('⛔ عفواً، غير مسموح لحسابك بالموافقة على حسابات أوامر التجهيز.');
@@ -13000,6 +13071,7 @@ function openAccountantReleaseModal(orderId) {
   if (!ord) return;
   const clientObj = state.partners.find(p => p.id === ord.clientId || p.name === ord.clientName);
   const clientMetrics = clientObj ? computeClientMetrics(clientObj) : { netDebt: 0, palletsDelivered: 0, palletsReceived: 0, netPalletsAtClient: 0 };
+  const isDeficitOrder = Boolean(ord.placedInNegativeStock);
 
   const modalRoot = document.getElementById('modal-root');
   modalRoot.innerHTML = `
@@ -13009,11 +13081,24 @@ function openAccountantReleaseModal(orderId) {
           <div>
             <div class="card-title">💳 عمل حسابات العميل والموافقة على إذن الصرف (${ord.orderNumber})</div>
             <small style="color:var(--text-muted);">
-              العميل: <strong>${ord.clientName} (${ord.clientCode || 'CL'})</strong> | تمت موافقة التجهيز بواسطة: <strong>${ord.warehousePrepApprovedBy || 'المخزن/الإدارة'}</strong>
+              العميل: <strong>${ord.clientName} (${ord.clientCode || 'CL'})</strong> | حالة المخزن: <strong style="color:${isDeficitOrder ? 'var(--danger)' : 'var(--success)'};">${isDeficitOrder ? '📉 عجز بالمخزن (موضوعة بالسالب لحين الإضافة بواسطة ' + (ord.placedInNegativeStockBy || ord.warehousePrepApprovedBy || 'الإدارة') + ')' : '✅ متوفرة بالمخزن وتم تجهيزها بواسطة ' + (ord.warehousePrepApprovedBy || 'المخزن')}</strong>
             </small>
           </div>
           <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
         </div>
+
+        ${isDeficitOrder ? `
+          <div style="background:rgba(220,38,38,0.1);border:2px solid var(--danger);padding:10px 14px;border-radius:10px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+            <div style="font-size:0.84rem;font-weight:800;color:var(--danger);">
+              ⚠️ تنبيه هام: هذه الطلبية (${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة) <strong>عجز بالمخزن حالياً</strong> وتم تحويلها بوضعها بالسالب لحين إضافة الإنتاج!
+            </div>
+            ${(isFullAdmin(currentUser) || canApproveWarehouseStage(currentUser)) ? `
+              <button type="button" class="btn btn-sm btn-danger" style="font-weight:900;" onclick="revertOrderToWarehousePrep('${ord.id}')">
+                ↩️ إرجاعها لمرحلة التجهيز وإلغاء الاعتماد المؤقت
+              </button>
+            ` : ''}
+          </div>
+        ` : ''}
 
         <div style="background:var(--bg-elevated);padding:12px 16px;border-radius:12px;margin-bottom:14px;display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:10px;">
           <div>
