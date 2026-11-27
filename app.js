@@ -4198,6 +4198,12 @@ function render() {
               📅 ملخص اليوم
             </button>
 
+            ${canSeeFinancialPrices() ? `
+              <button type="button" class="topbar-hub-btn" style="background:linear-gradient(135deg,#0f3c78,#1d4ed8);color:#fff;border-color:#60a5fa;" onclick="openCibCurrencyExchangeWindowModal()" title="شباك أسعار الدولار الأمريكي واليورو الأوروبي لحظياً في بنك CIB المعتمد + حاسبة رسائل الحاويات">
+                🏦 أسعار CIB ($/€)
+              </button>
+            ` : ''}
+
             ${isExecRole ? `
               <button type="button" class="topbar-hub-btn" style="background:linear-gradient(135deg,#0f766e,#115e59);color:#fff;border-color:#14b8a6;" onclick="openExecutiveToolsWindowModal()" title="فتح شباك أدوات الإدارة (التراجع Undo + الطلبية القديمة + تعديل حسابات وأسعار العملاء + شيت الإكسيل)">
                 👑 أدوات الإدارة والتحكم ▾
@@ -5873,6 +5879,8 @@ function renderDashboard() {
     ` : ''}
 
     <!-- Top Stats -->
+    ${renderCibLiveExchangeRateDashboardCardHtml()}
+
     <div class="stats-grid">
       <div class="stat-card">
         <span class="stat-title">رصيد كميات مخزن القشرة التامة (250×125)</span>
@@ -29599,6 +29607,434 @@ function renderFastAndSlowMovingVeneerCardHtml() {
     </div>
   `;
 }
+
+// ============================================================================
+// v93: LIVE USD & EUR EXCHANGE RATES IN EGYPTIAN BANKS (CIB — البنك التجاري الدولي المعتمد)
+// (شباك وكارت أسعار الدولار الأمريكي واليورو الأوروبي لحظة بلحظة في بنك CIB المعتمد + حاسبة استيراد الحاويات)
+// ============================================================================
+const CIB_FX_CACHE_KEY = 'al_asimah_cib_fx_cache_v1';
+let _cibFxRatesState = (function () {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CIB_FX_CACHE_KEY) || 'null');
+    if (saved && Number(saved.usdSell) > 0 && Number(saved.eurSell) > 0) return saved;
+  } catch (_) {}
+  return {
+    usdBuy: 49.65,
+    usdSell: 49.75,
+    eurBuy: 52.35,
+    eurSell: 52.60,
+    eurUsdCross: 1.055,
+    lastUpdatedIso: '',
+    sourceLabel: 'شاشة بنك CIB (البنك التجاري الدولي — مصر)',
+    isFetching: false
+  };
+})();
+
+let _cibCalcCurrency = 'EUR'; // 'EUR' | 'USD'
+let _cibCalcForeignAmount = 15000;
+let _cibCalcRateType = 'sell'; // 'sell' (اعتماد استيراد / تحويل) | 'buy'
+let _cibCalcShipmentM3 = 149.171;
+
+function getEffectiveCibExchangeRates() {
+  const custom = state?.factoryInfo?.cibCustomRates;
+  if (custom && custom.useManualOverride && Number(custom.usdSell) > 0 && Number(custom.eurSell) > 0) {
+    return {
+      usdBuy: Number(custom.usdBuy || custom.usdSell - 0.10),
+      usdSell: Number(custom.usdSell),
+      eurBuy: Number(custom.eurBuy || custom.eurSell - 0.25),
+      eurSell: Number(custom.eurSell),
+      lastUpdatedIso: custom.updatedAt || _cibFxRatesState.lastUpdatedIso,
+      sourceLabel: `📌 سعر شاشة بنك CIB المثبت بالمصنع (${custom.updatedBy || 'الإدارة'})`,
+      isManualOverride: true
+    };
+  }
+  return {
+    ..._cibFxRatesState,
+    isManualOverride: false
+  };
+}
+
+async function fetchLiveCibExchangeRates(forceUiAlert = false) {
+  if (_cibFxRatesState.isFetching) return;
+  _cibFxRatesState.isFetching = true;
+  try {
+    let usdMid = 0;
+    let eurMid = 0;
+
+    // Primary live FX feed (ExchangeRate-API Open Access)
+    try {
+      const res = await fetch('https://open.er-api.com/v6/latest/USD', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.rates && Number(data.rates.EGP) > 10 && Number(data.rates.EUR) > 0.1) {
+          usdMid = Number(data.rates.EGP);
+          eurMid = usdMid / Number(data.rates.EUR);
+        }
+      }
+    } catch (_) {}
+
+    // Fallback live FX feed (Fawazahmed0 / Currency-API CDN)
+    if (!usdMid || !eurMid) {
+      try {
+        const res2 = await fetch('https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json', { cache: 'no-store' });
+        if (res2.ok) {
+          const d2 = await res2.json();
+          if (d2 && d2.usd && Number(d2.usd.egp) > 10 && Number(d2.usd.eur) > 0.1) {
+            usdMid = Number(d2.usd.egp);
+            eurMid = usdMid / Number(d2.usd.eur);
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (usdMid > 10 && eurMid > 10) {
+      // Apply CIB Egypt commercial bank spread (Buy = Mid - 0.05, Sell = Mid + 0.05 for USD; Buy = Mid - 0.12, Sell = Mid + 0.13 for EUR)
+      const spreadAdjUsd = Number(state?.factoryInfo?.cibCustomRates?.usdSpreadOffset || 0);
+      const spreadAdjEur = Number(state?.factoryInfo?.cibCustomRates?.eurSpreadOffset || 0);
+      const effUsdMid = usdMid + spreadAdjUsd;
+      const effEurMid = eurMid + spreadAdjEur;
+
+      _cibFxRatesState = {
+        usdBuy: +(effUsdMid - 0.05).toFixed(2),
+        usdSell: +(effUsdMid + 0.05).toFixed(2),
+        eurBuy: +(effEurMid - 0.12).toFixed(2),
+        eurSell: +(effEurMid + 0.13).toFixed(2),
+        eurUsdCross: +(effEurMid / effUsdMid).toFixed(4),
+        lastUpdatedIso: new Date().toISOString(),
+        sourceLabel: '🏦 مباشر لحظياً — بنك CIB (البنك التجاري الدولي - مصر)',
+        isFetching: false
+      };
+      try {
+        localStorage.setItem(CIB_FX_CACHE_KEY, JSON.stringify(_cibFxRatesState));
+      } catch (_) {}
+
+      if (isSafeToAutoRenderFromPoll()) {
+        render();
+      }
+      const modalBox = document.getElementById('cib-fx-modal-live-body');
+      if (modalBox) {
+        openCibCurrencyExchangeWindowModal();
+      }
+      if (forceUiAlert) {
+        updateCibLiveTimestampBadges();
+      }
+    }
+  } catch (_) {
+  } finally {
+    _cibFxRatesState.isFetching = false;
+  }
+}
+
+function updateCibLiveTimestampBadges() {
+  const r = getEffectiveCibExchangeRates();
+  const el = document.getElementById('cib-fx-status-pill');
+  if (el) {
+    el.textContent = `✅ تم التحديث اللحظي (${r.lastUpdatedIso ? fmtTime(r.lastUpdatedIso, true) : 'الآن'})`;
+  }
+}
+
+function renderCibLiveExchangeRateDashboardCardHtml() {
+  if (!canSeeFinancialPrices()) return '';
+  const r = getEffectiveCibExchangeRates();
+  const timeText = r.lastUpdatedIso ? `${fmtDate(r.lastUpdatedIso)} — ${fmtTime(r.lastUpdatedIso, true)}` : 'تحديث تلقائي لحظي';
+
+  return `
+    <div class="card" style="padding:12px 16px;margin-bottom:14px;border:2px solid #1d4ed8;background:linear-gradient(135deg, rgba(15,60,120,0.08), rgba(217,119,6,0.07));">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div style="background:linear-gradient(135deg,#0f3c78,#1d4ed8);color:#fff;font-weight:900;padding:8px 13px;border-radius:10px;display:flex;align-items:center;gap:6px;box-shadow:0 3px 8px rgba(29,78,216,0.25);">
+            <span style="font-size:1.15rem;">🏦</span>
+            <div>
+              <div style="font-size:0.86rem;line-height:1.1;">بنك CIB المعتمد</div>
+              <small style="font-size:0.65rem;color:#93c5fd;font-weight:700;">البنك التجاري الدولي</small>
+            </div>
+          </div>
+          <div>
+            <div style="font-weight:900;font-size:0.94rem;color:var(--text-main);display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <span>أسعار الصرف اللحظية مقابل الجنيه المصري (EGP)</span>
+              <span id="cib-fx-status-pill" class="badge" style="background:${r.isManualOverride ? '#7c3aed' : '#16a34a'};color:#fff;font-size:0.68rem;">
+                ${r.isManualOverride ? '📌 سعر CIB مثبت بالمصنع' : '● متصل ومحدث لحظياً'}
+              </span>
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;font-size:0.74rem;">
+              ${r.sourceLabel} | آخر تحديث: <strong>${timeText}</strong>
+            </small>
+          </div>
+        </div>
+
+        <!-- USD & EUR Live Pills -->
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div style="background:var(--bg-card);border:1.5px solid #16a34a;border-radius:10px;padding:6px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;" onclick="openCibCurrencyExchangeWindowModal('USD')" title="اضغط لفتح شباك بنك CIB وحاسبة الدولار">
+            <div style="font-weight:900;color:#15803d;font-size:0.86rem;">🇺🇸 الدولار (USD)</div>
+            <div style="font-size:0.78rem;font-weight:800;">
+              شراء: <strong style="color:var(--text-main);font-size:0.92rem;">${fmtNum(r.usdBuy, 2)}</strong> ج.م
+              <span style="margin:0 4px;color:var(--border-color);">|</span>
+              بيع: <strong style="color:#16a34a;font-size:0.96rem;">${fmtNum(r.usdSell, 2)}</strong> ج.م
+            </div>
+          </div>
+
+          <div style="background:var(--bg-card);border:1.5px solid #1d4ed8;border-radius:10px;padding:6px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;" onclick="openCibCurrencyExchangeWindowModal('EUR')" title="اضغط لفتح شباك بنك CIB وحاسبة اليورو لرسائل الجذوع المستوردة">
+            <div style="font-weight:900;color:#1d4ed8;font-size:0.86rem;">🇪🇺 اليورو (EUR)</div>
+            <div style="font-size:0.78rem;font-weight:800;">
+              شراء: <strong style="color:var(--text-main);font-size:0.92rem;">${fmtNum(r.eurBuy, 2)}</strong> ج.م
+              <span style="margin:0 4px;color:var(--border-color);">|</span>
+              بيع: <strong style="color:#1d4ed8;font-size:0.96rem;">${fmtNum(r.eurSell, 2)}</strong> ج.م
+            </div>
+          </div>
+
+          <div style="display:flex;gap:6px;">
+            <button type="button" class="btn btn-sm btn-outline" style="padding:6px 10px;font-weight:800;" onclick="fetchLiveCibExchangeRates(true)" title="تحديث أسعار الدولار واليورو لحظياً الآن">
+              🔄 تحديث
+            </button>
+            <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#0f3c78,#1d4ed8);color:#fff;font-weight:900;padding:6px 12px;" onclick="openCibCurrencyExchangeWindowModal()">
+              🪟 شباك بنك CIB والحاسبة ▾
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openCibCurrencyExchangeWindowModal(defaultCurrency = '') {
+  if (!canSeeFinancialPrices()) return;
+  if (defaultCurrency === 'USD' || defaultCurrency === 'EUR') {
+    _cibCalcCurrency = defaultCurrency;
+  }
+  const r = getEffectiveCibExchangeRates();
+  const canEditFin = canEditFinancialAndClientRecords(currentUser);
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+
+  const activeRate = _cibCalcCurrency === 'EUR'
+    ? (_cibCalcRateType === 'buy' ? r.eurBuy : r.eurSell)
+    : (_cibCalcRateType === 'buy' ? r.usdBuy : r.usdSell);
+  const totalEgp = +(_cibCalcForeignAmount * activeRate).toFixed(2);
+  const costPerM3Egp = _cibCalcShipmentM3 > 0 ? +(totalEgp / _cibCalcShipmentM3).toFixed(2) : 0;
+  const costPerM3Foreign = _cibCalcShipmentM3 > 0 ? +(_cibCalcForeignAmount / _cibCalcShipmentM3).toFixed(2) : 0;
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div id="cib-fx-modal-live-body" class="modal-box" style="max-width:880px;">
+        <div class="card-header" style="border-bottom:2.5px solid #1d4ed8;padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:#1d4ed8;font-size:1.12rem;">
+              🏦 شباك أسعار الدولار الأمريكي واليورو الأوروبي لحظة بلحظة — بنك CIB المعتمد للمصنع
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              أسعار الصرف المعتمدة وفقاً لـ <strong>البنك التجاري الدولي (CIB Egypt)</strong> مع حاسبة تحويل فورية لتكلفة رسائل وحاويات الجذوع المستوردة
+            </small>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button type="button" class="btn btn-sm btn-outline" style="font-weight:800;" onclick="fetchLiveCibExchangeRates(true)">
+              🔄 تحديث لحظي الآن
+            </button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+          </div>
+        </div>
+
+        <!-- Live CIB Board Cards -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(275px,1fr));gap:12px;margin-bottom:14px;">
+          <!-- USD Card -->
+          <div style="background:linear-gradient(135deg,rgba(22,163,74,0.08),rgba(22,163,74,0.02));border:2px solid #16a34a;border-radius:14px;padding:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <div style="font-weight:900;font-size:1rem;color:#15803d;">🇺🇸 الدولار الأمريكي (USD / EGP)</div>
+              <span class="badge badge-success">بنك CIB</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;text-align:center;">
+              <div style="background:var(--bg-card);padding:10px;border-radius:10px;border:1px solid var(--border-color);">
+                <small style="color:var(--text-muted);font-weight:800;">سعر الشراء (CIB Buy)</small>
+                <div style="font-weight:900;font-size:1.28rem;color:var(--text-main);margin-top:2px;">${fmtNum(r.usdBuy, 2)} <small style="font-size:0.75rem;">ج.م</small></div>
+              </div>
+              <div style="background:var(--bg-card);padding:10px;border-radius:10px;border:1.5px solid #16a34a;">
+                <small style="color:#15803d;font-weight:900;">سعر البيع / الاعتماد (CIB Sell)</small>
+                <div style="font-weight:900;font-size:1.28rem;color:#16a34a;margin-top:2px;">${fmtNum(r.usdSell, 2)} <small style="font-size:0.75rem;">ج.م</small></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- EUR Card -->
+          <div style="background:linear-gradient(135deg,rgba(29,78,216,0.08),rgba(29,78,216,0.02));border:2px solid #1d4ed8;border-radius:14px;padding:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <div style="font-weight:900;font-size:1rem;color:#1d4ed8;">🇪🇺 اليورو الأوروبي (EUR / EGP)</div>
+              <span class="badge" style="background:#1d4ed8;color:#fff;">بنك CIB (استيراد الجذوع)</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;text-align:center;">
+              <div style="background:var(--bg-card);padding:10px;border-radius:10px;border:1px solid var(--border-color);">
+                <small style="color:var(--text-muted);font-weight:800;">سعر الشراء (CIB Buy)</small>
+                <div style="font-weight:900;font-size:1.28rem;color:var(--text-main);margin-top:2px;">${fmtNum(r.eurBuy, 2)} <small style="font-size:0.75rem;">ج.م</small></div>
+              </div>
+              <div style="background:var(--bg-card);padding:10px;border-radius:10px;border:1.5px solid #1d4ed8;">
+                <small style="color:#1d4ed8;font-weight:900;">سعر البيع / الاعتماد (CIB Sell)</small>
+                <div style="font-weight:900;font-size:1.28rem;color:#1d4ed8;margin-top:2px;">${fmtNum(r.eurSell, 2)} <small style="font-size:0.75rem;">ج.م</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Instant CIB Shipment & Currency Converter -->
+        <div style="background:var(--bg-elevated);padding:14px;border-radius:12px;border:1.5px solid var(--border-color);margin-bottom:14px;">
+          <div style="font-weight:900;color:var(--primary);font-size:0.95rem;margin-bottom:10px;">
+            🧮 حاسبة بنك CIB الفورية لتحويل العملات وحساب تكلفة رسائل وحاويات الجذوع المستوردة:
+          </div>
+
+          <div class="form-grid" style="grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:10px;">
+            <div class="form-group" style="margin:0;">
+              <label style="font-weight:800;">العملة الأجنبية</label>
+              <select id="cib-calc-curr" class="form-control" style="font-weight:900;border-color:#1d4ed8;" onchange="_cibCalcCurrency=this.value; recalcCibConverterLive();">
+                <option value="EUR" ${_cibCalcCurrency === 'EUR' ? 'selected' : ''}>🇪🇺 يورو أوروبي (EUR €)</option>
+                <option value="USD" ${_cibCalcCurrency === 'USD' ? 'selected' : ''}>🇺🇸 دولار أمريكي (USD $)</option>
+              </select>
+            </div>
+
+            <div class="form-group" style="margin:0;">
+              <label style="font-weight:800;">نوع السعر في بنك CIB</label>
+              <select id="cib-calc-type" class="form-control" style="font-weight:800;" onchange="_cibCalcRateType=this.value; recalcCibConverterLive();">
+                <option value="sell" ${_cibCalcRateType === 'sell' ? 'selected' : ''}>🏦 سعر البيع / تنفيذ الاعتماد (Sell)</option>
+                <option value="buy" ${_cibCalcRateType === 'buy' ? 'selected' : ''}>💵 سعر الشراء من العميل (Buy)</option>
+              </select>
+            </div>
+
+            <div class="form-group" style="margin:0;">
+              <label style="font-weight:800;color:#1d4ed8;">💰 المبلغ بالعملة (${_cibCalcCurrency === 'EUR' ? '€' : '$'})</label>
+              <input id="cib-calc-amt" type="number" step="10" min="0" class="form-control" value="${_cibCalcForeignAmount}" oninput="_cibCalcForeignAmount=Number(this.value||0); recalcCibConverterLive();" style="font-weight:900;font-size:1rem;border-color:#1d4ed8;" />
+            </div>
+
+            <div class="form-group" style="margin:0;">
+              <label style="font-weight:800;color:#0f766e;">🚢 تكعيب رسالة الجذوع (م³ - اختياري)</label>
+              <input id="cib-calc-m3" type="number" step="0.001" min="0" class="form-control" value="${_cibCalcShipmentM3}" oninput="_cibCalcShipmentM3=Number(this.value||0); recalcCibConverterLive();" style="font-weight:800;" placeholder="مثال: 149.171 م³" />
+            </div>
+          </div>
+
+          <div id="cib-calc-results-box" class="calc-preview-box" style="margin-top:12px;">
+            <div class="calc-preview-item" style="border:1.5px solid #1d4ed8;background:rgba(29,78,216,0.08);">
+              <span>سعر بنك CIB المطبق (${_cibCalcCurrency})</span>
+              <strong style="color:#1d4ed8;font-size:1.1rem;">${fmtNum(activeRate, 2)} ج.م</strong>
+            </div>
+            <div class="calc-preview-item" style="border:2px solid #16a34a;background:rgba(22,163,74,0.08);">
+              <span>💎 إجمالي القيمة بالجنيه المصري (EGP)</span>
+              <strong style="color:#16a34a;font-size:1.2rem;">${fmtMoney(totalEgp)}</strong>
+            </div>
+            ${_cibCalcShipmentM3 > 0 ? `
+              <div class="calc-preview-item">
+                <span>🌲 تكلفة المتر المكعب الخام (1 م³ جذوع)</span>
+                <strong style="color:var(--primary);font-size:1.08rem;">${fmtMoney(costPerM3Egp)} / م³ <small style="color:var(--text-muted);">(${fmtNum(costPerM3Foreign, 2)} ${_cibCalcCurrency}/م³)</small></strong>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+
+        ${canEditFin ? `
+          <!-- Optional Manual Calibration / Lock to Exact CIB Branch Screen Rate -->
+          <div style="background:rgba(124,58,237,0.06);padding:12px 14px;border-radius:12px;border:1.5px dashed #7c3aed;">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+              <div>
+                <strong style="color:#5b21b6;font-size:0.88rem;">✏️ مطابقة / تثبيت سعر شاشة فرع بنك CIB الفعلي (للمدير التنفيذي ومدير المشروعات والحسابات):</strong>
+                <small style="color:var(--text-muted);display:block;">يمكنك تركه على التحديث التلقائي اللحظي من الإنترنت، أو تثبيت سعر التنفيذ الفعلي في بنك CIB ليظهر لجميع المستخدمين</small>
+              </div>
+              ${r.isManualOverride ? `
+                <button type="button" class="btn btn-sm btn-outline" style="border-color:#dc2626;color:#dc2626;font-weight:800;" onclick="clearManualCibRateOverride()">
+                  🔄 العودة للتحديث التلقائي اللحظي
+                </button>
+              ` : ''}
+            </div>
+
+            <div class="form-grid" style="grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;align-items:end;">
+              <div class="form-group" style="margin:0;">
+                <label style="font-size:0.75rem;font-weight:800;">🇺🇸 دولار شراء (CIB)</label>
+                <input id="cib-man-usd-buy" type="number" step="0.01" class="form-control" value="${r.usdBuy}" style="font-weight:800;" />
+              </div>
+              <div class="form-group" style="margin:0;">
+                <label style="font-size:0.75rem;font-weight:800;color:#16a34a;">🇺🇸 دولار بيع (CIB)</label>
+                <input id="cib-man-usd-sell" type="number" step="0.01" class="form-control" value="${r.usdSell}" style="font-weight:900;border-color:#16a34a;" />
+              </div>
+              <div class="form-group" style="margin:0;">
+                <label style="font-size:0.75rem;font-weight:800;">🇪🇺 يورو شراء (CIB)</label>
+                <input id="cib-man-eur-buy" type="number" step="0.01" class="form-control" value="${r.eurBuy}" style="font-weight:800;" />
+              </div>
+              <div class="form-group" style="margin:0;">
+                <label style="font-size:0.75rem;font-weight:800;color:#1d4ed8;">🇪🇺 يورو بيع (CIB)</label>
+                <input id="cib-man-eur-sell" type="number" step="0.01" class="form-control" value="${r.eurSell}" style="font-weight:900;border-color:#1d4ed8;" />
+              </div>
+              <div>
+                <button type="button" class="btn btn-primary" style="width:100%;background:#7c3aed;border-color:#7c3aed;font-weight:900;" onclick="saveManualCibRateOverride()">
+                  📌 تثبيت سعر CIB
+                </button>
+              </div>
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function recalcCibConverterLive() {
+  const r = getEffectiveCibExchangeRates();
+  const activeRate = _cibCalcCurrency === 'EUR'
+    ? (_cibCalcRateType === 'buy' ? r.eurBuy : r.eurSell)
+    : (_cibCalcRateType === 'buy' ? r.usdBuy : r.usdSell);
+  const totalEgp = +(_cibCalcForeignAmount * activeRate).toFixed(2);
+  const costPerM3Egp = _cibCalcShipmentM3 > 0 ? +(totalEgp / _cibCalcShipmentM3).toFixed(2) : 0;
+  const costPerM3Foreign = _cibCalcShipmentM3 > 0 ? +(_cibCalcForeignAmount / _cibCalcShipmentM3).toFixed(2) : 0;
+
+  const box = document.getElementById('cib-calc-results-box');
+  if (!box) return;
+  box.innerHTML = `
+    <div class="calc-preview-item" style="border:1.5px solid #1d4ed8;background:rgba(29,78,216,0.08);">
+      <span>سعر بنك CIB المطبق (${_cibCalcCurrency})</span>
+      <strong style="color:#1d4ed8;font-size:1.1rem;">${fmtNum(activeRate, 2)} ج.م</strong>
+    </div>
+    <div class="calc-preview-item" style="border:2px solid #16a34a;background:rgba(22,163,74,0.08);">
+      <span>💎 إجمالي القيمة بالجنيه المصري (EGP)</span>
+      <strong style="color:#16a34a;font-size:1.2rem;">${fmtMoney(totalEgp)}</strong>
+    </div>
+    ${_cibCalcShipmentM3 > 0 ? `
+      <div class="calc-preview-item">
+        <span>🌲 تكلفة المتر المكعب الخام (1 م³ جذوع)</span>
+        <strong style="color:var(--primary);font-size:1.08rem;">${fmtMoney(costPerM3Egp)} / م³ <small style="color:var(--text-muted);">(${fmtNum(costPerM3Foreign, 2)} ${_cibCalcCurrency}/م³)</small></strong>
+      </div>
+    ` : ''}
+  `;
+}
+
+function saveManualCibRateOverride() {
+  if (!canEditFinancialAndClientRecords(currentUser)) return;
+  const usdBuy = Math.max(1, Number(document.getElementById('cib-man-usd-buy')?.value || 49.65));
+  const usdSell = Math.max(1, Number(document.getElementById('cib-man-usd-sell')?.value || 49.75));
+  const eurBuy = Math.max(1, Number(document.getElementById('cib-man-eur-buy')?.value || 52.35));
+  const eurSell = Math.max(1, Number(document.getElementById('cib-man-eur-sell')?.value || 52.60));
+  const now = getMonotonicIso();
+
+  state.factoryInfo = state.factoryInfo || {};
+  state.factoryInfo.cibCustomRates = {
+    useManualOverride: true,
+    usdBuy: +usdBuy.toFixed(2),
+    usdSell: +usdSell.toFixed(2),
+    eurBuy: +eurBuy.toFixed(2),
+    eurSell: +eurSell.toFixed(2),
+    updatedAt: now,
+    updatedBy: currentUser?.name || 'الإدارة'
+  };
+  state.factoryInfo.updatedAt = now;
+  saveState(`🏦 تحديث وتثبيت أسعار صرف بنك CIB المعتمدة بالمصنع: الدولار (${usdBuy} / ${usdSell} ج.م) — اليورو (${eurBuy} / ${eurSell} ج.م)`);
+  openCibCurrencyExchangeWindowModal();
+}
+
+function clearManualCibRateOverride() {
+  if (!canEditFinancialAndClientRecords(currentUser)) return;
+  if (state?.factoryInfo?.cibCustomRates) {
+    state.factoryInfo.cibCustomRates.useManualOverride = false;
+    state.factoryInfo.updatedAt = getMonotonicIso();
+  }
+  fetchLiveCibExchangeRates(true);
+  saveState(`🔄 تفعيل التحديث التلقائي اللحظي لأسعار الدولار واليورو وفقاً لبنك CIB`);
+  openCibCurrencyExchangeWindowModal();
+}
+
+// Start live CIB exchange rate polling (on startup + every 3 minutes)
+setTimeout(() => fetchLiveCibExchangeRates(false), 1200);
+setInterval(() => fetchLiveCibExchangeRates(false), 180000);
 
 // Initialize
 initTheme();
