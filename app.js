@@ -4140,6 +4140,18 @@ function render() {
           </button>
           ` : ''}
 
+          <button class="nav-item" style="background:rgba(2,132,199,0.16);border:1px solid rgba(56,189,248,0.45);color:#7dd3fc;font-weight:800;margin-top:4px;" onclick="sidebarOpen=false; openGlobalQuickSearchWindowModal();">
+            <span>🔍 شباك البحث السريع الشامل</span>
+          </button>
+
+          <button class="nav-item" style="background:rgba(217,119,6,0.16);border:1px solid rgba(251,191,36,0.45);color:#fde68a;font-weight:800;" onclick="sidebarOpen=false; openDailyFactorySummaryWindowModal();">
+            <span>📅 شباك تقفيلة وملخص اليوم</span>
+          </button>
+
+          <button class="nav-item" style="background:rgba(15,118,110,0.22);border:1px solid rgba(45,212,191,0.45);color:#5eead4;font-weight:800;" onclick="sidebarOpen=false; openContainerShipmentYieldWindowModal();">
+            <span>🚢 حاسبة تصافي وهالك الرسائل</span>
+          </button>
+
           ${isExecRole ? `
           <button class="nav-item" style="background:rgba(245,158,11,0.18);border:1.5px solid #f59e0b;color:#fde68a;font-weight:900;margin-top:4px;" onclick="sidebarOpen=false; openExecutiveToolsWindowModal();">
             <span>👑 شباك أدوات الإدارة والتحكم ▾</span>
@@ -4177,6 +4189,14 @@ function render() {
                 🚨 موافقات متأخرة (${myDelayedCount}) ▾
               </button>
             ` : ''}
+
+            <button type="button" class="topbar-hub-btn" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;border-color:#38bdf8;" onclick="openGlobalQuickSearchWindowModal()" title="بحث سريع شامل في النظام بالكامل (عميل / طلبية / سيارة / سيريال جذع / شيك)">
+              🔍 بحث شامل
+            </button>
+
+            <button type="button" class="topbar-hub-btn" style="background:linear-gradient(135deg,#d97706,#b45309);color:#fff;border-color:#fbbf24;" onclick="openDailyFactorySummaryWindowModal()" title="فتح شباك تقفيلة وملخص اليوم للمصنع (الجذوع المشغلة + الإنتاج + السيارات المصروفة + التحصيلات)">
+              📅 ملخص اليوم
+            </button>
 
             ${isExecRole ? `
               <button type="button" class="topbar-hub-btn" style="background:linear-gradient(135deg,#0f766e,#115e59);color:#fff;border-color:#14b8a6;" onclick="openExecutiveToolsWindowModal()" title="فتح شباك أدوات الإدارة (التراجع Undo + الطلبية القديمة + تعديل حسابات وأسعار العملاء + شيت الإكسيل)">
@@ -5898,10 +5918,15 @@ function renderDashboard() {
           ${hasPerm('approvals') ? `
             <button class="btn btn-outline" onclick="setTab('approvals')">✅ أذون الصرف وتحميل السيارات</button>
           ` : ''}
+          <button class="btn" style="background:linear-gradient(135deg,#0f766e,#0d9488);color:#fff;font-weight:900;" onclick="openContainerShipmentYieldWindowModal()">🚢 حاسبة تصافي وهالك الرسائل المجمعة</button>
+          <button class="btn" style="background:linear-gradient(135deg,#d97706,#b45309);color:#fff;font-weight:900;" onclick="openDailyFactorySummaryWindowModal()">📅 شباك تقفيلة وملخص اليوم</button>
+          <button class="btn" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;" onclick="openGlobalQuickSearchWindowModal()">🔍 بحث سريع شامل</button>
           <button class="btn btn-outline" onclick="setTab('warehouses')">🔍 أرصدة كميات المخازن الأربعة</button>
         </div>
       </div>
     </div>
+
+    ${renderSmartFinancialAndPalletAlertsBannerHtml()}
 
     <!-- Interactive Wood Veneer Calculator -->
     <div class="card">
@@ -8926,6 +8951,8 @@ function renderAccounting() {
       </div>
     </div>
 
+    ${renderSmartFinancialAndPalletAlertsBannerHtml()}
+
     <!-- Main Clients Directory: Codes, Past Orders, Debts/Receivables, Checks & Pallets Ledger -->
     <div class="card">
       <div class="card-header">
@@ -9022,6 +9049,11 @@ function renderAccounting() {
                       <span class="badge badge-danger">
                         عليه: ${fmtMoney(m.netDebt)}
                       </span>
+                      ${(() => {
+                        const daysSincePay = getClientDaysSinceLastPayment(pt.id);
+                        if (daysSincePay === null) return `<div style="font-size:0.65rem;color:var(--text-muted);margin-top:2px;">لم يسجل دفعات بعد</div>`;
+                        return `<div style="font-size:0.66rem;color:${daysSincePay >= 21 ? 'var(--danger)' : 'var(--text-muted)'};font-weight:800;margin-top:2px;">⏱️ آخر دفعة منذ: ${daysSincePay === 0 ? 'اليوم' : daysSincePay + ' يوم'}</div>`;
+                      })()}
                     ` : isCreditor ? `
                       <span class="badge badge-success">
                         له: ${fmtMoney(Math.abs(m.netDebt))}
@@ -10590,6 +10622,80 @@ function openNewDispatchRequestModal() {
   openNewClientOrderPrepModal();
 }
 
+// v90: Smart Client Last-Price Memory & 1-Click Repeat Last Order
+function getClientLastOrder(clientId) {
+  if (!clientId) return null;
+  const clientObj = (state?.partners || []).find(p => p.id === clientId);
+  const clientOrders = (state?.productionOrders || []).filter(o =>
+    o && (o.clientId === clientId || (clientObj && o.clientName && o.clientName.trim() === clientObj.name.trim())) &&
+    Array.isArray(o.items) && o.items.length > 0
+  );
+  if (clientOrders.length === 0) return null;
+  return clientOrders[0];
+}
+
+function getClientLastUnitPriceForCell(clientId, thicknessMm, direction, gradeId, gradeName = '') {
+  if (!clientId) return null;
+  const clientObj = (state?.partners || []).find(p => p.id === clientId);
+  const clientOrders = (state?.productionOrders || []).filter(o =>
+    o && (o.clientId === clientId || (clientObj && o.clientName && o.clientName.trim() === clientObj.name.trim())) &&
+    Array.isArray(o.items) && o.items.length > 0
+  );
+  const targetMm = Number(thicknessMm || 0);
+  const targetDir = direction === 'sada' ? 'sada' : 'qas';
+  for (const ord of clientOrders) {
+    for (const it of (ord.items || [])) {
+      const itMm = Number(it.thicknessMm || 0);
+      const itDir = it.direction === 'sada' ? 'sada' : 'qas';
+      const sameGrade = (gradeId && it.gradeId === gradeId) || (gradeName && it.gradeName === gradeName);
+      if (Math.abs(itMm - targetMm) < 0.01 && itDir === targetDir && sameGrade && Number(it.unitPrice || 0) > 0) {
+        return {
+          unitPrice: Number(it.unitPrice),
+          orderNumber: ord.orderNumber || '',
+          date: ord.date || ''
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function applyClientLastPriceToDraftItem(idx, priceVal) {
+  const item = draftOrderItems[idx];
+  if (!item || !(Number(priceVal) > 0)) return;
+  item.unitPrice = Number(priceVal);
+  renderDraftOrderItemsTable();
+}
+
+function repeatLastOrderForSelectedClient() {
+  const clientId = document.getElementById('ord-client')?.value || '';
+  const lastOrd = getClientLastOrder(clientId);
+  if (!lastOrd || !Array.isArray(lastOrd.items) || lastOrd.items.length === 0) {
+    alert('لا توجد طلبيات سابقة مسجلة لهذا العميل لتكرار بنودها!');
+    return;
+  }
+  draftOrderItems = lastOrd.items.map(it => ({
+    id: uid('oit'),
+    itemDescription: it.itemDescription || it.woodTypeName || 'قشرة حور بلجيكي',
+    woodTypeId: it.woodTypeId || 'wt-general',
+    woodTypeName: it.woodTypeName || 'قشرة حور بلجيكي',
+    lengthCm: Number(it.lengthCm || 250),
+    widthCm: Number(it.widthCm || 125),
+    customDimMode: !isStandardVeneerDimension(Number(it.lengthCm || 250), Number(it.widthCm || 125)),
+    thicknessId: it.thicknessId || `th-${it.thicknessMm || 1.5}-${it.direction || 'qas'}`,
+    thicknessMm: Number(it.thicknessMm || 1.5),
+    direction: it.direction || 'qas',
+    directionLabel: (it.direction || 'qas') === 'sada' ? 'اتجاه سدا' : 'اتجاه قص',
+    customThkMode: false,
+    gradeId: it.gradeId || '',
+    gradeCode: it.gradeCode || it.gradeName || '',
+    gradeName: it.gradeName || '',
+    sheetsCount: Math.max(1, Number(it.sheetsCount || 200)),
+    unitPrice: Math.max(0, Number(it.unitPrice || 0))
+  }));
+  renderDraftOrderItemsTable();
+}
+
 function openNewClientOrderPrepModal(preselectedClientId = '', isOldOrderMode = false) {
   if (!canIssuePrepOrders(currentUser)) {
     alert('⛔ عفواً، غير مسموح لحسابك بإصدار أوامر التجهيز.');
@@ -10734,11 +10840,16 @@ function openNewClientOrderPrepModal(preselectedClientId = '', isOldOrderMode = 
           <div style="background:var(--bg-elevated);padding:14px;border-radius:12px;border:1px solid var(--border-color);margin-bottom:14px;">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
               <div>
-                <strong style="color:var(--primary);font-size:0.92rem;">🪵 جدول بنود البيان (المسلسل | البيان | المقاس | الاتجاه | التخانة | الجودة | الكمية | السعر | الإجمالي):</strong>
+                <strong style="color:var(--primary);font-size:0.92rem;">🪵 جدول بنود البيان (المسلسل | البيان | المقاس | الاتجاه | التخانة | الجودة | الكمية | السعر + ذاكرة آخر سعر للعميل | الإجمالي):</strong>
               </div>
-              <button type="button" class="btn btn-sm btn-primary" onclick="addDraftOrderItemRow()">
-                ➕ إضافة بند آخر للبيان
-              </button>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;font-weight:900;" onclick="repeatLastOrderForSelectedClient()" title="نسخ الأصناف والتخانات والجودات والأسعار من آخر طلبية مسجلة لهذا العميل بضغطة واحدة">
+                  🔄 تكرار بنود آخر طلبية لهذا العميل
+                </button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="addDraftOrderItemRow()">
+                  ➕ إضافة بند آخر للبيان
+                </button>
+              </div>
             </div>
 
             <div id="draft-order-items-container" class="table-responsive"></div>
@@ -10906,6 +11017,7 @@ function onDraftOrderClientSelectionChange(clientId) {
     if (lblDebtEl) delete lblDebtEl.dataset.manual;
     if (lblRetEl) delete lblRetEl.dataset.manual;
   }
+  renderDraftOrderItemsTable();
   recalcDraftOrderTotals('client');
 }
 
@@ -11146,6 +11258,18 @@ function renderDraftOrderItemsTable() {
                       <button type="button" class="btn btn-sm btn-outline" style="padding:0px 4px;font-size:0.62rem;" onclick="resetDraftItemToTablePrice(${idx})">🔄</button>
                     ` : ''}
                   </small>
+                  ${(() => {
+                    const selClientId = document.getElementById('ord-client')?.value || '';
+                    const lastPriceInfo = getClientLastUnitPriceForCell(selClientId, it.thicknessMm, it.direction, it.gradeId, it.gradeName);
+                    if (!lastPriceInfo) return '';
+                    const isDiff = Math.abs(Number(it.unitPrice || 0) - Number(lastPriceInfo.unitPrice)) > 0.01;
+                    return `
+                      <div style="font-size:0.64rem;margin-top:1px;padding:2px 4px;border-radius:4px;background:${isDiff ? 'rgba(217,119,6,0.12)' : 'rgba(22,163,74,0.1)'};color:${isDiff ? '#b45309' : '#15803d'};font-weight:800;" title="آخر سعر لهذا العميل لنفس التخانة والجودة في طلبية (${lastPriceInfo.orderNumber}) بتاريخ ${lastPriceInfo.date}">
+                        آخر سعر للعميل: <strong>${fmtNum(lastPriceInfo.unitPrice, 2)} ج</strong>
+                        ${isDiff ? `<button type="button" class="btn btn-sm" style="padding:0 4px;font-size:0.6rem;background:#d97706;color:#fff;margin-right:2px;" onclick="applyClientLastPriceToDraftItem(${idx}, ${lastPriceInfo.unitPrice})">تطبيق</button>` : '✅'}
+                      </div>
+                    `;
+                  })()}
                 </div>
               </td>
               <td>
@@ -24034,12 +24158,21 @@ function getContainerMetrics(container) {
       totalLogsCount: 0, processedLogsCount: 0, remainingLogsCount: 0,
       totalVolumeM3: 0, processedVolumeM3: 0, remainingVolumeM3: 0,
       densityTonPerM3: 0.75, expectedYieldPct: 65,
+      expectedLossPct: 35, expectedScrapPct: 17.5, expectedVanishedPct: 17.5,
       totalWeightTon: 0, processedWeightTon: 0, remainingWeightTon: 0,
       expectedFinishedM3: 0, expectedFinishedTon: 0,
+      expectedTotalLossM3: 0, expectedTotalLossTon: 0,
       expectedScrapM3: 0, expectedScrapTon: 0,
-      processedExpectedFinishedM3: 0, processedExpectedScrapM3: 0, processedExpectedScrapTon: 0,
+      expectedVanishedM3: 0, expectedVanishedTon: 0,
+      processedExpectedFinishedM3: 0,
+      processedExpectedTotalLossM3: 0, processedExpectedTotalLossTon: 0,
+      processedExpectedScrapM3: 0, processedExpectedScrapTon: 0,
+      processedExpectedVanishedM3: 0, processedExpectedVanishedTon: 0,
       actualFinishedM3: 0, actualYieldPctOnProcessed: 0,
+      actualLossPctOnProcessed: 0, actualScrapPctOnProcessed: 0, actualVanishedPctOnProcessed: 0,
+      actualTotalLossM3: 0, actualTotalLossTon: 0,
       actualScrapM3: 0, actualScrapTon: 0,
+      actualVanishedM3: 0, actualVanishedTon: 0,
       yieldDiffPct: 0, scrapDiffTon: 0, logs: []
     };
   }
@@ -24054,7 +24187,10 @@ function getContainerMetrics(container) {
 
   const densityTonPerM3 = Math.max(0.1, Number(container.densityTonPerM3 || 0.75));
   const expectedYieldPct = Math.min(100, Math.max(1, Number(container.expectedYieldPct || 65)));
-  const expectedScrapPct = +(100 - expectedYieldPct).toFixed(2);
+  // v90 Domain Rule: Non-yield loss (100% - yieldPct) splits 50% Actual Recoverable Scrap + 50% Vanished Loss (Shrinkage + Burned Outer Bark/Kalaf)
+  const expectedLossPct = +(100 - expectedYieldPct).toFixed(2);
+  const expectedScrapPct = +(expectedLossPct * 0.5).toFixed(2);
+  const expectedVanishedPct = +(expectedLossPct * 0.5).toFixed(2);
 
   const totalWeightTon = +(totalVolumeM3 * densityTonPerM3).toFixed(3);
   const processedWeightTon = +(processedVolumeM3 * densityTonPerM3).toFixed(3);
@@ -24062,19 +24198,35 @@ function getContainerMetrics(container) {
 
   const expectedFinishedM3 = +(totalVolumeM3 * (expectedYieldPct / 100)).toFixed(4);
   const expectedFinishedTon = +(expectedFinishedM3 * densityTonPerM3).toFixed(3);
-  const expectedScrapM3 = +Math.max(0, totalVolumeM3 - expectedFinishedM3).toFixed(4);
+  const expectedTotalLossM3 = +Math.max(0, totalVolumeM3 - expectedFinishedM3).toFixed(4);
+  const expectedTotalLossTon = +(expectedTotalLossM3 * densityTonPerM3).toFixed(3);
+  const expectedScrapM3 = +(expectedTotalLossM3 * 0.5).toFixed(4);
   const expectedScrapTon = +(expectedScrapM3 * densityTonPerM3).toFixed(3);
+  const expectedVanishedM3 = +(expectedTotalLossM3 * 0.5).toFixed(4);
+  const expectedVanishedTon = +(expectedVanishedM3 * densityTonPerM3).toFixed(3);
 
   const processedExpectedFinishedM3 = +(processedVolumeM3 * (expectedYieldPct / 100)).toFixed(4);
-  const processedExpectedScrapM3 = +Math.max(0, processedVolumeM3 - processedExpectedFinishedM3).toFixed(4);
+  const processedExpectedTotalLossM3 = +Math.max(0, processedVolumeM3 - processedExpectedFinishedM3).toFixed(4);
+  const processedExpectedTotalLossTon = +(processedExpectedTotalLossM3 * densityTonPerM3).toFixed(3);
+  const processedExpectedScrapM3 = +(processedExpectedTotalLossM3 * 0.5).toFixed(4);
   const processedExpectedScrapTon = +(processedExpectedScrapM3 * densityTonPerM3).toFixed(3);
+  const processedExpectedVanishedM3 = +(processedExpectedTotalLossM3 * 0.5).toFixed(4);
+  const processedExpectedVanishedTon = +(processedExpectedVanishedM3 * densityTonPerM3).toFixed(3);
 
   const hasCustomActual = container.actualFinishedM3 !== undefined && container.actualFinishedM3 !== null && container.actualFinishedM3 !== '';
   const actualFinishedM3 = hasCustomActual ? Math.max(0, Number(container.actualFinishedM3 || 0)) : processedExpectedFinishedM3;
   const baseVolForActual = processedVolumeM3 > 0 ? processedVolumeM3 : totalVolumeM3;
   const actualYieldPctOnProcessed = baseVolForActual > 0 ? +((actualFinishedM3 / baseVolForActual) * 100).toFixed(2) : expectedYieldPct;
-  const actualScrapM3 = +Math.max(0, baseVolForActual - actualFinishedM3).toFixed(4);
+  const actualLossPctOnProcessed = +Math.max(0, 100 - actualYieldPctOnProcessed).toFixed(2);
+  const actualScrapPctOnProcessed = +(actualLossPctOnProcessed * 0.5).toFixed(2);
+  const actualVanishedPctOnProcessed = +(actualLossPctOnProcessed * 0.5).toFixed(2);
+
+  const actualTotalLossM3 = +Math.max(0, baseVolForActual - actualFinishedM3).toFixed(4);
+  const actualTotalLossTon = +(actualTotalLossM3 * densityTonPerM3).toFixed(3);
+  const actualScrapM3 = +(actualTotalLossM3 * 0.5).toFixed(4);
   const actualScrapTon = +(actualScrapM3 * densityTonPerM3).toFixed(3);
+  const actualVanishedM3 = +(actualTotalLossM3 * 0.5).toFixed(4);
+  const actualVanishedTon = +(actualVanishedM3 * densityTonPerM3).toFixed(3);
 
   const yieldDiffPct = +(actualYieldPctOnProcessed - expectedYieldPct).toFixed(2);
   const scrapDiffTon = +(actualScrapTon - (processedVolumeM3 > 0 ? processedExpectedScrapTon : expectedScrapTon)).toFixed(3);
@@ -24088,21 +24240,38 @@ function getContainerMetrics(container) {
     remainingVolumeM3,
     densityTonPerM3,
     expectedYieldPct,
+    expectedLossPct,
     expectedScrapPct,
+    expectedVanishedPct,
     totalWeightTon,
     processedWeightTon,
     remainingWeightTon,
     expectedFinishedM3,
     expectedFinishedTon,
+    expectedTotalLossM3,
+    expectedTotalLossTon,
     expectedScrapM3,
     expectedScrapTon,
+    expectedVanishedM3,
+    expectedVanishedTon,
     processedExpectedFinishedM3,
+    processedExpectedTotalLossM3,
+    processedExpectedTotalLossTon,
     processedExpectedScrapM3,
     processedExpectedScrapTon,
+    processedExpectedVanishedM3,
+    processedExpectedVanishedTon,
     actualFinishedM3,
     actualYieldPctOnProcessed,
+    actualLossPctOnProcessed,
+    actualScrapPctOnProcessed,
+    actualVanishedPctOnProcessed,
+    actualTotalLossM3,
+    actualTotalLossTon,
     actualScrapM3,
     actualScrapTon,
+    actualVanishedM3,
+    actualVanishedTon,
     yieldDiffPct,
     scrapDiffTon,
     logs
@@ -24123,10 +24292,12 @@ function renderLogContainersAndSerialsSection() {
   const remainingVolM3 = Math.max(0, totalVolM3 - processedVolM3);
 
   let totalExpectedScrapTon = 0;
+  let totalExpectedVanishedTon = 0;
   let totalExpectedFinishedM3 = 0;
   for (const c of containers) {
     const cm = getContainerMetrics(c);
     totalExpectedScrapTon += cm.expectedScrapTon;
+    totalExpectedVanishedTon += cm.expectedVanishedTon;
     totalExpectedFinishedM3 += cm.expectedFinishedM3;
   }
 
@@ -24150,13 +24321,16 @@ function renderLogContainersAndSerialsSection() {
       <div class="card-header">
         <div>
           <div class="card-title" style="font-size:1.05rem;color:var(--primary);">
-            🚢 منظومة رسائل وحاويات جذوع الأشجار بالسيريال + استيراد PDF الفوري + حساب الكثافة ونسبة الاستخراج والهالك بالطن
+            🚢 منظومة رسائل وحاويات جذوع الأشجار بالسيريال + حساب تصافي الرسالة المجمعة (50% هالك فعلي + 50% انكماش وكَلَف منعدم)
           </div>
           <small style="color:var(--text-muted);">
-            استيراد بيان المورد (PDF أو نسخ ولصق جماعي) في ثوانٍ بدون إدخال جذع بجذع، مع متابعة ما تم تشغيله وما لم يتم تشغيله وحساب الهالك بالطن حسب الكثافة
+            استيراد بيان المورد (PDF أو نسخ ولصق) وحساب تصافي الرسالة على بعضها بعد التشغيل على عدة أيام (نصف الفرق فقط هالك فعلي، والنصف الآخر فاقد منعدم انكماش + حرق الكَلَف)
           </small>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#0f766e,#0d9488);color:#fff;font-weight:900;border:2px solid #5eead4;" onclick="openContainerShipmentYieldWindowModal()">
+            🚢📊 شباك حساب تصافي وهالك رسالة الحاويات المجمعة (عدة أيام)
+          </button>
           <button type="button" class="btn btn-sm btn-outline" onclick="printLogContainersAndSerialsReportPdf()">
             🖨️ طباعة بيان الحاويات والجذوع PDF
           </button>
@@ -24191,15 +24365,16 @@ function renderLogContainersAndSerialsSection() {
           <small style="font-weight:700;">تكعيب متبقي: ${fmtNum(remainingVolM3, 4)} م³</small>
         </div>
         <div style="background:var(--bg-card);padding:12px;border-radius:10px;border-right:4px solid #0284c7;box-shadow:0 2px 5px rgba(0,0,0,0.04);">
-          <small style="color:var(--text-muted);">⚙️ جذوع تم تشغيلها (تقشير)</small>
+          <small style="color:var(--text-muted);">⚙️ جذوع تم تشغيلها (على عدة أيام)</small>
           <div style="font-weight:900;font-size:1.05rem;color:#0284c7;">${fmtNum(processedLogs.length, 0)} جذع مُشغّل</div>
           <small style="font-weight:700;">تكعيب مُشغّل: ${fmtNum(processedVolM3, 4)} م³</small>
         </div>
-        <div style="background:var(--bg-card);padding:12px;border-radius:10px;border-right:4px solid #d97706;box-shadow:0 2px 5px rgba(0,0,0,0.04);">
-          <small style="color:var(--text-muted);">⚖️ استخراج المنتج التام والهالك بالطن</small>
-          <div style="font-weight:900;font-size:0.95rem;color:#b45309;">
-            توقع قشرة تامة: ${fmtNum(totalExpectedFinishedM3, 3)} م³<br/>
-            <span style="color:var(--danger);">إجمالي الهالك المتوقع: ${fmtNum(totalExpectedScrapTon, 3)} طن</span>
+        <div style="background:var(--bg-card);padding:12px;border-radius:10px;border-right:4px solid #d97706;box-shadow:0 2px 5px rgba(0,0,0,0.04);cursor:pointer;" onclick="openContainerShipmentYieldWindowModal()" title="اضغط لفتح شباك حساب تصافي الرسالة المجمعة">
+          <small style="color:var(--text-muted);">⚖️ المنتج التام والهالك الفعلي (50%) والمنعدم (50%)</small>
+          <div style="font-weight:900;font-size:0.86rem;color:#b45309;line-height:1.4;">
+            قشرة متوقعة: <strong>${fmtNum(totalExpectedFinishedM3, 3)} م³</strong><br/>
+            <span style="color:var(--danger);">♻️ هالك فعلي (نصف الفاقد): ${fmtNum(totalExpectedScrapTon, 3)} طن</span><br/>
+            <span style="color:#64748b;">🔥 انكماش وكَلَف منعدم (النصف الآخر): ${fmtNum(totalExpectedVanishedTon, 3)} طن</span>
           </div>
         </div>
       </div>
@@ -24245,7 +24420,7 @@ function renderLogContainersAndSerialsSection() {
                   <th>متبقي بالمخزن ⏳</th>
                   <th>الكثافة (طن/م³) والوزن</th>
                   <th>نسبة الاستخراج (منتج تام)</th>
-                  <th>الهالك (م³ وبالطن) والفرق</th>
+                  <th>توزيع الفاقد: 50% هالك فعلي + 50% منعدم (انكماش وكَلَف)</th>
                   <th>إجراءات</th>
                 </tr>
               </thead>
@@ -24286,12 +24461,16 @@ function renderLogContainersAndSerialsSection() {
                         </div>
                       </td>
                       <td>
-                        <span class="badge badge-danger">هالك: ${fmtNum(cm.expectedScrapPct, 1)}%</span>
-                        <div style="font-size:0.75rem;margin-top:2px;">
-                          متوقع: <strong>${fmtNum(cm.expectedScrapTon, 3)} طن</strong> (${fmtNum(cm.expectedScrapM3, 3)} م³)
+                        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:3px;">
+                          <span class="badge badge-danger" title="نصف الفاقد فقط يخرج كهالك فعلي">♻️ هالك فعلي: ${fmtNum(cm.expectedScrapPct, 1)}%</span>
+                          <span class="badge" style="background:#64748b;color:#fff;" title="النصف الآخر منعدم بسبب انكماش القشرة وحرق الكَلَف الخارجي للجذع">🔥 منعدم (انكماش+كَلَف): ${fmtNum(cm.expectedVanishedPct, 1)}%</span>
+                        </div>
+                        <div style="font-size:0.73rem;line-height:1.4;">
+                          ♻️ هالك متوقع: <strong>${fmtNum(cm.expectedScrapTon, 3)} طن</strong> (${fmtNum(cm.expectedScrapM3, 3)} م³)<br/>
+                          🔥 منعدم متوقع: <strong style="color:#64748b;">${fmtNum(cm.expectedVanishedTon, 3)} طن</strong> (${fmtNum(cm.expectedVanishedM3, 3)} م³)
                           ${c.actualFinishedM3 !== undefined && c.actualFinishedM3 !== null && c.actualFinishedM3 !== '' ? `
-                            <br/><strong style="color:var(--danger);">هالك فعلي: ${fmtNum(cm.actualScrapTon, 3)} طن</strong>
-                            <small>(فرق: ${cm.scrapDiffTon > 0 ? '+' : ''}${fmtNum(cm.scrapDiffTon, 3)} طن)</small>
+                            <br/><strong style="color:var(--danger);">♻️ هالك فعلي محقق (${fmtNum(cm.actualScrapPctOnProcessed, 1)}%): ${fmtNum(cm.actualScrapTon, 3)} طن</strong>
+                            <br/><span style="color:#64748b;font-weight:700;">🔥 منعدم فعلي (${fmtNum(cm.actualVanishedPctOnProcessed, 1)}%): ${fmtNum(cm.actualVanishedTon, 3)} طن</span>
                           ` : ''}
                         </div>
                       </td>
@@ -25789,13 +25968,18 @@ function recalcDraftImportLogsSummary() {
   const totalM3 = +draftImportedLogs.reduce((s, r) => s + Number(r.volumeM3 || 0), 0).toFixed(4);
   const density = Math.max(0.1, Number(document.getElementById('imp-cnt-density')?.value || 0.75));
   const yieldPct = Math.min(100, Math.max(1, Number(document.getElementById('imp-cnt-yield')?.value || 65)));
-  const scrapPct = +(100 - yieldPct).toFixed(1);
+  const totalLossPct = +(100 - yieldPct).toFixed(1);
+  const actualScrapPct = +(totalLossPct * 0.5).toFixed(1);
+  const vanishedPct = +(totalLossPct * 0.5).toFixed(1);
 
   const totalWeightTon = +(totalM3 * density).toFixed(3);
   const expectedFinishedM3 = +(totalM3 * (yieldPct / 100)).toFixed(4);
   const expectedFinishedTon = +(expectedFinishedM3 * density).toFixed(3);
-  const expectedScrapM3 = +Math.max(0, totalM3 - expectedFinishedM3).toFixed(4);
+  const totalLossM3 = +Math.max(0, totalM3 - expectedFinishedM3).toFixed(4);
+  const expectedScrapM3 = +(totalLossM3 * 0.5).toFixed(4);
   const expectedScrapTon = +(expectedScrapM3 * density).toFixed(3);
+  const expectedVanishedM3 = +(totalLossM3 * 0.5).toFixed(4);
+  const expectedVanishedTon = +(expectedVanishedM3 * density).toFixed(3);
 
   sumEl.innerHTML = `
     <div class="calc-preview-item">
@@ -25815,8 +25999,12 @@ function recalcDraftImportLogsSummary() {
       <strong style="color:var(--success);">${fmtNum(expectedFinishedM3, 3)} م³ (${fmtNum(expectedFinishedTon, 3)} طن)</strong>
     </div>
     <div class="calc-preview-item">
-      <span>الهالك المتوقع (${scrapPct}%) بالطن والمتر</span>
+      <span>♻️ الهالك الفعلي المتوقع (50% من الفرق = ${actualScrapPct}%)</span>
       <strong style="color:var(--danger);">${fmtNum(expectedScrapTon, 3)} طن هالك (${fmtNum(expectedScrapM3, 3)} م³)</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>🔥 الفاقد المنعدم: انكماش + حرق الكَلَف (50% = ${vanishedPct}%)</span>
+      <strong style="color:#64748b;">${fmtNum(expectedVanishedTon, 3)} طن منعدم (${fmtNum(expectedVanishedM3, 3)} م³)</strong>
     </div>
   `;
 }
@@ -26238,7 +26426,7 @@ function openContainerYieldDensityModal(containerId) {
             <div class="form-group">
               <label style="font-weight:800;color:var(--success);">📊 نسبة استخراج المنتج التام المتوقعة للرسالة (%)</label>
               <input id="cy-yield-pct" type="number" step="0.5" min="1" max="99" class="form-control" value="${cm.expectedYieldPct}" oninput="recalcContainerYieldModalLive('${c.id}')" required style="font-weight:900;border-color:var(--success);" />
-              <small style="color:var(--text-muted);">الباقي (${fmtNum(100 - cm.expectedYieldPct, 1)}%) يُحسب هوالك بالطن</small>
+              <small style="color:var(--text-muted);">الفرق (${fmtNum(100 - cm.expectedYieldPct, 1)}%) يُقسم: <strong>50% هالك فعلي (${fmtNum((100 - cm.expectedYieldPct) * 0.5, 1)}%)</strong> + <strong>50% انكماش وكَلَف منعدم (${fmtNum((100 - cm.expectedYieldPct) * 0.5, 1)}%)</strong></small>
             </div>
             <div class="form-group" style="grid-column: 1 / -1;background:rgba(124,58,237,0.06);padding:10px 12px;border-radius:10px;border:1px solid rgba(124,58,237,0.3);">
               <label style="font-weight:800;color:#5b21b6;">🪵 حجم القشرة التامة الفعلي المستخرج من التشغيل بالمتر المكعب (اختياري لمقارنة المتوقع بالفعلي):</label>
@@ -26292,16 +26480,24 @@ function recalcContainerYieldModalLive(containerId) {
       <strong style="color:var(--success);">${fmtNum(cm.expectedFinishedM3, 3)} م³ (${fmtNum(cm.expectedFinishedTon, 3)} طن)</strong>
     </div>
     <div class="calc-preview-item">
-      <span>الهالك المتوقع (${cm.expectedScrapPct}%) بالطن</span>
+      <span>♻️ الهالك الفعلي المتوقع (50% من الفرق = ${cm.expectedScrapPct}%)</span>
       <strong style="color:var(--danger);">${fmtNum(cm.expectedScrapTon, 3)} طن (${fmtNum(cm.expectedScrapM3, 3)} م³)</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>🔥 الفاقد المنعدم: انكماش + حرق الكَلَف (50% = ${cm.expectedVanishedPct}%)</span>
+      <strong style="color:#64748b;">${fmtNum(cm.expectedVanishedTon, 3)} طن (${fmtNum(cm.expectedVanishedM3, 3)} م³)</strong>
     </div>
     <div class="calc-preview-item">
       <span>المنتج التام الفعلي ونسبة الاستخراج الفعلية</span>
       <strong style="color:#7c3aed;">${fmtNum(cm.actualFinishedM3, 3)} م³ (${fmtNum(cm.actualYieldPctOnProcessed, 1)}%)</strong>
     </div>
     <div class="calc-preview-item">
-      <span>الهالك الفعلي بالطن والفرق عن المتوقع</span>
-      <strong style="color:var(--danger);">${fmtNum(cm.actualScrapTon, 3)} طن (${cm.scrapDiffTon > 0 ? '+' : ''}${fmtNum(cm.scrapDiffTon, 3)} طن)</strong>
+      <span>♻️ الهالك الفعلي المحقق (${cm.actualScrapPctOnProcessed}%) بالطن</span>
+      <strong style="color:var(--danger);">${fmtNum(cm.actualScrapTon, 3)} طن (${fmtNum(cm.actualScrapM3, 3)} م³)</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>🔥 الفاقد المنعدم الفعلي (${cm.actualVanishedPctOnProcessed}% انكماش + كَلَف)</span>
+      <strong style="color:#64748b;">${fmtNum(cm.actualVanishedTon, 3)} طن (${fmtNum(cm.actualVanishedM3, 3)} م³)</strong>
     </div>
   `;
 }
@@ -26391,16 +26587,19 @@ function printLogContainersAndSerialsReportPdf() {
         <td><strong>${cm.remainingLogsCount} جذع (${fmtNum(cm.remainingVolumeM3, 4)} م³)</strong></td>
         <td>${cm.densityTonPerM3} طن/م³ (${fmtNum(cm.totalWeightTon, 3)} طن)</td>
         <td>${cm.expectedYieldPct}% (${fmtNum(cm.expectedFinishedM3, 3)} م³)</td>
-        <td><strong>${fmtNum(cm.expectedScrapTon, 3)} طن (${fmtNum(cm.expectedScrapM3, 3)} م³)</strong></td>
+        <td>
+          <strong>♻️ هالك (${fmtNum(cm.expectedScrapPct, 1)}%): ${fmtNum(cm.expectedScrapTon, 3)} طن (${fmtNum(cm.expectedScrapM3, 3)} م³)</strong><br/>
+          <small style="color:#475569;">🔥 منعدم (${fmtNum(cm.expectedVanishedPct, 1)}%): ${fmtNum(cm.expectedVanishedTon, 3)} طن (${fmtNum(cm.expectedVanishedM3, 3)} م³)</small>
+        </td>
       </tr>
     `;
   }).join('');
 
   triggerOfficialReportPdf(
-    '🚢 تقرير حاويات وسيريالات جذوع الأشجار ونسب الاستخراج والهالك بالطن',
-    'بيان شامل لما تم تشغيله وما لم يتم تشغيله من سيريالات الجذوع وحسابات الكثافة والهالك بالطن',
+    '🚢 تقرير حاويات وسيريالات جذوع الأشجار ونسب الاستخراج والهالك الفعلي (50%) والمنعدم (50%)',
+    'بيان شامل لما تم تشغيله وما لم يتم تشغيله من سيريالات الجذوع وتوزيع الفاقد: نصفه هالك فعلي والنصف الآخر منعدم (انكماش القشرة + حرق الكَلَف)',
     `
-      <h3 style="margin:10px 0 6px 0;">1️⃣ ملخص الحاويات والكثافة ونسبة استخراج المنتج التام والهالك بالطن:</h3>
+      <h3 style="margin:10px 0 6px 0;">1️⃣ ملخص الحاويات والكثافة ونسبة استخراج المنتج التام وتوزيع الفاقد (50% هالك فعلي + 50% انكماش وكَلَف منعدم):</h3>
       <table class="pdf-report-table">
         <thead>
           <tr>
@@ -26411,7 +26610,7 @@ function printLogContainersAndSerialsReportPdf() {
             <th>متبقي بالمخزن</th>
             <th>الكثافة والوزن</th>
             <th>المنتج التام المتوقع</th>
-            <th>الهالك بالطن والمتر</th>
+            <th>الهالك الفعلي (50%) والمنعدم (50%)</th>
           </tr>
         </thead>
         <tbody>${containersSummaryHtml || '<tr><td colspan="8">لا توجد حاويات مسجلة</td></tr>'}</tbody>
@@ -26432,6 +26631,492 @@ function printLogContainersAndSerialsReportPdf() {
           </tr>
         </thead>
         <tbody>${rowsHtml || '<tr><td colspan="8">لا توجد جذوع مسجلة</td></tr>'}</tbody>
+      </table>
+    `,
+    true
+  );
+}
+
+// ============================================================================
+// v90: MULTI-DAY CONTAINER SHIPMENT / BATCH YIELD, ACTUAL SCRAP (50%) & VANISHED LOSS (50%) ANALYZER
+// (حاسبة تصافي الرسالة / الحاويات المجمعة بعد التشغيل على عدة أيام: نصف الفرق هالك فعلي والنصف الآخر فاقد منعدم انكماش + حرق الكَلَف)
+// ============================================================================
+let shipmentYieldSelectedGroupKey = 'all';
+let shipmentYieldSelectedContainerIds = [];
+let shipmentYieldCustomProductionM3 = '';
+let shipmentYieldCustomSheets = '';
+let shipmentYieldCustomThkMm = 1.5;
+let shipmentYieldUseProcessedOnly = false;
+let shipmentYieldDateFrom = '';
+let shipmentYieldDateTo = '';
+
+function getShipmentGroupsFromContainers() {
+  const containers = state?.logContainers || [];
+  const groupsMap = new Map();
+  for (const c of containers) {
+    const sup = (c.supplierName || 'مورد أخشاب').trim();
+    const arr = (c.arrivalDate || '').trim();
+    const key = `${sup}||${arr}`;
+    if (!groupsMap.has(key)) {
+      groupsMap.set(key, {
+        key,
+        label: `🚢 رسالة (${sup}) — تاريخ الوصول: ${arr || 'غير محدد'}`,
+        supplierName: sup,
+        arrivalDate: arr,
+        containerIds: []
+      });
+    }
+    groupsMap.get(key).containerIds.push(c.id);
+  }
+  return Array.from(groupsMap.values());
+}
+
+function getWarehouseProductionVolumeForDateRange(fromDate = '', toDate = '') {
+  const movs = (state?.warehouseMovements || []).filter(m => {
+    if (!m || m.warehouseType !== 'finished_veneers' || m.direction !== 'in') return false;
+    if (m.movementCategory === 'sales_return_in') return false;
+    const dStr = String(m.operationDate || m.date || m.updatedAt || '').slice(0, 10);
+    if (fromDate && dStr < fromDate) return false;
+    if (toDate && dStr > toDate) return false;
+    return true;
+  });
+  let totalSheets = 0;
+  let totalVolumeM3 = 0;
+  for (const m of movs) {
+    const det = extractProductionEntryDetails(m);
+    if (det) {
+      totalSheets += Number(det.sheetsCount || 0);
+      totalVolumeM3 += Number(det.volumeM3 || 0);
+    }
+  }
+  return {
+    movementsCount: movs.length,
+    totalSheets: Math.round(totalSheets),
+    totalVolumeM3: +totalVolumeM3.toFixed(4)
+  };
+}
+
+function openContainerShipmentYieldWindowModal(preselectContainerId = '') {
+  const containers = state?.logContainers || [];
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+
+  if (preselectContainerId) {
+    shipmentYieldSelectedGroupKey = 'custom';
+    shipmentYieldSelectedContainerIds = [preselectContainerId];
+  } else if (!shipmentYieldSelectedContainerIds.length || shipmentYieldSelectedGroupKey === 'all') {
+    shipmentYieldSelectedGroupKey = 'all';
+    shipmentYieldSelectedContainerIds = containers.map(c => c.id);
+  }
+
+  const groups = getShipmentGroupsFromContainers();
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:980px;">
+        <div class="card-header" style="border-bottom:2.5px solid #0f766e;padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:#0f766e;font-size:1.12rem;">
+              🚢📊 شباك حساب تصافي وهالك رسالة الحاويات المجمعة (التشغيل على عدة أيام)
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              حساب إنتاج الرسالة / الحاويات على بعضها بعد تشغيلها على كذا يوم، مع تطبيق معادلة المصنع الدقيقة: <strong style="color:var(--danger);">نصف الفاقد (50%) فقط = هالك فعلي</strong>، و<strong style="color:#475569;">النصف الآخر (50%) = فاقد منعدم (انكماش القشرة + حرق الكَلَف الخارجي للجذع)</strong>
+            </small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <!-- Step 1: Select Shipment / Containers Batch & Base Mode -->
+        <div style="background:var(--bg-elevated);padding:12px 14px;border-radius:12px;border:1px solid var(--border-color);margin-bottom:12px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+            <div style="font-weight:900;color:var(--primary);font-size:0.92rem;">
+              1️⃣ اختر الرسالة المجمعة (أو حدد حاويات معينة اشتغلت مع بعض على عدة أيام):
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button type="button" class="btn btn-sm ${shipmentYieldSelectedGroupKey === 'all' ? 'btn-primary' : 'btn-outline'}" style="font-weight:800;" onclick="selectShipmentYieldGroup('all')">
+                🚢 كل الرسائل والحاويات (${containers.length})
+              </button>
+              ${groups.map(g => `
+                <button type="button" class="btn btn-sm ${shipmentYieldSelectedGroupKey === g.key ? 'btn-primary' : 'btn-outline'}" style="font-weight:800;" onclick="selectShipmentYieldGroup('${g.key.replace(/'/g, "\\'")}')">
+                  📦 ${g.supplierName.slice(0, 28)} (${g.containerIds.length} حاوية — ${g.arrivalDate || '-'})
+                </button>
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- Containers Checkboxes -->
+          <div style="display:flex;flex-wrap:wrap;gap:6px;max-height:110px;overflow-y:auto;padding:8px;background:var(--bg-card);border-radius:10px;border:1px solid var(--border-color);">
+            ${containers.length === 0 ? `<span style="color:var(--text-muted);font-size:0.84rem;">لا توجد حاويات مسجلة حالياً.</span>` : containers.map(c => {
+              const cm = getContainerMetrics(c);
+              const isChecked = shipmentYieldSelectedContainerIds.includes(c.id);
+              return `
+                <label style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:8px;border:1.5px solid ${isChecked ? '#0f766e' : 'var(--border-color)'};background:${isChecked ? 'rgba(15,118,110,0.1)' : 'var(--bg-surface)'};cursor:pointer;font-size:0.78rem;font-weight:800;">
+                  <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleShipmentYieldContainerId('${c.id}', this.checked)" />
+                  <span>${c.containerNumber} (${cm.totalLogsCount} جذع = ${fmtNum(cm.totalVolumeM3, 3)} م³ | مشغل: ${cm.processedLogsCount})</span>
+                </label>
+              `;
+            }).join('')}
+          </div>
+
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:10px;">
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:800;font-size:0.84rem;color:#0284c7;">
+              <input id="sy-use-processed-only" type="checkbox" ${shipmentYieldUseProcessedOnly ? 'checked' : ''} onchange="shipmentYieldUseProcessedOnly=this.checked; recalcShipmentYieldAnalyzerLive();" />
+              <span>⚙️ الحساب على الجذوع التي تم تشغيلها فقط (بدلاً من إجمالي تكعيب الرسالة بالكامل)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Step 2: Enter or Pull Multi-Day Production Output -->
+        <div style="background:rgba(15,118,110,0.06);padding:12px 14px;border-radius:12px;border:1.5px solid rgba(15,118,110,0.3);margin-bottom:12px;">
+          <div style="font-weight:900;color:#0f766e;font-size:0.92rem;margin-bottom:8px;">
+            2️⃣ إدخال أو سحب إجمالي إنتاج القشرة التامة الناتج من تشغيل الرسالة على مدار أيام التشغيل:
+          </div>
+
+          <div class="form-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;align-items:end;">
+            <div class="form-group" style="margin:0;">
+              <label style="font-weight:800;color:var(--primary);font-size:0.8rem;">🪵 إجمالي الإنتاج التام الفعلي للرسالة (بالمتر المكعب م³)</label>
+              <input id="sy-actual-prod-m3" type="number" step="0.001" min="0" class="form-control" value="${shipmentYieldCustomProductionM3}" placeholder="اكتب م³ القشرة المنتجة (مثال: 237.2)..." oninput="shipmentYieldCustomProductionM3=this.value; recalcShipmentYieldAnalyzerLive();" style="font-weight:900;border:2px solid var(--primary);font-size:0.95rem;" />
+            </div>
+
+            <div class="form-group" style="margin:0;">
+              <label style="font-weight:800;font-size:0.78rem;">🔢 أو احسب من عدد الأفرخ المنتجة (250×125)</label>
+              <div style="display:flex;gap:4px;">
+                <input id="sy-calc-sheets" type="number" min="0" class="form-control" value="${shipmentYieldCustomSheets}" placeholder="عدد الأفرخ/القطع" oninput="onShipmentYieldSheetsInput()" style="font-weight:800;" />
+                <input id="sy-calc-thk" type="number" step="0.1" min="0.3" class="form-control" value="${shipmentYieldCustomThkMm}" placeholder="مم" title="متوسط التخانة بالمم" oninput="onShipmentYieldSheetsInput()" style="max-width:75px;font-weight:800;" />
+              </div>
+            </div>
+
+            <div class="form-group" style="margin:0;grid-column: span 2;">
+              <label style="font-weight:800;font-size:0.78rem;color:#7c3aed;">📅 أو سحب إجمالي الإنتاج المضاف للمخزن خلال فترة تشغيل الرسالة (من يوم إلى يوم):</label>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                <input id="sy-date-from" type="date" class="form-control" style="max-width:145px;font-weight:700;" value="${shipmentYieldDateFrom}" onchange="shipmentYieldDateFrom=this.value;" />
+                <span style="font-weight:800;">إلى</span>
+                <input id="sy-date-to" type="date" class="form-control" style="max-width:145px;font-weight:700;" value="${shipmentYieldDateTo || todayStr()}" onchange="shipmentYieldDateTo=this.value;" />
+                <button type="button" class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;" onclick="pullProductionFromWarehouseForShipmentYield()">
+                  📥 سحب إنتاج الفترة من المخزن
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3: Live Results Breakdown (Net Yield vs 50% Actual Scrap vs 50% Vanished Shrinkage/Bark) -->
+        <div id="sy-results-container"></div>
+
+        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:14px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-accent" style="font-weight:900;" onclick="transferShipmentBatchScrapToWarehouse()">
+              ♻️ ترحيل الهالك الفعلي فقط (50% من الفرق) إلى مخزن الهالك الآن
+            </button>
+            <button type="button" class="btn btn-outline" style="font-weight:800;" onclick="printShipmentYieldAnalysisReportPdf()">
+              🖨️ طباعة تقرير تصافي وهالك الرسالة المجمعة PDF
+            </button>
+          </div>
+          <button type="button" class="btn btn-primary" onclick="closeModal()">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  recalcShipmentYieldAnalyzerLive();
+}
+
+function selectShipmentYieldGroup(groupKey) {
+  const containers = state?.logContainers || [];
+  shipmentYieldSelectedGroupKey = groupKey;
+  if (groupKey === 'all') {
+    shipmentYieldSelectedContainerIds = containers.map(c => c.id);
+  } else {
+    const g = getShipmentGroupsFromContainers().find(x => x.key === groupKey);
+    if (g) {
+      shipmentYieldSelectedContainerIds = [...g.containerIds];
+    }
+  }
+  openContainerShipmentYieldWindowModal();
+}
+
+function toggleShipmentYieldContainerId(containerId, isChecked) {
+  shipmentYieldSelectedGroupKey = 'custom';
+  if (isChecked) {
+    if (!shipmentYieldSelectedContainerIds.includes(containerId)) {
+      shipmentYieldSelectedContainerIds.push(containerId);
+    }
+  } else {
+    shipmentYieldSelectedContainerIds = shipmentYieldSelectedContainerIds.filter(id => id !== containerId);
+  }
+  recalcShipmentYieldAnalyzerLive();
+}
+
+function onShipmentYieldSheetsInput() {
+  const sheets = Math.max(0, Number(document.getElementById('sy-calc-sheets')?.value || 0));
+  const thk = Math.max(0.1, Number(document.getElementById('sy-calc-thk')?.value || 1.5));
+  shipmentYieldCustomSheets = sheets || '';
+  shipmentYieldCustomThkMm = thk;
+  if (sheets > 0) {
+    const m = calculateVeneerMetrics(250, 125, thk, sheets);
+    shipmentYieldCustomProductionM3 = m.totalVolumeM3;
+    const prodInput = document.getElementById('sy-actual-prod-m3');
+    if (prodInput) prodInput.value = m.totalVolumeM3;
+  }
+  recalcShipmentYieldAnalyzerLive();
+}
+
+function pullProductionFromWarehouseForShipmentYield() {
+  const fromD = document.getElementById('sy-date-from')?.value || '';
+  const toD = document.getElementById('sy-date-to')?.value || '';
+  shipmentYieldDateFrom = fromD;
+  shipmentYieldDateTo = toD;
+  const res = getWarehouseProductionVolumeForDateRange(fromD, toD);
+  if (res.totalVolumeM3 <= 0) {
+    alert('لم يتم العثور على دفعات إنتاج مضافة للمخزن في هذه الفترة الزمنية. يمكنك كتابة حجم الإنتاج بالمتر المكعب أو عدد الأفرخ يدوياً.');
+    return;
+  }
+  shipmentYieldCustomProductionM3 = res.totalVolumeM3;
+  shipmentYieldCustomSheets = res.totalSheets;
+  const prodInput = document.getElementById('sy-actual-prod-m3');
+  if (prodInput) prodInput.value = res.totalVolumeM3;
+  const shInput = document.getElementById('sy-calc-sheets');
+  if (shInput) shInput.value = res.totalSheets;
+  recalcShipmentYieldAnalyzerLive();
+}
+
+function computeShipmentBatchYieldMetrics() {
+  const containers = (state?.logContainers || []).filter(c => shipmentYieldSelectedContainerIds.includes(c.id));
+  let totalLogsCount = 0;
+  let processedLogsCount = 0;
+  let remainingLogsCount = 0;
+  let totalVolumeM3 = 0;
+  let processedVolumeM3 = 0;
+  let remainingVolumeM3 = 0;
+  let totalWeightTon = 0;
+  let processedWeightTon = 0;
+  let weightedExpectedFinishedM3 = 0;
+
+  for (const c of containers) {
+    const cm = getContainerMetrics(c);
+    totalLogsCount += cm.totalLogsCount;
+    processedLogsCount += cm.processedLogsCount;
+    remainingLogsCount += cm.remainingLogsCount;
+    totalVolumeM3 += cm.totalVolumeM3;
+    processedVolumeM3 += cm.processedVolumeM3;
+    remainingVolumeM3 += cm.remainingVolumeM3;
+    totalWeightTon += cm.totalWeightTon;
+    processedWeightTon += cm.processedWeightTon;
+    weightedExpectedFinishedM3 += cm.expectedFinishedM3;
+  }
+
+  totalVolumeM3 = +totalVolumeM3.toFixed(4);
+  processedVolumeM3 = +processedVolumeM3.toFixed(4);
+  remainingVolumeM3 = +remainingVolumeM3.toFixed(4);
+  totalWeightTon = +totalWeightTon.toFixed(3);
+  processedWeightTon = +processedWeightTon.toFixed(3);
+
+  const avgDensityTonPerM3 = totalVolumeM3 > 0 ? +(totalWeightTon / totalVolumeM3).toFixed(3) : 0.75;
+  const avgExpectedYieldPct = totalVolumeM3 > 0 ? +((weightedExpectedFinishedM3 / totalVolumeM3) * 100).toFixed(2) : 60;
+
+  const baseRawM3 = (shipmentYieldUseProcessedOnly && processedVolumeM3 > 0) ? processedVolumeM3 : totalVolumeM3;
+  const baseRawTon = +(baseRawM3 * avgDensityTonPerM3).toFixed(3);
+
+  const customM3Raw = document.getElementById('sy-actual-prod-m3')?.value ?? shipmentYieldCustomProductionM3;
+  const hasCustomActual = customM3Raw !== '' && customM3Raw !== null && customM3Raw !== undefined && Number(customM3Raw) > 0;
+  const defaultFinishedM3 = +(baseRawM3 * (avgExpectedYieldPct / 100)).toFixed(4);
+  const netVeneerM3 = hasCustomActual ? +Number(customM3Raw).toFixed(4) : defaultFinishedM3;
+  const netVeneerTon = +(netVeneerM3 * avgDensityTonPerM3).toFixed(3);
+
+  const netYieldPct = baseRawM3 > 0 ? +Math.min(100, (netVeneerM3 / baseRawM3) * 100).toFixed(2) : 0;
+  const totalLossM3 = +Math.max(0, baseRawM3 - netVeneerM3).toFixed(4);
+  const totalLossTon = +(totalLossM3 * avgDensityTonPerM3).toFixed(3);
+  const totalLossPct = +Math.max(0, 100 - netYieldPct).toFixed(2);
+
+  // Domain Rule: 50% of non-yield difference is Actual Recoverable Scrap, 50% is Vanished Loss (Shrinkage + Burned Outer Bark/Kalaf)
+  const actualScrapPct = +(totalLossPct * 0.5).toFixed(2);
+  const actualScrapM3 = +(totalLossM3 * 0.5).toFixed(4);
+  const actualScrapTon = +(actualScrapM3 * avgDensityTonPerM3).toFixed(3);
+
+  const vanishedLossPct = +(totalLossPct * 0.5).toFixed(2);
+  const vanishedLossM3 = +(totalLossM3 * 0.5).toFixed(4);
+  const vanishedLossTon = +(vanishedLossM3 * avgDensityTonPerM3).toFixed(3);
+
+  return {
+    containers,
+    containersCount: containers.length,
+    totalLogsCount,
+    processedLogsCount,
+    remainingLogsCount,
+    totalVolumeM3,
+    processedVolumeM3,
+    remainingVolumeM3,
+    totalWeightTon,
+    processedWeightTon,
+    avgDensityTonPerM3,
+    avgExpectedYieldPct,
+    baseRawM3,
+    baseRawTon,
+    hasCustomActual,
+    netVeneerM3,
+    netVeneerTon,
+    netYieldPct,
+    totalLossM3,
+    totalLossTon,
+    totalLossPct,
+    actualScrapPct,
+    actualScrapM3,
+    actualScrapTon,
+    vanishedLossPct,
+    vanishedLossM3,
+    vanishedLossTon
+  };
+}
+
+function recalcShipmentYieldAnalyzerLive() {
+  const box = document.getElementById('sy-results-container');
+  if (!box) return;
+  const m = computeShipmentBatchYieldMetrics();
+
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:10px;margin-bottom:12px;">
+      <div style="background:var(--bg-card);padding:12px;border-radius:12px;border-right:4px solid var(--primary);box-shadow:0 2px 6px rgba(0,0,0,0.05);">
+        <small style="color:var(--text-muted);font-weight:800;">🚢 إجمالي خشب الرسالة (${m.containersCount} حاوية)</small>
+        <div style="font-weight:900;font-size:1.12rem;color:var(--primary);margin-top:2px;">
+          ${fmtNum(m.baseRawM3, 4)} م³ خام
+        </div>
+        <small style="font-weight:700;">
+          الوزن: <strong>${fmtNum(m.baseRawTon, 3)} طن</strong> (كثافة ${m.avgDensityTonPerM3})<br/>
+          الجذوع: ${m.totalLogsCount} جذع (مشغل: ${m.processedLogsCount} | متبقي: ${m.remainingLogsCount})
+        </small>
+      </div>
+
+      <div style="background:rgba(22,163,74,0.08);padding:12px;border-radius:12px;border:2px solid #16a34a;">
+        <small style="color:#15803d;font-weight:900;">🪵 1. صافي إنتاج القشرة التامة</small>
+        <div style="font-weight:900;font-size:1.2rem;color:#16a34a;margin-top:2px;">
+          ${fmtNum(m.netYieldPct, 1)}% (${fmtNum(m.netVeneerM3, 3)} م³)
+        </div>
+        <small style="font-weight:800;color:#15803d;">
+          وزن القشرة التامة: ${fmtNum(m.netVeneerTon, 3)} طن
+          ${!m.hasCustomActual ? '<br/><span style="color:var(--text-muted);">(تقديري — أدخل الإنتاج الفعلي أعلاه)</span>' : '<br/><span>(إنتاج فعلي مسجل للرسالة ✅)</span>'}
+        </small>
+      </div>
+
+      <div style="background:rgba(220,38,38,0.07);padding:12px;border-radius:12px;border:2px solid #dc2626;">
+        <small style="color:#b91c1c;font-weight:900;">♻️ 2. الهالك الفعلي فقط (نصف الفرق 50%)</small>
+        <div style="font-weight:900;font-size:1.2rem;color:#dc2626;margin-top:2px;">
+          ${fmtNum(m.actualScrapPct, 1)}% (${fmtNum(m.actualScrapTon, 3)} طن)
+        </div>
+        <small style="font-weight:800;color:#b91c1c;">
+          تكعيب الهالك الفعلي: <strong>${fmtNum(m.actualScrapM3, 3)} م³</strong><br/>
+          (نصف إجمالي الفاقد البالغ ${fmtNum(m.totalLossPct, 1)}%)
+        </small>
+      </div>
+
+      <div style="background:rgba(100,116,139,0.1);padding:12px;border-radius:12px;border:2px solid #64748b;">
+        <small style="color:#334155;font-weight:900;">🔥 3. الفاقد المنعدم: انكماش + كَلَف محروق (50%)</small>
+        <div style="font-weight:900;font-size:1.2rem;color:#475569;margin-top:2px;">
+          ${fmtNum(m.vanishedLossPct, 1)}% (${fmtNum(m.vanishedLossTon, 3)} طن)
+        </div>
+        <small style="font-weight:800;color:#475569;">
+          تكعيب منعدم: <strong>${fmtNum(m.vanishedLossM3, 3)} م³</strong><br/>
+          (نسبة انكماش القشرة + القشرة الخارجية/الكَلَف التي يتم حرقها)
+        </small>
+      </div>
+    </div>
+
+    <!-- Visual Percentage Bar -->
+    <div style="background:var(--bg-card);padding:10px 14px;border-radius:10px;border:1px solid var(--border-color);">
+      <div style="display:flex;justify-content:space-between;font-size:0.78rem;font-weight:900;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
+        <span style="color:#16a34a;">🟢 إنتاج قشرة تامة: ${fmtNum(m.netYieldPct, 1)}% (${fmtNum(m.netVeneerM3, 3)} م³)</span>
+        <span style="color:#dc2626;">🔴 هالك فعلي (نصف الفرق): ${fmtNum(m.actualScrapPct, 1)}% (${fmtNum(m.actualScrapM3, 3)} م³ = ${fmtNum(m.actualScrapTon, 3)} طن)</span>
+        <span style="color:#475569;">⚫ منعدم انكماش وكَلَف محروق (نصف الفرق): ${fmtNum(m.vanishedLossPct, 1)}% (${fmtNum(m.vanishedLossM3, 3)} م³ = ${fmtNum(m.vanishedLossTon, 3)} طن)</span>
+      </div>
+      <div style="height:18px;width:100%;background:#e2e8f0;border-radius:999px;overflow:hidden;display:flex;">
+        <div style="width:${m.netYieldPct}%;background:linear-gradient(90deg,#16a34a,#22c55e);height:100%;" title="إنتاج القشرة التامة ${m.netYieldPct}%"></div>
+        <div style="width:${m.actualScrapPct}%;background:linear-gradient(90deg,#dc2626,#ef4444);height:100%;" title="الهالك الفعلي ${m.actualScrapPct}%"></div>
+        <div style="width:${m.vanishedLossPct}%;background:linear-gradient(90deg,#475569,#64748b);height:100%;" title="الفاقد المنعدم (انكماش + حرق الكلف) ${m.vanishedLossPct}%"></div>
+      </div>
+    </div>
+  `;
+}
+
+function transferShipmentBatchScrapToWarehouse() {
+  const m = computeShipmentBatchYieldMetrics();
+  if (m.actualScrapTon <= 0) {
+    alert('لا توجد كمية هالك فعلي محسوبة لترحيلها!');
+    return;
+  }
+  const now = getMonotonicIso();
+  const cntNames = m.containers.map(c => c.containerNumber).join(' + ');
+  state.scrapItems = state.scrapItems || [];
+  state.scrapItems.unshift({
+    id: uid('sc'),
+    code: `SCR-BATCH-${Date.now().toString().slice(-4)}`,
+    name: `هالك فعلي (50% من الفاقد) لتشغيل رسالة (${m.containersCount} حاوية: ${cntNames.slice(0, 45)})`,
+    woodTypeName: m.containers[0]?.woodTypeName || 'جذوع خشب حور بلجيكي',
+    category: 'هوالك تقشير رسائل مجمعة (بالطن)',
+    unit: 'طن',
+    quantity: m.actualScrapTon,
+    estimatedPricePerUnit: 0,
+    notes: `إجمالي الرسالة: ${fmtNum(m.baseRawM3, 3)} م³ | إنتاج تام: ${fmtNum(m.netVeneerM3, 3)} م³ (${m.netYieldPct}%) | هالك فعلي (50%): ${fmtNum(m.actualScrapM3, 3)} م³ = ${fmtNum(m.actualScrapTon, 3)} طن | فاقد منعدم انكماش وكَلَف محروق (50%): ${fmtNum(m.vanishedLossM3, 3)} م³ = ${fmtNum(m.vanishedLossTon, 3)} طن`,
+    updatedAt: now
+  });
+  closeModal();
+  saveState(`♻️ ترحيل الهالك الفعلي (${fmtNum(m.actualScrapTon, 3)} طن = ${m.actualScrapPct}%) لرسالة الحاويات (${m.containersCount} حاوية) إلى مخزن الهالك (مع استبعاد ${fmtNum(m.vanishedLossTon, 3)} طن فاقد منعدم انكماش وكَلَف محروق)`);
+  alert(`✅ تم تسجيل الهالك الفعلي فقط (${fmtNum(m.actualScrapTon, 3)} طن) في مخزن الهالك، واستبعاد الفاقد المنعدم (${fmtNum(m.vanishedLossTon, 3)} طن انكماش وكَلَف محروق) بنجاح!`);
+}
+
+function printShipmentYieldAnalysisReportPdf() {
+  const m = computeShipmentBatchYieldMetrics();
+  const rowsHtml = m.containers.map((c, idx) => {
+    const cm = getContainerMetrics(c);
+    return `
+      <tr>
+        <td>${idx + 1}</td>
+        <td><strong>${c.containerNumber}</strong></td>
+        <td>${c.supplierName || '-'}</td>
+        <td>${c.arrivalDate || '-'}</td>
+        <td>${cm.totalLogsCount} جذع (${fmtNum(cm.totalVolumeM3, 4)} م³)</td>
+        <td>${cm.processedLogsCount} جذع (${fmtNum(cm.processedVolumeM3, 4)} م³)</td>
+        <td>${cm.remainingLogsCount} جذع (${fmtNum(cm.remainingVolumeM3, 4)} م³)</td>
+      </tr>
+    `;
+  }).join('');
+
+  closeModal();
+  triggerOfficialReportPdf(
+    '🚢📊 تقرير تصافي وهالك رسالة الحاويات المجمعة (التشغيل على عدة أيام)',
+    `إجمالي الحاويات المشمولة: (${m.containersCount} حاوية) — تطبيق معادلة المصنع: 50% من الفرق هالك فعلي و50% فاقد منعدم (انكماش القشرة + حرق الكَلَف الخارجي)`,
+    `
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
+        <div style="border:1.5px solid #0f766e;padding:10px;border-radius:8px;">
+          <div style="font-size:0.78rem;color:#475569;">إجمالي خشب الرسالة الخام</div>
+          <div style="font-weight:900;font-size:1.05rem;color:#0f766e;">${fmtNum(m.baseRawM3, 4)} م³ (${fmtNum(m.baseRawTon, 3)} طن)</div>
+        </div>
+        <div style="border:1.5px solid #16a34a;padding:10px;border-radius:8px;">
+          <div style="font-size:0.78rem;color:#15803d;">1. صافي إنتاج القشرة التامة</div>
+          <div style="font-weight:900;font-size:1.05rem;color:#16a34a;">${fmtNum(m.netYieldPct, 1)}% (${fmtNum(m.netVeneerM3, 3)} م³ = ${fmtNum(m.netVeneerTon, 3)} طن)</div>
+        </div>
+        <div style="border:1.5px solid #dc2626;padding:10px;border-radius:8px;">
+          <div style="font-size:0.78rem;color:#b91c1c;">2. الهالك الفعلي فقط (نصف الفرق 50%)</div>
+          <div style="font-weight:900;font-size:1.05rem;color:#dc2626;">${fmtNum(m.actualScrapPct, 1)}% (${fmtNum(m.actualScrapM3, 3)} م³ = ${fmtNum(m.actualScrapTon, 3)} طن)</div>
+        </div>
+        <div style="border:1.5px solid #64748b;padding:10px;border-radius:8px;">
+          <div style="font-size:0.78rem;color:#334155;">3. الفاقد المنعدم: انكماش + كَلَف محروق (50%)</div>
+          <div style="font-weight:900;font-size:1.05rem;color:#475569;">${fmtNum(m.vanishedLossPct, 1)}% (${fmtNum(m.vanishedLossM3, 3)} م³ = ${fmtNum(m.vanishedLossTon, 3)} طن)</div>
+        </div>
+      </div>
+
+      <h3 style="margin:12px 0 6px 0;">بيان الحاويات الداخلة في حساب الرسالة المجمعة:</h3>
+      <table class="pdf-report-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>رقم الحاوية</th>
+            <th>المورد</th>
+            <th>تاريخ الوصول</th>
+            <th>إجمالي الجذوع والتكعيب</th>
+            <th>تم تشغيله</th>
+            <th>متبقي بالمخزن</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml || '<tr><td colspan="7">لا توجد حاويات محددة</td></tr>'}</tbody>
       </table>
     `,
     true
@@ -26948,26 +27633,29 @@ function executeLogAndMultiPalletProductionBatch({ logIds = [], palletRows = [],
     });
   }
 
-  // 4. Calculate Yield & Record Resulting Peeling Scrap in Tons if enabled
+  // 4. Calculate Yield & Record Resulting Peeling Scrap in Tons if enabled (v90: 50% of loss is Actual Scrap, 50% is Vanished Shrinkage/Bark)
   const actualYieldPct = totalLogVolM3 > 0 ? +((totalProdVolM3 / totalLogVolM3) * 100).toFixed(1) : 65;
-  const scrapM3 = totalLogVolM3 > 0 ? +Math.max(0, totalLogVolM3 - totalProdVolM3).toFixed(4) : 0;
+  const totalLossM3 = totalLogVolM3 > 0 ? +Math.max(0, totalLogVolM3 - totalProdVolM3).toFixed(4) : 0;
+  const scrapM3 = +(totalLossM3 * 0.5).toFixed(4);
+  const vanishedM3 = +(totalLossM3 * 0.5).toFixed(4);
   const avgDensity = matchedLogs.length > 0
     ? Number(containers.find(c => c.id === matchedLogs[0].containerId)?.densityTonPerM3 || 0.90)
     : 0.90;
   const scrapTon = +(scrapM3 * avgDensity).toFixed(3);
+  const vanishedTon = +(vanishedM3 * avgDensity).toFixed(3);
 
   if (recordScrap && scrapTon > 0) {
     state.scrapItems = state.scrapItems || [];
     state.scrapItems.unshift({
       id: uid('sc'),
       code: `SCR-LOG-${processedSerials[0] || Date.now().toString().slice(-4)}`,
-      name: `هوالك تقشير ${sourceLogLabel} (كثافة ${avgDensity} طن/م³)`,
+      name: `هالك فعلي (50% من الفاقد) لتقشير ${sourceLogLabel} (كثافة ${avgDensity} طن/م³)`,
       woodTypeName: matchedLogs[0]?.woodTypeName || 'خشب حور بلجيكي',
       category: 'هوالك تقشير جذوع (بالطن)',
       unit: 'طن',
       quantity: scrapTon,
       estimatedPricePerUnit: 0,
-      notes: `تكعيب الجذع: ${fmtNum(totalLogVolM3, 3)} م³ | القشرة التامة المستخرجة: ${fmtNum(totalProdVolM3, 3)} م³ (${actualYieldPct}%) | الهالك: ${fmtNum(scrapM3, 3)} م³ = ${fmtNum(scrapTon, 3)} طن`,
+      notes: `تكعيب الجذع: ${fmtNum(totalLogVolM3, 3)} م³ | القشرة التامة المستخرجة: ${fmtNum(totalProdVolM3, 3)} م³ (${actualYieldPct}%) | الهالك الفعلي (50%): ${fmtNum(scrapM3, 3)} م³ = ${fmtNum(scrapTon, 3)} طن | فاقد منعدم انكماش وكَلَف محروق (50%): ${fmtNum(vanishedM3, 3)} م³ = ${fmtNum(vanishedTon, 3)} طن`,
       updatedAt: now
     });
   }
@@ -27462,8 +28150,11 @@ function recalcAiLogMultiPalletSummary() {
   totalProdValue = +totalProdValue.toFixed(2);
 
   const actualYieldPct = totalLogVolM3 > 0 ? +((totalProdVolM3 / totalLogVolM3) * 100).toFixed(1) : 65;
-  const scrapM3 = totalLogVolM3 > 0 ? +Math.max(0, totalLogVolM3 - totalProdVolM3).toFixed(4) : 0;
+  const totalLossM3 = totalLogVolM3 > 0 ? +Math.max(0, totalLogVolM3 - totalProdVolM3).toFixed(4) : 0;
+  const scrapM3 = +(totalLossM3 * 0.5).toFixed(4);
+  const vanishedM3 = +(totalLossM3 * 0.5).toFixed(4);
   const scrapTon = +(scrapM3 * avgDensity).toFixed(3);
+  const vanishedTon = +(vanishedM3 * avgDensity).toFixed(3);
 
   box.innerHTML = `
     <div class="calc-preview-item">
@@ -27483,8 +28174,12 @@ function recalcAiLogMultiPalletSummary() {
       <strong style="color:${actualYieldPct >= 60 ? 'var(--success)' : '#d97706'};">${totalLogVolM3 > 0 ? fmtNum(actualYieldPct, 1) + '%' : 'إنتاج مباشر بدون جذع'}</strong>
     </div>
     <div class="calc-preview-item">
-      <span>♻️ الهالك الناتج بالطن (كثافة ${avgDensity} طن/م³)</span>
+      <span>♻️ الهالك الفعلي (50% من الفرق) بالطن</span>
       <strong style="color:var(--danger);">${fmtNum(scrapTon, 3)} طن (${fmtNum(scrapM3, 3)} م³)</strong>
+    </div>
+    <div class="calc-preview-item">
+      <span>🔥 الفاقد المنعدم (50% انكماش + كَلَف محروق)</span>
+      <strong style="color:#64748b;">${fmtNum(vanishedTon, 3)} طن (${fmtNum(vanishedM3, 3)} م³)</strong>
     </div>
     ${showPrices ? `
       <div class="calc-preview-item">
@@ -27518,9 +28213,520 @@ function submitAiLogToMultiPalletProduction(e) {
     `✅ تم بنجاح تنفيذ عملية التشغيل وإدخال البالتات للمخزن!\n` +
     (res.processedSerials.length > 0 ? `• الجذوع التي تم تشغيلها: [${res.processedSerials.join(' ، ')}] (${fmtNum(res.totalLogVolM3, 3)} م³)\n` : '') +
     `• البالتات المضافة للمخزن: (${res.totalPalletsAdded} بالتة) بإجمالي (${fmtNum(res.totalSheetsAdded, 0)} قطعة = ${fmtNum(res.totalProdVolM3, 4)} م³)\n` +
-    (res.totalLogVolM3 > 0 ? `• نسبة الاستخراج الفعلية: ${fmtNum(res.actualYieldPct, 1)}% | الهالك: ${fmtNum(res.scrapTon, 3)} طن\n` : '') +
+    (res.totalLogVolM3 > 0 ? `• نسبة الاستخراج الفعلية: ${fmtNum(res.actualYieldPct, 1)}% | الهالك الفعلي (50% من الفرق): ${fmtNum(res.scrapTon, 3)} طن\n` : '') +
     `• تم تسجيل الإنتاج في مخزن القشرة التامة وفي جدول الإنتاج اليومي والأسبوعي والشهري باسم (${currentUser?.name}).`
   );
+}
+
+// ============================================================================
+// v90: DAILY FACTORY SUMMARY / CLOSING WINDOW, GLOBAL INSTANT SEARCH & SMART ALERTS
+// (شباك تقفيلة وملخص اليوم + البحث السريع الشامل + تنبيهات استحقاق الشيكات وتراكم البالتات)
+// ============================================================================
+function getClientDaysSinceLastPayment(clientId) {
+  if (!clientId || !state) return null;
+  const pt = (state.partners || []).find(p => p.id === clientId);
+  const txs = (state.financialTransactions || []).filter(tx =>
+    tx && (tx.partnerId === clientId || (pt && tx.partnerName && tx.partnerName.trim() === pt.name.trim())) &&
+    Number(tx.paidAmount || 0) > 0 &&
+    !isPalletDepositTransaction(tx)
+  );
+  if (txs.length === 0) return null;
+  let latestMs = 0;
+  for (const tx of txs) {
+    const dStr = String(tx.date || tx.updatedAt || '').slice(0, 10);
+    if (dStr) {
+      const ms = new Date(dStr).getTime();
+      if (!isNaN(ms) && ms > latestMs) latestMs = ms;
+    }
+  }
+  if (!latestMs) return null;
+  const nowMs = new Date(todayStr()).getTime();
+  return Math.max(0, Math.floor((nowMs - latestMs) / 86400000));
+}
+
+function getSmartFinancialAndPalletAlertsData() {
+  const showPrices = canSeeFinancialPrices();
+  const today = todayStr();
+  const todayMs = new Date(today).getTime();
+
+  const dueChecks = [];
+  if (showPrices) {
+    for (const chk of (state?.checksUnderCollection || [])) {
+      if (!chk || (chk.status || 'under_collection') !== 'under_collection') continue;
+      const dueStr = String(chk.dueDate || '').slice(0, 10);
+      if (!dueStr) continue;
+      const dueMs = new Date(dueStr).getTime();
+      const diffDays = Math.round((dueMs - todayMs) / 86400000);
+      if (diffDays <= 2) {
+        dueChecks.push({ check: chk, diffDays });
+      }
+    }
+  }
+
+  const highPalletClients = [];
+  for (const pt of (state?.partners || []).filter(p => p.type !== 'supplier')) {
+    const m = computeClientMetrics(pt);
+    if (m.netPalletsAtClient >= 20) {
+      highPalletClients.push({ partner: pt, metrics: m });
+    }
+  }
+
+  return { dueChecks, highPalletClients };
+}
+
+function renderSmartFinancialAndPalletAlertsBannerHtml() {
+  const { dueChecks, highPalletClients } = getSmartFinancialAndPalletAlertsData();
+  if (dueChecks.length === 0 && highPalletClients.length === 0) return '';
+  const showPrices = canSeeFinancialPrices();
+
+  return `
+    <div class="card" style="padding:12px 16px;margin-bottom:14px;border:1.5px solid #d97706;background:linear-gradient(135deg,rgba(245,158,11,0.08),rgba(124,58,237,0.06));">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div style="display:flex;flex-direction:column;gap:6px;flex:1;">
+          <div style="font-weight:900;color:#b45309;font-size:0.9rem;">
+            🔔 تنبيهات المتابعة الذكية (استحقاق الشيكات وتراكم البالتات الخشبية عند العملاء):
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;">
+            ${dueChecks.map(({ check: chk, diffDays }) => `
+              <span class="badge ${diffDays < 0 ? 'badge-danger' : 'badge-warning'}" style="padding:5px 10px;font-size:0.76rem;cursor:pointer;" onclick="openCollectCheckModal('${chk.id}')" title="اضغط لتحصيل الشيك">
+                📝 شيك (${chk.checkNumber}) — ${chk.clientName}: ${fmtMoney(chk.amount)} (${diffDays < 0 ? 'متأخر ' + Math.abs(diffDays) + ' يوم' : diffDays === 0 ? 'مستحق اليوم!' : 'يستحق خلال ' + diffDays + ' يوم'})
+              </span>
+            `).join('')}
+            ${highPalletClients.map(({ partner: pt, metrics: m }) => `
+              <span class="badge" style="background:#7c3aed;color:#fff;padding:5px 10px;font-size:0.76rem;cursor:pointer;" onclick="${showPrices ? `openClientFullHistoryModal('${pt.id}', 'pallets')` : `setTab('approvals')`}" title="تنبيه تراكم بالتات خشبية طرف العميل">
+                🪵 تراكم بالتات: ${pt.name} (${pt.code || 'CL'}) طرفه ${m.netPalletsAtClient} بالتة${showPrices ? ' (' + fmtMoney(m.netPalletsValue) + ')' : ''}
+              </span>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+let dailySummarySelectedDate = '';
+function computeDailyFactorySummaryMetrics(dateStr) {
+  const d = dateStr || todayStr();
+  const showPrices = canSeeFinancialPrices();
+
+  // 1. Processed Logs on date d
+  const processedLogs = (state?.logItems || []).filter(l =>
+    l && l.status === 'processed' && String(l.processedAt || l.updatedAt || '').slice(0, 10) === d
+  );
+  const processedLogsVolM3 = +processedLogs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0).toFixed(4);
+
+  // 2. Production added to finished veneer warehouse on date d
+  const prodMovs = (state?.warehouseMovements || []).filter(m =>
+    m && m.warehouseType === 'finished_veneers' && m.direction === 'in' &&
+    m.movementCategory !== 'sales_return_in' &&
+    String(m.operationDate || m.date || m.updatedAt || '').slice(0, 10) === d
+  );
+  let producedSheets = 0;
+  let producedVolM3 = 0;
+  const prodDetails = [];
+  for (const m of prodMovs) {
+    const det = extractProductionEntryDetails(m);
+    if (det) {
+      producedSheets += Number(det.sheetsCount || 0);
+      producedVolM3 += Number(det.volumeM3 || 0);
+      prodDetails.push(det);
+    }
+  }
+  producedVolM3 = +producedVolM3.toFixed(4);
+
+  // 3. Dispatched Orders & Cars on date d
+  const ordersOnDate = (state?.productionOrders || []).filter(o =>
+    o && (String(o.date || '').slice(0, 10) === d || String(o.carDispatchVoucher?.dispatchDate || '').slice(0, 10) === d)
+  );
+  const dispatchedCars = ordersOnDate.filter(o => o.carDispatchVoucher);
+  const totalOrderSheets = ordersOnDate.reduce((s, o) => s + Number(o.totalSheetsCount || 0), 0);
+  const totalOrdersAmount = +ordersOnDate.reduce((s, o) => s + Number(o.netTotalAmount || 0), 0).toFixed(2);
+
+  // 4. Pallet movements on date d
+  const palletMovs = (state?.palletMovements || []).filter(pm => pm && String(pm.date || '').slice(0, 10) === d);
+  const palletsDelivered = palletMovs.reduce((s, pm) => s + Number(pm.deliveredCount || 0), 0);
+  const palletsReceived = palletMovs.reduce((s, pm) => s + Number(pm.receivedCount || 0), 0);
+
+  // 5. Financial Collections on date d
+  const finTxs = showPrices ? (state?.financialTransactions || []).filter(tx =>
+    tx && String(tx.date || '').slice(0, 10) === d && Number(tx.paidAmount || 0) > 0
+  ) : [];
+  const totalCollectedMoney = +finTxs.reduce((s, tx) => s + Number(tx.paidAmount || 0), 0).toFixed(2);
+
+  return {
+    date: d,
+    processedLogs,
+    processedLogsVolM3,
+    prodDetails,
+    producedSheets: Math.round(producedSheets),
+    producedVolM3,
+    ordersOnDate,
+    dispatchedCars,
+    totalOrderSheets: Math.round(totalOrderSheets),
+    totalOrdersAmount,
+    palletMovs,
+    palletsDelivered,
+    palletsReceived,
+    finTxs,
+    totalCollectedMoney
+  };
+}
+
+function openDailyFactorySummaryWindowModal(selectedDate = '') {
+  dailySummarySelectedDate = selectedDate || dailySummarySelectedDate || todayStr();
+  const s = computeDailyFactorySummaryMetrics(dailySummarySelectedDate);
+  const showPrices = canSeeFinancialPrices();
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:940px;">
+        <div class="card-header" style="border-bottom:2.5px solid #d97706;padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:#b45309;font-size:1.12rem;">
+              📅 شباك تقفيلة وملخص حركة المصنع اليومي (${s.date})
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              ملخص شامل لحركة اليوم: الجذوع المشغلة، الإنتاج المضاف للمخزن، الطلبيات والسيارات المصروفة، البالتات، والتحصيلات المالية
+            </small>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <input type="date" class="form-control" style="max-width:155px;font-weight:800;border-color:#d97706;" value="${s.date}" onchange="openDailyFactorySummaryWindowModal(this.value)" />
+            <button type="button" class="btn btn-sm btn-outline" onclick="openDailyFactorySummaryWindowModal(todayStr())">اليوم</button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(195px,1fr));gap:10px;margin-bottom:14px;">
+          <div style="background:var(--bg-elevated);padding:12px;border-radius:10px;border-right:4px solid #7c3aed;">
+            <small style="color:var(--text-muted);font-weight:800;">🌲 الجذوع التي تم تشغيلها</small>
+            <div style="font-weight:900;font-size:1.1rem;color:#5b21b6;">${s.processedLogs.length} جذع</div>
+            <small style="font-weight:700;">إجمالي التكعيب: ${fmtNum(s.processedLogsVolM3, 3)} م³</small>
+          </div>
+
+          <div style="background:var(--bg-elevated);padding:12px;border-radius:10px;border-right:4px solid var(--success);">
+            <small style="color:var(--text-muted);font-weight:800;">🪵 الإنتاج المضاف للمخزن</small>
+            <div style="font-weight:900;font-size:1.1rem;color:var(--success);">${fmtNum(s.producedSheets, 0)} قطعة</div>
+            <small style="font-weight:700;">التكعيب: ${fmtNum(s.producedVolM3, 3)} م³ (${s.prodDetails.length} دفعة)</small>
+          </div>
+
+          <div style="background:var(--bg-elevated);padding:12px;border-radius:10px;border-right:4px solid #0284c7;">
+            <small style="color:var(--text-muted);font-weight:800;">🚚 الطلبيات والسيارات المصروفة</small>
+            <div style="font-weight:900;font-size:1.1rem;color:#0284c7;">${s.ordersOnDate.length} طلبية (${s.dispatchedCars.length} سيارة)</div>
+            <small style="font-weight:700;">إجمالي الكمية: ${fmtNum(s.totalOrderSheets, 0)} قطعة</small>
+          </div>
+
+          <div style="background:var(--bg-elevated);padding:12px;border-radius:10px;border-right:4px solid #d97706;">
+            <small style="color:var(--text-muted);font-weight:800;">🪵 حركة البالتات الخشبية</small>
+            <div style="font-weight:900;font-size:1.02rem;color:#b45309;">مسلم: ${s.palletsDelivered} | مرتجع: ${s.palletsReceived}</div>
+            <small style="font-weight:700;">صافي خارج اليوم: ${s.palletsDelivered - s.palletsReceived} بالتة</small>
+          </div>
+
+          ${showPrices ? `
+            <div style="background:var(--bg-elevated);padding:12px;border-radius:10px;border-right:4px solid #16a34a;">
+              <small style="color:var(--text-muted);font-weight:800;">💵 التحصيلات والمبيعات</small>
+              <div style="font-weight:900;font-size:1.08rem;color:#16a34a;">محصل: ${fmtMoney(s.totalCollectedMoney)}</div>
+              <small style="font-weight:700;">قيمة طلبيات اليوم: ${fmtMoney(s.totalOrdersAmount)}</small>
+            </div>
+          ` : ''}
+        </div>
+
+        <div style="max-height:48vh;overflow-y:auto;display:flex;flex-direction:column;gap:12px;">
+          <!-- Production Section -->
+          <div style="background:var(--bg-card);padding:10px 12px;border-radius:10px;border:1px solid var(--border-color);">
+            <div style="font-weight:900;color:var(--primary);margin-bottom:6px;">1️⃣ دفعات الإنتاج المضافة للمخزن في هذا اليوم (${s.prodDetails.length}):</div>
+            ${s.prodDetails.length === 0 ? `<small style="color:var(--text-muted);">لا توجد دفعات إنتاج مسجلة في هذا التاريخ.</small>` : `
+              <div class="table-responsive">
+                <table>
+                  <thead>
+                    <tr><th>التخانة والاتجاه</th><th>الجودة</th><th>المقاس</th><th>الكمية</th><th>التكعيب (م³)</th><th>بواسطة</th></tr>
+                  </thead>
+                  <tbody>
+                    ${s.prodDetails.map(d => `
+                      <tr>
+                        <td><strong>${d.thicknessMm} مم (${d.directionLabel})</strong></td>
+                        <td><span class="badge badge-info">${d.gradeCode}</span></td>
+                        <td>${d.widthCm}×${d.lengthCm} سم</td>
+                        <td><strong style="color:var(--success);">${fmtNum(d.sheetsCount, 0)} قطعة</strong></td>
+                        <td>${fmtNum(d.volumeM3, 4)} م³</td>
+                        <td>${d.performedBy}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            `}
+          </div>
+
+          <!-- Orders & Cars Section -->
+          <div style="background:var(--bg-card);padding:10px 12px;border-radius:10px;border:1px solid var(--border-color);">
+            <div style="font-weight:900;color:#0284c7;margin-bottom:6px;">2️⃣ الطلبيات وأذون صرف السيارات في هذا اليوم (${s.ordersOnDate.length}):</div>
+            ${s.ordersOnDate.length === 0 ? `<small style="color:var(--text-muted);">لا توجد طلبيات أو سيارات مسجلة في هذا التاريخ.</small>` : `
+              <div class="table-responsive">
+                <table>
+                  <thead>
+                    <tr><th>رقم الطلبية</th><th>العميل</th><th>الكمية</th>${showPrices ? '<th>الصافي</th>' : ''}<th>السيارة والبالتات</th><th>الحالة</th></tr>
+                  </thead>
+                  <tbody>
+                    ${s.ordersOnDate.map(o => `
+                      <tr>
+                        <td><strong>${o.orderNumber}</strong></td>
+                        <td><strong>${o.clientName}</strong></td>
+                        <td>${fmtNum(o.totalSheetsCount || 0, 0)} قطعة</td>
+                        ${showPrices ? `<td><strong>${fmtMoney(o.netTotalAmount || 0)}</strong></td>` : ''}
+                        <td>${o.carDispatchVoucher ? `🚚 ${o.carDispatchVoucher.carPlateNumber} (بالتات: ${o.carDispatchVoucher.palletsDeliveredCount})` : '-'}</td>
+                        <td>${getOrderStageBadge(o)}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            `}
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:14px;">
+          <button type="button" class="btn btn-accent" style="font-weight:800;" onclick="printDailyFactorySummaryReportPdf('${s.date}')">
+            🖨️ طباعة تقرير تقفيلة اليوم PDF
+          </button>
+          <button type="button" class="btn btn-primary" onclick="closeModal()">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function printDailyFactorySummaryReportPdf(dateStr = '') {
+  const s = computeDailyFactorySummaryMetrics(dateStr || dailySummarySelectedDate || todayStr());
+  const showPrices = canSeeFinancialPrices();
+  closeModal();
+
+  const prodRows = s.prodDetails.map((d, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${d.thicknessMm} مم (${d.directionLabel})</td>
+      <td>${d.gradeName}</td>
+      <td>${d.widthCm}×${d.lengthCm} سم</td>
+      <td><strong>${fmtNum(d.sheetsCount, 0)} قطعة</strong></td>
+      <td>${fmtNum(d.volumeM3, 4)} م³</td>
+      <td>${d.performedBy}</td>
+    </tr>
+  `).join('');
+
+  const ordRows = s.ordersOnDate.map((o, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><strong>${o.orderNumber}</strong></td>
+      <td>${o.clientName}</td>
+      <td>${fmtNum(o.totalSheetsCount || 0, 0)} قطعة</td>
+      ${showPrices ? `<td><strong>${fmtMoney(o.netTotalAmount || 0)}</strong></td>` : ''}
+      <td>${o.carDispatchVoucher ? `${o.carDispatchVoucher.carPlateNumber} (بالتات: ${o.carDispatchVoucher.palletsDeliveredCount})` : '-'}</td>
+    </tr>
+  `).join('');
+
+  triggerOfficialReportPdf(
+    `📅 تقرير تقفيلة وملخص حركة المصنع ليوم (${s.date})`,
+    `الجذوع المشغلة: ${s.processedLogs.length} جذع (${fmtNum(s.processedLogsVolM3, 3)} م³) | الإنتاج المضاف: ${fmtNum(s.producedSheets, 0)} قطعة (${fmtNum(s.producedVolM3, 3)} م³) | الطلبيات: ${s.ordersOnDate.length}`,
+    `
+      <h3 style="margin:10px 0 6px 0;">1️⃣ دفعات الإنتاج المضافة للمخزن (${s.date}):</h3>
+      <table class="pdf-report-table">
+        <thead>
+          <tr><th>#</th><th>التخانة والاتجاه</th><th>الجودة</th><th>المقاس</th><th>الكمية</th><th>التكعيب (م³)</th><th>المنفذ</th></tr>
+        </thead>
+        <tbody>${prodRows || '<tr><td colspan="7">لا توجد دفعات إنتاج في هذا اليوم</td></tr>'}</tbody>
+      </table>
+
+      <h3 style="margin:14px 0 6px 0;">2️⃣ الطلبيات والسيارات المصروفة (${s.date}):</h3>
+      <table class="pdf-report-table">
+        <thead>
+          <tr><th>#</th><th>رقم الطلبية</th><th>العميل</th><th>الكمية</th>${showPrices ? '<th>الصافي</th>' : ''}<th>السيارة والبالتات</th></tr>
+        </thead>
+        <tbody>${ordRows || `<tr><td colspan="${showPrices ? 6 : 5}">لا توجد طلبيات في هذا اليوم</td></tr>`}</tbody>
+      </table>
+    `,
+    false
+  );
+}
+
+// Global Instant Quick Search Window across Clients, Orders, Cars, Log Serials, and Checks
+let globalQuickSearchQuery = '';
+function openGlobalQuickSearchWindowModal(initialQuery = '') {
+  if (initialQuery !== undefined && initialQuery !== '') {
+    globalQuickSearchQuery = initialQuery;
+  }
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:860px;">
+        <div class="card-header" style="border-bottom:2px solid #0284c7;padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:#0284c7;font-size:1.1rem;">
+              🔍 شباك البحث السريع الشامل في النظام
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              ابحث في ثانية واحدة عن أي عميل (CL-101)، طلبية (ORD-2026)، رقم سيارة، سيريال جذع (84820)، أو رقم شيك
+            </small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <input id="global-quick-search-input" type="text" class="form-control" style="font-size:1rem;font-weight:800;padding:10px 14px;border:2px solid #0284c7;" placeholder="🔍 اكتب اسم العميل، الكود، رقم الطلبية، رقم السيارة، أو سيريال الجذع..." value="${globalQuickSearchQuery}" oninput="globalQuickSearchQuery=this.value; renderGlobalQuickSearchResults();" autofocus />
+        </div>
+
+        <div id="global-quick-search-results" style="max-height:58vh;overflow-y:auto;"></div>
+      </div>
+    </div>
+  `;
+
+  renderGlobalQuickSearchResults();
+}
+
+function renderGlobalQuickSearchResults() {
+  const box = document.getElementById('global-quick-search-results');
+  if (!box) return;
+  const q = normalizeArabicAiText(globalQuickSearchQuery || '').trim().toLowerCase();
+  const showPrices = canSeeFinancialPrices();
+
+  if (!q) {
+    box.innerHTML = `
+      <div style="padding:20px;text-align:center;color:var(--text-muted);background:var(--bg-elevated);border-radius:12px;">
+        ⌨️ ابدأ بكتابة أي حرف أو رقم للبحث الفوري في <strong>العملاء، الطلبيات، السيارات، سيريالات الجذوع، والشيكات</strong>.
+      </div>
+    `;
+    return;
+  }
+
+  const matchedClients = (state?.partners || []).filter(p =>
+    p && p.type !== 'supplier' && (
+      normalizeArabicAiText(p.name || '').toLowerCase().includes(q) ||
+      String(p.code || '').toLowerCase().includes(q) ||
+      String(p.phone || '').toLowerCase().includes(q)
+    )
+  ).slice(0, 10);
+
+  const matchedOrders = (state?.productionOrders || []).filter(o =>
+    o && (
+      String(o.orderNumber || '').toLowerCase().includes(q) ||
+      normalizeArabicAiText(o.clientName || '').toLowerCase().includes(q) ||
+      String(o.clientCode || '').toLowerCase().includes(q) ||
+      String(o.carDispatchVoucher?.carPlateNumber || '').toLowerCase().includes(q) ||
+      normalizeArabicAiText(o.carDispatchVoucher?.driverName || '').toLowerCase().includes(q)
+    )
+  ).slice(0, 12);
+
+  const matchedLogs = (state?.logItems || []).filter(l =>
+    l && (
+      String(l.serialNumber || '').toLowerCase().includes(q) ||
+      String(l.containerNumber || '').toLowerCase().includes(q)
+    )
+  ).slice(0, 12);
+
+  const matchedChecks = showPrices ? (state?.checksUnderCollection || []).filter(c =>
+    c && (
+      String(c.checkNumber || '').toLowerCase().includes(q) ||
+      normalizeArabicAiText(c.clientName || '').toLowerCase().includes(q) ||
+      normalizeArabicAiText(c.bankName || '').toLowerCase().includes(q)
+    )
+  ).slice(0, 8) : [];
+
+  const totalMatches = matchedClients.length + matchedOrders.length + matchedLogs.length + matchedChecks.length;
+  if (totalMatches === 0) {
+    box.innerHTML = `
+      <div style="padding:24px;text-align:center;color:var(--danger);font-weight:800;">
+        ⚠️ لا توجد نتائج مطابقة لـ "${globalQuickSearchQuery}".
+      </div>
+    `;
+    return;
+  }
+
+  box.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      ${matchedClients.length > 0 ? `
+        <div style="background:var(--bg-card);padding:10px 12px;border-radius:10px;border:1px solid var(--border-color);">
+          <div style="font-weight:900;color:var(--primary);margin-bottom:6px;">🤝 العملاء المطابقون (${matchedClients.length}):</div>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            ${matchedClients.map(pt => {
+              const m = computeClientMetrics(pt);
+              return `
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:6px 10px;background:var(--bg-elevated);border-radius:8px;">
+                  <div>
+                    <span class="badge badge-info">${pt.code || 'CL'}</span>
+                    <strong>${pt.name}</strong>
+                    ${showPrices ? `<span style="font-size:0.78rem;color:${m.netDebt > 0 ? 'var(--danger)' : 'var(--success)'};font-weight:800;margin-right:6px;">(${m.netDebt > 0 ? 'عليه ' + fmtMoney(m.netDebt) : 'خالص'})</span>` : ''}
+                    <span style="font-size:0.76rem;color:#7c3aed;font-weight:800;margin-right:6px;">🪵 بالتات: ${m.netPalletsAtClient}</span>
+                  </div>
+                  <div style="display:flex;gap:6px;">
+                    ${showPrices ? `<button type="button" class="btn btn-sm btn-primary" onclick="closeModal(); openClientFullHistoryModal('${pt.id}', 'all');">📂 كشف الحساب</button>` : ''}
+                    ${canIssuePrepOrders(currentUser) ? `<button type="button" class="btn btn-sm btn-accent" onclick="closeModal(); openNewClientOrderPrepModal('${pt.id}');">📋 طلبية جديدة</button>` : ''}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      ${matchedOrders.length > 0 ? `
+        <div style="background:var(--bg-card);padding:10px 12px;border-radius:10px;border:1px solid var(--border-color);">
+          <div style="font-weight:900;color:#0284c7;margin-bottom:6px;">📦 الطلبيات وأذون السيارات المطابقة (${matchedOrders.length}):</div>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            ${matchedOrders.map(o => `
+              <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:6px 10px;background:var(--bg-elevated);border-radius:8px;">
+                <div>
+                  <strong>${o.orderNumber}</strong> — <strong>${o.clientName}</strong> (${o.date || ''})
+                  | <span>${fmtNum(o.totalSheetsCount || 0, 0)} قطعة</span>
+                  ${o.carDispatchVoucher ? `<span class="badge badge-warning" style="margin-right:6px;">🚚 سيارة: ${o.carDispatchVoucher.carPlateNumber}</span>` : ''}
+                </div>
+                <div style="display:flex;gap:6px;">
+                  <button type="button" class="btn btn-sm btn-outline" onclick="closeModal(); openClientOrderStatementModal('${o.id}');">📄 فتح البيان</button>
+                  ${o.carDispatchVoucher ? `<button type="button" class="btn btn-sm btn-success" onclick="closeModal(); printVehicleDispatchVoucher('${o.id}');">🖨️ إذن السيارة</button>` : ''}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      ${matchedLogs.length > 0 ? `
+        <div style="background:var(--bg-card);padding:10px 12px;border-radius:10px;border:1px solid var(--border-color);">
+          <div style="font-weight:900;color:#0f766e;margin-bottom:6px;">🌲 سيريالات الجذوع والحاويات المطابقة (${matchedLogs.length}):</div>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            ${matchedLogs.map(l => `
+              <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:6px 10px;background:var(--bg-elevated);border-radius:8px;">
+                <div>
+                  سيريال: <strong style="color:var(--primary);">${l.serialNumber}</strong> | حاوية: <strong>${l.containerNumber || '-'}</strong>
+                  | التكعيب: <strong>${fmtNum(l.volumeM3, 4)} م³</strong> (${l.lengthM || '-'}م × ${l.diameterCm || '-'}سم)
+                  | <span class="badge ${l.status === 'processed' ? 'badge-info' : 'badge-success'}">${l.status === 'processed' ? '✅ تم تشغيله' : '⏳ متاح بالمخزن'}</span>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline" onclick="closeModal(); activeWarehouseSubTab='raw'; logSerialSearchQuery='${l.serialNumber}'; setTab('warehouses');">🔍 عرض بالمخزن</button>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      ${matchedChecks.length > 0 ? `
+        <div style="background:var(--bg-card);padding:10px 12px;border-radius:10px;border:1px solid var(--border-color);">
+          <div style="font-weight:900;color:#b45309;margin-bottom:6px;">📝 الشيكات المطابقة (${matchedChecks.length}):</div>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            ${matchedChecks.map(c => `
+              <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:6px 10px;background:var(--bg-elevated);border-radius:8px;">
+                <div>
+                  شيك رقم: <strong>${c.checkNumber}</strong> — العميل: <strong>${c.clientName}</strong> — البنك: ${c.bankName}
+                  | القيمة: <strong>${fmtMoney(c.amount)}</strong> | استحقاق: <strong>${c.dueDate || '-'}</strong>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline" onclick="closeModal(); setTab('accounting');">💰 عرض بالحسابات</button>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
 }
 
 // Initialize
