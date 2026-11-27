@@ -5735,6 +5735,8 @@ function renderDashboard() {
   const avgPalletStockValue = totalPallets > 0 ? (totalVeneerValue / totalPallets) : 0;
 
   return `
+    ${renderCibLiveExchangeRateDashboardCardHtml()}
+
     ${isExec ? `
       <div class="card" style="background:linear-gradient(135deg, rgba(15,118,110,0.12), rgba(220,38,38,0.08));border:2px solid #0f766e;padding:14px 18px;margin-bottom:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
@@ -5879,8 +5881,6 @@ function renderDashboard() {
     ` : ''}
 
     <!-- Top Stats -->
-    ${renderCibLiveExchangeRateDashboardCardHtml()}
-
     <div class="stats-grid">
       <div class="stat-card">
         <span class="stat-title">رصيد كميات مخزن القشرة التامة (250×125)</span>
