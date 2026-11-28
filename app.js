@@ -9803,11 +9803,11 @@ function renderReports() {
           </button>
         ` : ''}
 
-        <button type="button" class="hub-option-card" onclick="openPrintShareWindowByKey('rep_log_containers')">
+        <button type="button" class="hub-option-card" onclick="openLogSerialsPrintAndShareWindowModal()">
           <div class="hub-option-icon" style="background:linear-gradient(135deg,#0284c7,#0369a1);">🚢</div>
           <div class="hub-option-info">
-            <div class="hub-option-title">بيان حاويات وسيريالات الجذوع ▾</div>
-            <div class="hub-option-sub">طباعة PDF أو إرسال واتساب (صورة / PDF)</div>
+            <div class="hub-option-title">بيان الجذوع (المُشغّلة / المتبقية / كلاهما) ▾</div>
+            <div class="hub-option-sub">فرز وطباعة PDF أو إرسال واتساب (صورة / PDF)</div>
           </div>
         </button>
 
@@ -24631,8 +24631,8 @@ function renderLogContainersAndSerialsSection() {
           <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#0f766e,#0d9488);color:#fff;font-weight:900;border:2px solid #5eead4;" onclick="openContainerShipmentYieldWindowModal()">
             🚢📊 شباك حساب تصافي وهالك وفرز الرسالة المجمعة
           </button>
-          <button type="button" class="btn btn-sm btn-outline" onclick="printLogContainersAndSerialsReportPdf()">
-            🖨️ طباعة بيان الحاويات والجذوع PDF
+          <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;" onclick="openLogSerialsPrintAndShareWindowModal()">
+            🖨️📤 طباعة وإرسال الجذوع (المُشغّلة / المتبقية / كلاهما) ▾
           </button>
           ${(canOperateLogs || hasPerm('warehouseIssueReceive')) ? `
             <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#d97706,#b45309);color:#fff;font-weight:900;" onclick="openAiLogToMultiPalletProductionModal()">
@@ -24816,7 +24816,19 @@ function renderLogContainersAndSerialsSection() {
               <option value="in_stock" ${activeLogStatusFilter === 'in_stock' ? 'selected' : ''}>⏳ لم يتم تشغيله فقط (${remainingLogs.length})</option>
               <option value="processed" ${activeLogStatusFilter === 'processed' ? 'selected' : ''}>✅ تم تشغيله فقط (${processedLogs.length})</option>
             </select>
-            <input id="log-serial-search-input" class="form-control" style="max-width:190px;padding:4px 10px;font-size:0.8rem;" placeholder="🔍 بحث برقم السيريال..." value="${logSerialSearchQuery}" oninput="logSerialSearchQuery=this.value; render();" />
+            <input id="log-serial-search-input" class="form-control" style="max-width:180px;padding:4px 10px;font-size:0.8rem;" placeholder="🔍 بحث برقم السيريال..." value="${logSerialSearchQuery}" oninput="logSerialSearchQuery=this.value; render();" />
+            <button type="button" class="btn btn-sm btn-primary" style="font-weight:900;padding:4px 10px;" onclick="printLogContainersAndSerialsReportPdf(activeLogStatusFilter, activeLogContainerFilter)">
+              🖨️ طباعة الفرز الحالي (${filteredLogs.length})
+            </button>
+            <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;padding:4px 10px;display:inline-flex;align-items:center;gap:4px;" onclick="sendReportViaWhatsAppImage(() => printLogContainersAndSerialsReportPdf(activeLogStatusFilter, activeLogContainerFilter))">
+              ${getWhatsAppSvgIconHtml(14)}<span>🖼️ واتساب صورة</span>
+            </button>
+            <button type="button" class="btn btn-sm" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;padding:4px 10px;display:inline-flex;align-items:center;gap:4px;" onclick="sendReportViaWhatsApp(() => printLogContainersAndSerialsReportPdf(activeLogStatusFilter, activeLogContainerFilter))">
+              ${getWhatsAppSvgIconHtml(14)}<span>📄 واتساب PDF</span>
+            </button>
+            <button type="button" class="btn btn-sm btn-accent" style="font-weight:900;padding:4px 10px;" onclick="openLogSerialsPrintAndShareWindowModal()">
+              📤 خيارات الطباعة والإرسال ▾
+            </button>
           </div>
         </div>
 
@@ -26855,30 +26867,221 @@ function transferContainerScrapToWarehouse(containerId) {
   alert(`✅ تم تسجيل (${fmtNum(scrapTonToRecord, 3)} طن) في مخزن الهالك والقصاقيص بنجاح!`);
 }
 
-function printLogContainersAndSerialsReportPdf() {
+function openLogSerialsPrintAndShareWindowModal() {
+  const modalRoot = document.getElementById('modal-root');
+  if (!modalRoot) return;
   const containers = state.logContainers || [];
   const allLogs = state.logItems || [];
-  const rowsHtml = allLogs
-    .filter(l => activeLogContainerFilter === 'all' || l.containerId === activeLogContainerFilter)
-    .map((l, idx) => {
-      const parentCont = containers.find(c => c.id === l.containerId);
-      const dens = Number(parentCont?.densityTonPerM3 || 0.75);
-      const weightTon = +(Number(l.volumeM3 || 0) * dens).toFixed(3);
-      return `
-        <tr>
-          <td>${idx + 1}</td>
-          <td><strong>${l.serialNumber}</strong></td>
-          <td>${l.containerNumber || '-'}</td>
-          <td>${l.supplierName || '-'}</td>
-          <td>الطول: ${l.lengthM || '-'} م | القطر: ${l.diameterCm || '-'} سم</td>
-          <td><strong>${fmtNum(l.volumeM3, 4)} م³</strong></td>
-          <td>${fmtNum(weightTon, 3)} طن</td>
-          <td>${l.status === 'processed' ? `✅ تم تشغيله (${fmtDate(l.processedAt)} - ${l.processedBy || ''})` : '⏳ لم يتم تشغيله (متبقي بالمخزن)'}</td>
-        </tr>
-      `;
-    }).join('');
+  const groups = typeof getShipmentGroupsFromContainers === 'function' ? getShipmentGroupsFromContainers() : [];
 
-  const containersSummaryHtml = containers.map(c => {
+  const curCont = activeLogContainerFilter || 'all';
+  const curStatus = activeLogStatusFilter || 'all';
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box" style="max-width:740px;">
+        <div class="card-header" style="border-bottom:2px solid #0284c7;padding-bottom:12px;">
+          <div>
+            <div class="card-title" style="color:#0284c7;font-size:1.1rem;">
+              🚢🖨️ شباك فرز وطباعة وإرسال بيان الجذوع (المُشغّلة / المتبقية / كلاهما)
+            </div>
+            <small style="color:var(--text-muted);font-weight:700;">
+              اختر الحاوية أو الرسالة، ثم حدد هل تريد طباعة وإرسال (الجذوع التي تم تشغيلها فقط) أو (الجذوع المتبقية فقط) أو (كلاهما معاً)
+            </small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
+        </div>
+
+        <div class="form-grid" style="background:var(--bg-elevated);padding:12px 14px;border-radius:12px;margin:12px 0;border:1px solid var(--border-color);">
+          <div class="form-group" style="margin:0;">
+            <label style="font-weight:900;color:var(--primary);">1️⃣ اختر الحاوية أو الرسالة المطلوبة للفرز:</label>
+            <select id="log-print-cont-sel" class="form-control" style="font-weight:800;border-color:var(--primary);" onchange="activeLogContainerFilter = (this.value.startsWith('grp:') ? 'all' : this.value); updateLogPrintModalLiveCounts();">
+              <option value="all" ${curCont === 'all' ? 'selected' : ''}>🚢 جميع الحاويات والرسائل (${allLogs.length} جذع)</option>
+              ${groups.map(g => `<option value="grp:${g.key}">📦 رسالة مجمعة: ${g.supplierName} (${g.containerIds.length} حاوية — ${g.arrivalDate || '-'})</option>`).join('')}
+              ${containers.map(c => `<option value="${c.id}" ${curCont === c.id ? 'selected' : ''}>🚢 حاوية: ${c.containerNumber} (${c.supplierName || ''})</option>`).join('')}
+            </select>
+          </div>
+
+          <div class="form-group" style="margin:0;">
+            <label style="font-weight:900;color:#0284c7;">2️⃣ نوع بيان الجذوع المطلوب طباعته أو إرساله:</label>
+            <select id="log-print-status-sel" class="form-control" style="font-weight:900;border:2px solid #0284c7;" onchange="activeLogStatusFilter = this.value; updateLogPrintModalLiveCounts();">
+              <option value="processed" ${curStatus === 'processed' ? 'selected' : ''}>✅ الجذوع التي تم تشغيلها فقط</option>
+              <option value="in_stock" ${curStatus === 'in_stock' ? 'selected' : ''}>⏳ الجذوع المتبقية بالمخزن فقط (لم يتم تشغيلها)</option>
+              <option value="all" ${curStatus === 'all' ? 'selected' : ''}>📋 كلاهما معاً (الجذوع المُشغّلة + الجذوع المتبقية)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Quick 1-Click Mode Cards -->
+        <div id="log-print-live-cards-box" style="margin-bottom:14px;"></div>
+
+        <div style="background:rgba(15,118,110,0.06);border:1.5px solid rgba(15,118,110,0.3);border-radius:12px;padding:12px 14px;">
+          <div style="font-weight:900;color:var(--primary);font-size:0.9rem;margin-bottom:8px;">
+            3️⃣ اختر طريقة الطباعة أو الإرسال عبر واتساب للفرز المحدد أعلاه:
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
+            <button type="button" class="btn btn-primary" style="font-weight:900;padding:11px;justify-content:center;" onclick="triggerLogPrintModalAction('print')">
+              🖨️ طباعة / حفظ PDF رسمي
+            </button>
+            <button type="button" class="btn" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:900;padding:11px;justify-content:center;display:inline-flex;align-items:center;gap:6px;" onclick="triggerLogPrintModalAction('wa_image')">
+              ${getWhatsAppSvgIconHtml(17)}<span>🖼️ إرسال واتساب صورة</span>
+            </button>
+            <button type="button" class="btn" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:900;padding:11px;justify-content:center;display:inline-flex;align-items:center;gap:6px;" onclick="triggerLogPrintModalAction('wa_pdf')">
+              ${getWhatsAppSvgIconHtml(17)}<span>📄 إرسال واتساب PDF</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  updateLogPrintModalLiveCounts();
+}
+
+function getFilteredLogsAndContainersForPrint(statusFilter = null, containerFilter = null) {
+  const effectiveStatus = statusFilter || activeLogStatusFilter || 'all';
+  const effectiveCont = containerFilter || activeLogContainerFilter || 'all';
+  const allContainers = state.logContainers || [];
+  const allLogs = state.logItems || [];
+
+  let targetContainerIds = null;
+  if (effectiveCont && effectiveCont !== 'all') {
+    if (String(effectiveCont).startsWith('grp:')) {
+      const grpKey = String(effectiveCont).slice(4);
+      const grp = (typeof getShipmentGroupsFromContainers === 'function' ? getShipmentGroupsFromContainers() : []).find(g => g.key === grpKey);
+      if (grp) targetContainerIds = new Set(grp.containerIds);
+    } else {
+      targetContainerIds = new Set([effectiveCont]);
+    }
+  }
+
+  const scopedContainers = targetContainerIds
+    ? allContainers.filter(c => targetContainerIds.has(c.id))
+    : allContainers;
+
+  const scopedAllLogs = allLogs.filter(l => !targetContainerIds || targetContainerIds.has(l.containerId));
+  const processedLogs = scopedAllLogs.filter(l => l.status === 'processed');
+  const remainingLogs = scopedAllLogs.filter(l => l.status !== 'processed');
+
+  const q = normalizeArabicAiText(logSerialSearchQuery || '').toLowerCase();
+  const filteredLogs = scopedAllLogs.filter(l => {
+    if (effectiveStatus === 'processed' && l.status !== 'processed') return false;
+    if (effectiveStatus === 'in_stock' && l.status === 'processed') return false;
+    if (q) {
+      const ser = String(l.serialNumber || '').toLowerCase();
+      const cnt = String(l.containerNumber || '').toLowerCase();
+      const sup = normalizeArabicAiText(l.supplierName || '').toLowerCase();
+      if (!ser.includes(q) && !cnt.includes(q) && !sup.includes(q)) return false;
+    }
+    return true;
+  });
+
+  return {
+    effectiveStatus,
+    effectiveCont,
+    scopedContainers,
+    scopedAllLogs,
+    processedLogs,
+    remainingLogs,
+    filteredLogs
+  };
+}
+
+function updateLogPrintModalLiveCounts() {
+  const contSel = document.getElementById('log-print-cont-sel');
+  const statusSel = document.getElementById('log-print-status-sel');
+  const box = document.getElementById('log-print-live-cards-box');
+  if (!box) return;
+
+  const contVal = contSel ? contSel.value : 'all';
+  const statusVal = statusSel ? statusSel.value : 'all';
+  const info = getFilteredLogsAndContainersForPrint(statusVal, contVal);
+
+  const procVol = info.processedLogs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0);
+  const remVol = info.remainingLogs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0);
+  const totVol = info.scopedAllLogs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0);
+
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
+      <div onclick="document.getElementById('log-print-status-sel').value='processed'; activeLogStatusFilter='processed'; updateLogPrintModalLiveCounts();"
+           style="cursor:pointer;padding:10px 12px;border-radius:10px;border:2px solid ${statusVal === 'processed' ? '#0284c7' : 'var(--border-color)'};background:${statusVal === 'processed' ? 'rgba(2,132,199,0.12)' : 'var(--bg-card)'};">
+        <div style="font-weight:900;color:#0284c7;font-size:0.88rem;">✅ الجذوع التي تم تشغيلها فقط</div>
+        <div style="font-weight:900;font-size:1.05rem;margin-top:2px;">${fmtNum(info.processedLogs.length, 0)} جذع مُشغّل</div>
+        <small style="font-weight:700;color:var(--text-muted);">التكعيب: ${fmtNum(procVol, 4)} م³</small>
+      </div>
+
+      <div onclick="document.getElementById('log-print-status-sel').value='in_stock'; activeLogStatusFilter='in_stock'; updateLogPrintModalLiveCounts();"
+           style="cursor:pointer;padding:10px 12px;border-radius:10px;border:2px solid ${statusVal === 'in_stock' ? '#16a34a' : 'var(--border-color)'};background:${statusVal === 'in_stock' ? 'rgba(22,163,74,0.12)' : 'var(--bg-card)'};">
+        <div style="font-weight:900;color:#16a34a;font-size:0.88rem;">⏳ الجذوع المتبقية فقط</div>
+        <div style="font-weight:900;font-size:1.05rem;margin-top:2px;">${fmtNum(info.remainingLogs.length, 0)} جذع متبقي</div>
+        <small style="font-weight:700;color:var(--text-muted);">التكعيب: ${fmtNum(remVol, 4)} م³</small>
+      </div>
+
+      <div onclick="document.getElementById('log-print-status-sel').value='all'; activeLogStatusFilter='all'; updateLogPrintModalLiveCounts();"
+           style="cursor:pointer;padding:10px 12px;border-radius:10px;border:2px solid ${statusVal === 'all' ? '#0f766e' : 'var(--border-color)'};background:${statusVal === 'all' ? 'rgba(15,118,110,0.12)' : 'var(--bg-card)'};">
+        <div style="font-weight:900;color:#0f766e;font-size:0.88rem;">📋 كلاهما معاً (المُشغّل + المتبقي)</div>
+        <div style="font-weight:900;font-size:1.05rem;margin-top:2px;">${fmtNum(info.scopedAllLogs.length, 0)} جذع إجمالي</div>
+        <small style="font-weight:700;color:var(--text-muted);">التكعيب: ${fmtNum(totVol, 4)} م³</small>
+      </div>
+    </div>
+  `;
+}
+
+function triggerLogPrintModalAction(actionType = 'print') {
+  const contVal = document.getElementById('log-print-cont-sel')?.value || activeLogContainerFilter || 'all';
+  const statusVal = document.getElementById('log-print-status-sel')?.value || activeLogStatusFilter || 'all';
+  activeLogStatusFilter = statusVal;
+  if (!String(contVal).startsWith('grp:')) {
+    activeLogContainerFilter = contVal;
+  }
+  closeModal();
+  render();
+
+  if (actionType === 'wa_image') {
+    sendReportViaWhatsAppImage(() => printLogContainersAndSerialsReportPdf(statusVal, contVal));
+  } else if (actionType === 'wa_pdf') {
+    sendReportViaWhatsApp(() => printLogContainersAndSerialsReportPdf(statusVal, contVal));
+  } else {
+    printLogContainersAndSerialsReportPdf(statusVal, contVal);
+  }
+}
+
+function printLogContainersAndSerialsReportPdf(statusFilterOverride = null, containerFilterOverride = null) {
+  const info = getFilteredLogsAndContainersForPrint(statusFilterOverride, containerFilterOverride);
+  const { effectiveStatus, scopedContainers, filteredLogs, processedLogs, remainingLogs } = info;
+  _lastActiveReportGeneratorFn = () => printLogContainersAndSerialsReportPdf(effectiveStatus, info.effectiveCont);
+
+  const filterModeTitle = effectiveStatus === 'processed'
+    ? '✅ بيان الجذوع التي تم تشغيلها فقط'
+    : effectiveStatus === 'in_stock'
+      ? '⏳ بيان الجذوع المتبقية بالمخزن فقط (لم يتم تشغيلها)'
+      : '📋 بيان جميع الجذوع (التي تم تشغيلها + المتبقية بالمخزن)';
+
+  let totalFilteredVol = 0;
+  let totalFilteredTon = 0;
+
+  const rowsHtml = filteredLogs.map((l, idx) => {
+    const parentCont = (state.logContainers || []).find(c => c.id === l.containerId);
+    const dens = Number(parentCont?.densityTonPerM3 || 0.75);
+    const vol = Number(l.volumeM3 || 0);
+    const weightTon = +(vol * dens).toFixed(3);
+    totalFilteredVol += vol;
+    totalFilteredTon += weightTon;
+    return `
+      <tr>
+        <td>${idx + 1}</td>
+        <td><strong>${l.serialNumber}</strong></td>
+        <td><strong>${l.containerNumber || '-'}</strong></td>
+        <td>${l.supplierName || '-'}</td>
+        <td>الطول: ${l.lengthM || '-'} م | القطر: ${l.diameterCm || '-'} سم</td>
+        <td><strong>${fmtNum(vol, 4)} م³</strong></td>
+        <td>${fmtNum(weightTon, 3)} طن</td>
+        <td>${l.status === 'processed' ? `✅ تم تشغيله (${fmtDate(l.processedAt)}${l.processedBy ? ' - ' + l.processedBy : ''})` : '⏳ لم يتم تشغيله (متبقي بالمخزن)'}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const containersSummaryHtml = scopedContainers.map(c => {
     const cm = getContainerMetrics(c);
     return `
       <tr>
@@ -26898,18 +27101,18 @@ function printLogContainersAndSerialsReportPdf() {
   }).join('');
 
   triggerOfficialReportPdf(
-    '🚢 تقرير حاويات وسيريالات جذوع الأشجار ونسب الاستخراج والهالك الفعلي (50%) والمنعدم (50%)',
-    'بيان شامل لما تم تشغيله وما لم يتم تشغيله من سيريالات الجذوع وتوزيع الفاقد: نصفه هالك فعلي والنصف الآخر منعدم (انكماش القشرة + حرق الكَلَف)',
+    `🚢 ${filterModeTitle} (${filteredLogs.length} جذع = ${fmtNum(totalFilteredVol, 4)} م³)`,
+    `إجمالي الحاويات في التقرير: ${scopedContainers.length} حاوية | المُشغّل: ${processedLogs.length} جذع | المتبقي: ${remainingLogs.length} جذع`,
     `
-      <h3 style="margin:10px 0 6px 0;">1️⃣ ملخص الحاويات والكثافة ونسبة استخراج المنتج التام وتوزيع الفاقد (50% هالك فعلي + 50% انكماش وكَلَف منعدم):</h3>
+      <h3 style="margin:10px 0 6px 0;">1️⃣ ملخص الحاويات (${scopedContainers.length} حاوية) — المُشغّل والمتبقي ونسبة الاستخراج:</h3>
       <table class="pdf-report-table">
         <thead>
           <tr>
             <th>رقم الحاوية</th>
             <th>المورد والخشب</th>
             <th>إجمالي الجذوع والتكعيب</th>
-            <th>تم تشغيله</th>
-            <th>متبقي بالمخزن</th>
+            <th>تم تشغيله ✅</th>
+            <th>متبقي بالمخزن ⏳</th>
             <th>الكثافة والوزن</th>
             <th>المنتج التام المتوقع</th>
             <th>الهالك الفعلي (50%) والمنعدم (50%)</th>
@@ -26918,7 +27121,7 @@ function printLogContainersAndSerialsReportPdf() {
         <tbody>${containersSummaryHtml || '<tr><td colspan="8">لا توجد حاويات مسجلة</td></tr>'}</tbody>
       </table>
 
-      <h3 style="margin:16px 0 6px 0;">2️⃣ بيان سيريالات الجذوع (ما تم تشغيله وما لم يتم تشغيله):</h3>
+      <h3 style="margin:16px 0 6px 0;">2️⃣ ${filterModeTitle} — العدد: (${filteredLogs.length} جذع) | إجمالي التكعيب: (${fmtNum(totalFilteredVol, 4)} م³) | الوزن: (${fmtNum(totalFilteredTon, 3)} طن):</h3>
       <table class="pdf-report-table">
         <thead>
           <tr>
@@ -26932,7 +27135,15 @@ function printLogContainersAndSerialsReportPdf() {
             <th>حالة التشغيل</th>
           </tr>
         </thead>
-        <tbody>${rowsHtml || '<tr><td colspan="8">لا توجد جذوع مسجلة</td></tr>'}</tbody>
+        <tbody>${rowsHtml || '<tr><td colspan="8">لا توجد جذوع مطابقة لهذا الفرز</td></tr>'}</tbody>
+        <tfoot>
+          <tr style="background:#e2e8f0;font-weight:900;">
+            <td colspan="5" style="text-align:center;">الإجمالي الكلي للجذوع في هذا البيان (${filteredLogs.length} جذع)</td>
+            <td>${fmtNum(totalFilteredVol, 4)} م³</td>
+            <td>${fmtNum(totalFilteredTon, 3)} طن</td>
+            <td>${effectiveStatus === 'processed' ? '✅ جذوع تم تشغيلها' : effectiveStatus === 'in_stock' ? '⏳ جذوع متبقية بالمخزن' : `مشغل: ${processedLogs.length} | متبقي: ${remainingLogs.length}`}</td>
+          </tr>
+        </tfoot>
       </table>
     `,
     true
