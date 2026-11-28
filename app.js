@@ -28951,9 +28951,63 @@ function openDailyFactorySummaryWindowModal(selectedDate = '') {
         </div>
 
         <div style="max-height:48vh;overflow-y:auto;display:flex;flex-direction:column;gap:12px;">
+          <!-- Processed Logs Serials Section -->
+          <div style="background:var(--bg-card);padding:10px 12px;border-radius:10px;border:1.5px solid #7c3aed;">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
+              <div style="font-weight:900;color:#5b21b6;">
+                1️⃣ سيريالات الجذوع التي تم تشغيلها في هذا اليوم (${s.processedLogs.length} جذع — إجمالي: ${fmtNum(s.processedLogsVolM3, 4)} م³):
+              </div>
+              ${s.processedLogs.length > 0 ? `
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <button type="button" class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;padding:3px 9px;" onclick="printDailyProcessedLogsOnlyReportPdf('${s.date}')">
+                    🖨️ طباعة سيريالات جذوع اليوم PDF
+                  </button>
+                  <button type="button" class="btn btn-sm" style="background:#0284c7;color:#fff;font-weight:800;padding:3px 9px;" onclick="sendReportViaWhatsAppImage(() => printDailyProcessedLogsOnlyReportPdf('${s.date}'))">
+                    🖼️ واتساب صورة
+                  </button>
+                </div>
+              ` : ''}
+            </div>
+            ${s.processedLogs.length === 0 ? `<small style="color:var(--text-muted);">لا توجد جذوع مسجلة كـ (تم التشغيل) في هذا التاريخ.</small>` : `
+              <div class="table-responsive">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>رقم السيريال (Serial)</th>
+                      <th>رقم الحاوية</th>
+                      <th>المقاسات (الطول × القطر)</th>
+                      <th>التكعيب (م³)</th>
+                      <th>بواسطة</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${s.processedLogs.map((l, idx) => `
+                      <tr>
+                        <td><strong>${idx + 1}</strong></td>
+                        <td><strong style="color:#5b21b6;font-size:0.95rem;">${l.serialNumber}</strong></td>
+                        <td><strong>${l.containerNumber || '-'}</strong></td>
+                        <td>${l.lengthM || l.diameterCm ? `الطول: ${l.lengthM || '-'} م × القطر: ${l.diameterCm || '-'} سم` : '-'}</td>
+                        <td><strong style="color:var(--primary);">${fmtNum(l.volumeM3, 4)} م³</strong></td>
+                        <td>${l.processedBy || 'الإدارة'}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                  <tfoot>
+                    <tr style="background:rgba(124,58,237,0.08);font-weight:900;">
+                      <td colspan="4" style="text-align:center;">إجمالي الجذوع المشغلة في يوم (${s.date}): ${s.processedLogs.length} جذع</td>
+                      <td style="color:#5b21b6;">${fmtNum(s.processedLogsVolM3, 4)} م³</td>
+                      <td>—</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            `}
+          </div>
+
           <!-- Production Section -->
           <div style="background:var(--bg-card);padding:10px 12px;border-radius:10px;border:1px solid var(--border-color);">
-            <div style="font-weight:900;color:var(--primary);margin-bottom:6px;">1️⃣ دفعات الإنتاج المضافة للمخزن في هذا اليوم (${s.prodDetails.length}):</div>
+            <div style="font-weight:900;color:var(--primary);margin-bottom:6px;">2️⃣ دفعات الإنتاج المضافة للمخزن في هذا اليوم (${s.prodDetails.length}):</div>
             ${s.prodDetails.length === 0 ? `<small style="color:var(--text-muted);">لا توجد دفعات إنتاج مسجلة في هذا التاريخ.</small>` : `
               <div class="table-responsive">
                 <table>
@@ -28979,7 +29033,7 @@ function openDailyFactorySummaryWindowModal(selectedDate = '') {
 
           <!-- Orders & Cars Section -->
           <div style="background:var(--bg-card);padding:10px 12px;border-radius:10px;border:1px solid var(--border-color);">
-            <div style="font-weight:900;color:#0284c7;margin-bottom:6px;">2️⃣ الطلبيات وأذون صرف السيارات في هذا اليوم (${s.ordersOnDate.length}):</div>
+            <div style="font-weight:900;color:#0284c7;margin-bottom:6px;">3️⃣ الطلبيات وأذون صرف السيارات في هذا اليوم (${s.ordersOnDate.length}):</div>
             ${s.ordersOnDate.length === 0 ? `<small style="color:var(--text-muted);">لا توجد طلبيات أو سيارات مسجلة في هذا التاريخ.</small>` : `
               <div class="table-responsive">
                 <table>
@@ -29005,9 +29059,17 @@ function openDailyFactorySummaryWindowModal(selectedDate = '') {
         </div>
 
         <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:14px;">
-          <button type="button" class="btn btn-accent" style="font-weight:800;" onclick="printDailyFactorySummaryReportPdf('${s.date}')">
-            🖨️ طباعة تقرير تقفيلة اليوم PDF
-          </button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-accent" style="font-weight:800;" onclick="printDailyFactorySummaryReportPdf('${s.date}')">
+              🖨️ طباعة تقرير تقفيلة اليوم شاملاً سيريالات الجذوع PDF
+            </button>
+            <button type="button" class="btn" style="background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;font-weight:800;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsAppImage(() => printDailyFactorySummaryReportPdf('${s.date}'))">
+              ${getWhatsAppSvgIconHtml(15)}<span>🖼️ إرسال التقفيلة صورة</span>
+            </button>
+            <button type="button" class="btn" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;font-weight:800;display:inline-flex;align-items:center;gap:5px;" onclick="sendReportViaWhatsApp(() => printDailyFactorySummaryReportPdf('${s.date}'))">
+              ${getWhatsAppSvgIconHtml(15)}<span>📄 إرسال التقفيلة PDF</span>
+            </button>
+          </div>
           <button type="button" class="btn btn-primary" onclick="closeModal()">إغلاق</button>
         </div>
       </div>
@@ -29015,10 +29077,69 @@ function openDailyFactorySummaryWindowModal(selectedDate = '') {
   `;
 }
 
+function printDailyProcessedLogsOnlyReportPdf(dateStr = '') {
+  const s = computeDailyFactorySummaryMetrics(dateStr || dailySummarySelectedDate || todayStr());
+  _lastActiveReportGeneratorFn = () => printDailyProcessedLogsOnlyReportPdf(s.date);
+  closeModal();
+
+  const logRows = s.processedLogs.map((l, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><strong>${l.serialNumber}</strong></td>
+      <td><strong>${l.containerNumber || '-'}</strong></td>
+      <td>${l.supplierName || '-'}</td>
+      <td>${l.lengthM || l.diameterCm ? `الطول: ${l.lengthM || '-'} م | القطر: ${l.diameterCm || '-'} سم` : '-'}</td>
+      <td><strong>${fmtNum(l.volumeM3, 4)} م³</strong></td>
+      <td>${l.processedBy || 'الإدارة'}</td>
+    </tr>
+  `).join('');
+
+  triggerOfficialReportPdf(
+    `🌲 بيان سيريالات الجذوع التي تم تشغيلها ليوم (${s.date})`,
+    `إجمالي الجذوع المشغلة في اليوم: ${s.processedLogs.length} جذع | إجمالي التكعيب: ${fmtNum(s.processedLogsVolM3, 4)} م³`,
+    `
+      <table class="pdf-report-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>رقم السيريال (Serial)</th>
+            <th>رقم الحاوية</th>
+            <th>المورد</th>
+            <th>المقاسات</th>
+            <th>التكعيب (م³)</th>
+            <th>بواسطة</th>
+          </tr>
+        </thead>
+        <tbody>${logRows || '<tr><td colspan="7">لا توجد جذوع مشغلة في هذا اليوم</td></tr>'}</tbody>
+        <tfoot>
+          <tr style="background:#e2e8f0;font-weight:900;">
+            <td colspan="5" style="text-align:center;">إجمالي الجذوع التي تم تشغيلها يوم (${s.date}): (${s.processedLogs.length} جذع)</td>
+            <td>${fmtNum(s.processedLogsVolM3, 4)} م³</td>
+            <td>—</td>
+          </tr>
+        </tfoot>
+      </table>
+    `,
+    false
+  );
+}
+
 function printDailyFactorySummaryReportPdf(dateStr = '') {
   const s = computeDailyFactorySummaryMetrics(dateStr || dailySummarySelectedDate || todayStr());
+  _lastActiveReportGeneratorFn = () => printDailyFactorySummaryReportPdf(s.date);
   const showPrices = canSeeFinancialPrices();
   closeModal();
+
+  const logRows = s.processedLogs.map((l, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><strong>${l.serialNumber}</strong></td>
+      <td><strong>${l.containerNumber || '-'}</strong></td>
+      <td>${l.lengthM || l.diameterCm ? `الطول: ${l.lengthM || '-'} م × القطر: ${l.diameterCm || '-'} سم` : '-'}</td>
+      <td><strong>${fmtNum(l.volumeM3, 4)} م³</strong></td>
+      <td>${l.processedBy || 'الإدارة'}</td>
+    </tr>
+  `).join('');
 
   const prodRows = s.prodDetails.map((d, i) => `
     <tr>
@@ -29047,7 +29168,24 @@ function printDailyFactorySummaryReportPdf(dateStr = '') {
     `📅 تقرير تقفيلة وملخص حركة المصنع ليوم (${s.date})`,
     `الجذوع المشغلة: ${s.processedLogs.length} جذع (${fmtNum(s.processedLogsVolM3, 3)} م³) | الإنتاج المضاف: ${fmtNum(s.producedSheets, 0)} قطعة (${fmtNum(s.producedVolM3, 3)} م³) | الطلبيات: ${s.ordersOnDate.length}`,
     `
-      <h3 style="margin:10px 0 6px 0;">1️⃣ دفعات الإنتاج المضافة للمخزن (${s.date}):</h3>
+      <h3 style="margin:10px 0 6px 0;">1️⃣ سيريالات الجذوع التي تم تشغيلها (${s.date}) — العدد: (${s.processedLogs.length} جذع) | التكعيب: (${fmtNum(s.processedLogsVolM3, 4)} م³):</h3>
+      <table class="pdf-report-table">
+        <thead>
+          <tr><th>#</th><th>رقم السيريال</th><th>رقم الحاوية</th><th>المقاسات</th><th>التكعيب (م³)</th><th>المنفذ</th></tr>
+        </thead>
+        <tbody>${logRows || '<tr><td colspan="6">لا توجد جذوع مشغلة في هذا اليوم</td></tr>'}</tbody>
+        ${s.processedLogs.length > 0 ? `
+          <tfoot>
+            <tr style="background:#e2e8f0;font-weight:900;">
+              <td colspan="4" style="text-align:center;">إجمالي الجذوع المشغلة (${s.processedLogs.length} جذع)</td>
+              <td>${fmtNum(s.processedLogsVolM3, 4)} م³</td>
+              <td>—</td>
+            </tr>
+          </tfoot>
+        ` : ''}
+      </table>
+
+      <h3 style="margin:14px 0 6px 0;">2️⃣ دفعات الإنتاج المضافة للمخزن (${s.date}):</h3>
       <table class="pdf-report-table">
         <thead>
           <tr><th>#</th><th>التخانة والاتجاه</th><th>الجودة</th><th>المقاس</th><th>الكمية</th><th>التكعيب (م³)</th><th>المنفذ</th></tr>
@@ -29055,7 +29193,7 @@ function printDailyFactorySummaryReportPdf(dateStr = '') {
         <tbody>${prodRows || '<tr><td colspan="7">لا توجد دفعات إنتاج في هذا اليوم</td></tr>'}</tbody>
       </table>
 
-      <h3 style="margin:14px 0 6px 0;">2️⃣ الطلبيات والسيارات المصروفة (${s.date}):</h3>
+      <h3 style="margin:14px 0 6px 0;">3️⃣ الطلبيات والسيارات المصروفة (${s.date}):</h3>
       <table class="pdf-report-table">
         <thead>
           <tr><th>#</th><th>رقم الطلبية</th><th>العميل</th><th>الكمية</th>${showPrices ? '<th>الصافي</th>' : ''}<th>السيارة والبالتات</th></tr>
