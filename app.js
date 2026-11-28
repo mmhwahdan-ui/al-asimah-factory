@@ -24891,6 +24891,11 @@ function renderLogContainersAndSerialsSection() {
                                 ⚙️ تشغيل فقط
                               </button>
                             ` : `
+                              ${String(l.processedAt || '').slice(0, 10) !== todayStr() ? `
+                                <button type="button" class="btn btn-sm" style="padding:3px 8px;background:#0284c7;color:#fff;font-weight:800;" onclick="processLogSerialsBatchByString('${l.serialNumber}')" title="نقل تاريخ تشغيل هذا الجذع إلى ملخص اليوم (${todayStr()})">
+                                  📅 إثبات في تشغيل اليوم
+                                </button>
+                              ` : ''}
                               <button type="button" class="btn btn-sm btn-outline" style="padding:3px 8px;" onclick="toggleSingleLogProcessStatus('${l.id}', false)" title="إلغاء التشغيل وإرجاع الجذع للرصيد المتاح">
                                 ↩️ إرجاع للمخزن
                               </button>
@@ -26451,8 +26456,10 @@ function processLogSerialsBatchByString(serialsStr) {
   if (tokens.length === 0) return;
 
   const now = getMonotonicIso();
+  const todayDate = todayStr();
   const matchedLogs = [];
-  const alreadyProcessed = [];
+  const updatedToTodayLogs = [];
+  const alreadyProcessedToday = [];
   const notFound = [];
 
   for (const tk of tokens) {
@@ -26464,7 +26471,16 @@ function processLogSerialsBatchByString(serialsStr) {
     if (!logItem) {
       notFound.push(tk);
     } else if (logItem.status === 'processed') {
-      alreadyProcessed.push(logItem.serialNumber);
+      const prevProcDate = String(logItem.processedAt || '').slice(0, 10);
+      if (prevProcDate !== todayDate) {
+        // Re-entered today: update processedAt to today so it counts in today's summary!
+        logItem.processedAt = now;
+        logItem.processedBy = currentUser?.name || 'الإدارة';
+        logItem.updatedAt = now;
+        updatedToTodayLogs.push(logItem);
+      } else {
+        alreadyProcessedToday.push(logItem.serialNumber);
+      }
     } else {
       logItem.status = 'processed';
       logItem.processedAt = now;
@@ -26474,41 +26490,48 @@ function processLogSerialsBatchByString(serialsStr) {
     }
   }
 
-  if (matchedLogs.length > 0) {
-    const totalProcessedVol = +matchedLogs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0).toFixed(4);
+  if (matchedLogs.length > 0 || updatedToTodayLogs.length > 0) {
+    const allDoneNow = [...matchedLogs, ...updatedToTodayLogs];
+    const totalProcessedVol = +allDoneNow.reduce((s, l) => s + Number(l.volumeM3 || 0), 0).toFixed(4);
     syncRawMaterialsWithLogContainers(now);
 
-    state.warehouseMovements = state.warehouseMovements || [];
-    state.warehouseMovements.unshift({
-      id: uid('mov'),
-      voucherNumber: `ISS-LOG-${Date.now().toString().slice(-4)}`,
-      date: todayStr(),
-      warehouseType: 'raw_materials',
-      warehouseLabel: 'مخزن الخامات (تشغيل جذوع بالسيريال)',
-      direction: 'out',
-      directionLabel: 'إذن صرف وتشغيل جذوع بالسيريال',
-      itemSummary: `تشغيل (${matchedLogs.length}) جذع بالسيريال: [${matchedLogs.map(x => x.serialNumber).join(', ')}]`,
-      referenceCode: matchedLogs[0].containerNumber || 'LOG-SER',
-      quantitySummary: `${matchedLogs.length} جذع (${fmtNum(totalProcessedVol, 4)} م³)`,
-      performedBy: currentUser?.name || 'الإدارة',
-      approvedBy: currentUser?.name || 'الإدارة',
-      updatedAt: now
-    });
+    if (matchedLogs.length > 0) {
+      const newVol = +matchedLogs.reduce((s, l) => s + Number(l.volumeM3 || 0), 0).toFixed(4);
+      state.warehouseMovements = state.warehouseMovements || [];
+      state.warehouseMovements.unshift({
+        id: uid('mov'),
+        voucherNumber: `ISS-LOG-${Date.now().toString().slice(-4)}`,
+        date: todayDate,
+        warehouseType: 'raw_materials',
+        warehouseLabel: 'مخزن الخامات (تشغيل جذوع بالسيريال)',
+        direction: 'out',
+        directionLabel: 'إذن صرف وتشغيل جذوع بالسيريال',
+        itemSummary: `تشغيل (${matchedLogs.length}) جذع بالسيريال: [${matchedLogs.map(x => x.serialNumber).join(', ')}]`,
+        referenceCode: matchedLogs[0].containerNumber || 'LOG-SER',
+        quantitySummary: `${matchedLogs.length} جذع (${fmtNum(newVol, 4)} م³)`,
+        performedBy: currentUser?.name || 'الإدارة',
+        approvedBy: currentUser?.name || 'الإدارة',
+        updatedAt: now
+      });
+    }
 
-    saveState(`⚙️ تشغيل (${matchedLogs.length}) جذع بالسيريال [${matchedLogs.map(x => x.serialNumber).join('، ')}] بإجمالي تكعيب (${fmtNum(totalProcessedVol, 4)} م³) بواسطة ${currentUser?.name}`);
+    saveState(`⚙️ تشغيل (${allDoneNow.length}) جذع بالسيريال [${allDoneNow.map(x => x.serialNumber).join('، ')}] بتاريخ اليوم (${todayDate}) بإجمالي تكعيب (${fmtNum(totalProcessedVol, 4)} م³) بواسطة ${currentUser?.name}`);
   }
 
   let msg = '';
   if (matchedLogs.length > 0) {
     msg += `✅ تم تشغيل (${matchedLogs.length}) جذع بنجاح: [${matchedLogs.map(x => x.serialNumber).join('، ')}]\n`;
   }
-  if (alreadyProcessed.length > 0) {
-    msg += `⚠️ جذوع تم تشغيلها مسبقاً: [${alreadyProcessed.join('، ')}]\n`;
+  if (updatedToTodayLogs.length > 0) {
+    msg += `✅ تم نقل وإثبات (${updatedToTodayLogs.length}) جذع في ملخص تشغيل اليوم (${todayDate}): [${updatedToTodayLogs.map(x => x.serialNumber).join('، ')}]\n`;
+  }
+  if (alreadyProcessedToday.length > 0) {
+    msg += `ℹ️ جذوع مسجلة بالفعل في ملخص اليوم (${todayDate}): [${alreadyProcessedToday.join('، ')}]\n`;
   }
   if (notFound.length > 0) {
     msg += `❌ أرقام سيريال غير موجودة: [${notFound.join('، ')}]`;
   }
-  if (alreadyProcessed.length > 0 || notFound.length > 0) {
+  if (updatedToTodayLogs.length > 0 || alreadyProcessedToday.length > 0 || notFound.length > 0) {
     alert(msg.trim());
   }
 }
@@ -26548,15 +26571,17 @@ function toggleSingleLogProcessStatus(logId, markProcessed = true) {
 function openQuickLogSerialDispatchModal() {
   if (!canManageLogSerialsAndProduction(currentUser)) return;
   const modalRoot = document.getElementById('modal-root');
+  const todayDate = todayStr();
   const availableLogs = (state.logItems || []).filter(l => l.status !== 'processed');
+  const prevProcessedLogs = (state.logItems || []).filter(l => l.status === 'processed' && String(l.processedAt || '').slice(0, 10) !== todayDate);
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-      <div class="modal-box" style="max-width:680px;">
+      <div class="modal-box" style="max-width:720px;">
         <div class="card-header">
           <div>
             <div class="card-title" style="color:#5b21b6;">⚙️ إدخال سيريال الجذوع للتشغيل (المدير التنفيذي / المشروعات / الإداري)</div>
-            <small style="color:var(--text-muted);">يمكنك كتابة أرقام السيريال مباشرة أو تحديد الجذوع من القائمة لتشغيلها فوراً</small>
+            <small style="color:var(--text-muted);">يمكنك كتابة أرقام السيريال مباشرة أو تحديد الجذوع من القائمة لتشغيلها وإثباتها في ملخص اليوم فوراً</small>
           </div>
           <button type="button" class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
         </div>
@@ -26564,14 +26589,14 @@ function openQuickLogSerialDispatchModal() {
         <form onsubmit="event.preventDefault(); const v=document.getElementById('modal-batch-serials').value; closeModal(); processLogSerialsBatchByString(v);">
           <div class="form-group" style="margin-bottom:12px;">
             <label style="font-weight:800;">اكتب رقم السيريال أو عدة أرقام سيريال (مفصولة بمسافة أو فاصلة أو سطر جديد):</label>
-            <textarea id="modal-batch-serials" rows="3" class="form-control" style="font-weight:800;border:2px solid #7c3aed;" placeholder="مثال: LOG-1001, LOG-1002" autofocus></textarea>
+            <textarea id="modal-batch-serials" rows="3" class="form-control" style="font-weight:800;border:2px solid #7c3aed;" placeholder="مثال: 84742 أو 84820, 84810" autofocus></textarea>
           </div>
 
           <div style="margin-bottom:12px;">
             <div style="font-weight:800;font-size:0.84rem;margin-bottom:6px;color:var(--primary);">
-              أو اضغط على أي جذع متاح بالمخزن لإضافته للتشغيل (${availableLogs.length} جذع متاح):
+              1️⃣ اضغط على أي جذع متاح بالمخزن لإضافته للتشغيل اليوم (${availableLogs.length} جذع متاح):
             </div>
-            <div style="max-height:210px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:6px;background:var(--bg-elevated);padding:10px;border-radius:10px;">
+            <div style="max-height:175px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:6px;background:var(--bg-elevated);padding:10px;border-radius:10px;">
               ${availableLogs.length === 0 ? `<span style="color:var(--text-muted);font-size:0.84rem;">لا توجد جذوع متاحة غير مشغلة حالياً.</span>` : availableLogs.map(l => `
                 <button type="button" class="btn btn-sm btn-outline" style="font-size:0.76rem;padding:4px 9px;" onclick="const ta=document.getElementById('modal-batch-serials'); ta.value = (ta.value ? ta.value + ', ' : '') + '${l.serialNumber}';">
                   ➕ ${l.serialNumber} (${fmtNum(l.volumeM3, 3)} م³ — ${l.containerNumber})
@@ -26580,10 +26605,25 @@ function openQuickLogSerialDispatchModal() {
             </div>
           </div>
 
+          ${prevProcessedLogs.length > 0 ? `
+            <div style="margin-bottom:12px;">
+              <div style="font-weight:800;font-size:0.82rem;margin-bottom:6px;color:#b45309;">
+                2️⃣ جذوع كانت مسجلة بتاريخ سابق (${prevProcessedLogs.length} جذع) — اضغط على أي جذع منها لنقله وإثباته في تشغيل اليوم (${todayDate}):
+              </div>
+              <div style="max-height:125px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:6px;background:rgba(217,119,6,0.08);border:1px dashed #d97706;padding:8px 10px;border-radius:10px;">
+                ${prevProcessedLogs.map(l => `
+                  <button type="button" class="btn btn-sm btn-outline" style="font-size:0.75rem;padding:3px 8px;border-color:#d97706;color:#b45309;font-weight:800;" onclick="const ta=document.getElementById('modal-batch-serials'); ta.value = (ta.value ? ta.value + ', ' : '') + '${l.serialNumber}';">
+                    🔄 ${l.serialNumber} (${fmtNum(l.volumeM3, 3)} م³ — ${l.containerNumber})
+                  </button>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+
           <div style="display:flex;justify-content:flex-end;gap:10px;">
             <button type="button" class="btn btn-outline" onclick="closeModal()">إلغاء</button>
             <button type="submit" class="btn btn-primary" style="background:#7c3aed;border-color:#7c3aed;font-weight:900;">
-              ⚙️ تأكيد تشغيل الجذوع المحددة الآن
+              ⚙️ تأكيد تشغيل الجذوع المحددة في ملخص اليوم الآن
             </button>
           </div>
         </form>
@@ -28951,22 +28991,28 @@ function openDailyFactorySummaryWindowModal(selectedDate = '') {
         </div>
 
         <div style="max-height:48vh;overflow-y:auto;display:flex;flex-direction:column;gap:12px;">
-          <!-- Processed Logs Serials Section -->
+        <!--Processed Logs Serials Section-->
           <div style="background:var(--bg-card);padding:10px 12px;border-radius:10px;border:1.5px solid #7c3aed;">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
               <div style="font-weight:900;color:#5b21b6;">
                 1️⃣ سيريالات الجذوع التي تم تشغيلها في هذا اليوم (${s.processedLogs.length} جذع — إجمالي: ${fmtNum(s.processedLogsVolM3, 4)} م³):
               </div>
-              ${s.processedLogs.length > 0 ? `
-                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                ${canManageLogSerialsAndProduction(currentUser) ? `
+                  <form onsubmit="event.preventDefault(); const v=document.getElementById('daily-sum-quick-serial')?.value; if(v){processLogSerialsBatchByString(v); openDailyFactorySummaryWindowModal('${s.date}');}" style="display:inline-flex;gap:4px;align-items:center;">
+                    <input id="daily-sum-quick-serial" class="form-control" style="max-width:165px;padding:3px 8px;font-size:0.78rem;font-weight:800;border-color:#7c3aed;" placeholder="➕ اكتب سيريال جذع..." />
+                    <button type="submit" class="btn btn-sm btn-primary" style="background:#7c3aed;border-color:#7c3aed;padding:3px 8px;font-weight:900;font-size:0.76rem;">+ إضافة لليوم</button>
+                  </form>
+                ` : ''}
+                ${s.processedLogs.length > 0 ? `
                   <button type="button" class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:800;padding:3px 9px;" onclick="printDailyProcessedLogsOnlyReportPdf('${s.date}')">
                     🖨️ طباعة سيريالات جذوع اليوم PDF
                   </button>
                   <button type="button" class="btn btn-sm" style="background:#0284c7;color:#fff;font-weight:800;padding:3px 9px;" onclick="sendReportViaWhatsAppImage(() => printDailyProcessedLogsOnlyReportPdf('${s.date}'))">
                     🖼️ واتساب صورة
                   </button>
-                </div>
-              ` : ''}
+                ` : ''}
+              </div>
             </div>
             ${s.processedLogs.length === 0 ? `<small style="color:var(--text-muted);">لا توجد جذوع مسجلة كـ (تم التشغيل) في هذا التاريخ.</small>` : `
               <div class="table-responsive">
