@@ -1921,6 +1921,120 @@ function normalizeState(s) {
     s.deletedIds = Array.from(delSet);
   }
 
+  if (!s.undispatchedStockRestoredV96Done) {
+    const delSetV96 = new Set(Array.isArray(s.deletedIds) ? s.deletedIds : []);
+    const nowV96 = new Date(Date.now() + 5000).toISOString();
+    s.pallets = Array.isArray(s.pallets) ? s.pallets : [];
+    s.warehouseMovements = Array.isArray(s.warehouseMovements) ? s.warehouseMovements : [];
+
+    for (const ord of (s.productionOrders || [])) {
+      if (!ord || ord.undispatchedStockRestoredV96) continue;
+      // Restore any active order that has NOT exited via a Vehicle Dispatch Voucher (!ord.carDispatchVoucher) and is not an old executed order
+      if (ord.stockDeducted && !ord.carDispatchVoucher && !ord.isOldExecutedOrder && (ord.stage || ord.status) !== 'completed') {
+        if (!ord.skipWarehouseDeduction) {
+          for (const it of (ord.items || [])) {
+            const sh = Number(it.sheetsCount || 0);
+            if (sh <= 0) continue;
+            const len = Number(it.lengthCm || 250);
+            const wid = Number(it.widthCm || 125);
+            const thkMm = Number(it.thicknessMm || 1.5);
+            const dir = it.direction || 'qas';
+            const thkId = it.thicknessId || `th-${thkMm}-${dir}`;
+            const thkObj = (s.catalog?.thicknesses || []).find(t => t.id === thkId) || { id: thkId, mm: thkMm, direction: dir };
+            const gradeObj = (s.catalog?.grades || []).find(g => g.id === it.gradeId || g.code === it.gradeId || g.name === it.gradeId) || { id: it.gradeId, code: it.gradeCode || 'A', name: it.gradeName || 'عام', defaultPricePerM3: 20000 };
+            const woodObj = (s.catalog?.woodTypes || []).find(w => w.id === it.woodTypeId) || (s.catalog?.woodTypes || [])[0] || { id: 'wt-general', name: 'قشرة خشبية' };
+            const unitPrice = Number(it.unitPrice || 0);
+
+            let remToAdd = sh;
+            const negPallets = s.pallets.filter(p =>
+              p && p.status === 'in_stock' && Number(p.sheetsCount || 0) < 0 &&
+              matchPalletToThicknessRow(p, thkObj) && matchPalletToGrade(p, it.gradeId)
+            );
+            for (const negP of negPallets) {
+              if (remToAdd <= 0) break;
+              const negDef = Math.abs(Number(negP.sheetsCount || 0));
+              if (remToAdd >= negDef) {
+                remToAdd -= negDef;
+                negP.sheetsCount = 0;
+                negP.areaM2 = 0;
+                negP.volumeM3 = 0;
+                negP.totalValue = 0;
+                negP.status = 'dispatched';
+                negP.coveredAt = nowV96;
+                negP.updatedAt = nowV96;
+              } else {
+                const newNeg = -(negDef - remToAdd);
+                remToAdd = 0;
+                const nm = calculateVeneerMetrics(negP.lengthCm || len, negP.widthCm || wid, thkMm, newNeg);
+                negP.sheetsCount = newNeg;
+                negP.areaM2 = nm.totalAreaM2;
+                negP.volumeM3 = nm.totalVolumeM3;
+                negP.totalValue = unitPrice > 0 ? +(newNeg * unitPrice).toFixed(2) : 0;
+                negP.updatedAt = nowV96;
+              }
+            }
+
+            if (remToAdd > 0) {
+              const m = calculateVeneerMetrics(len, wid, thkMm, remToAdd);
+              const totVal = unitPrice > 0 ? +(remToAdd * unitPrice).toFixed(2) : +(m.totalVolumeM3 * (gradeObj.defaultPricePerM3 || 20000)).toFixed(2);
+              s.pallets.unshift({
+                id: `plt-restv96-${ord.id}-${it.gradeId}`,
+                palletCode: `PLT-REST-${ord.orderNumber}`,
+                woodTypeId: woodObj.id,
+                woodTypeName: woodObj.name,
+                lengthCm: len,
+                widthCm: wid,
+                thicknessId: thkObj.id,
+                thicknessMm: thkMm,
+                direction: dir,
+                directionLabel: dir === 'sada' ? 'اتجاه سدا' : 'اتجاه قص',
+                gradeId: gradeObj.id,
+                gradeCode: gradeObj.code,
+                gradeName: gradeObj.name,
+                sheetsCount: remToAdd,
+                areaM2: m.totalAreaM2,
+                volumeM3: m.totalVolumeM3,
+                unitSheetPrice: unitPrice,
+                unitPricePerM3: m.totalVolumeM3 > 0 ? +(totVal / m.totalVolumeM3).toFixed(2) : 20000,
+                totalValue: totVal,
+                batchNumber: `إرجاع رصيد الطلبية ${ord.orderNumber} لحين إذن خروج السيارة`,
+                status: 'in_stock',
+                location: 'مخزن القشرة التامة',
+                entryDate: ord.date || todayStr(),
+                createdBy: 'النظام',
+                createdAt: ord.date || todayStr(),
+                updatedAt: nowV96
+              });
+            }
+          }
+        }
+
+        const carVo = `CAR-${ord.orderNumber}`;
+        s.warehouseMovements.forEach(mv => {
+          if (mv && mv.direction === 'out' && (mv.voucherNumber === carVo || mv.voucherNumber === ord.orderNumber)) {
+            delSetV96.add(mv.id);
+          }
+        });
+        s.warehouseMovements = s.warehouseMovements.filter(mv =>
+          !(mv && mv.direction === 'out' && (mv.voucherNumber === carVo || mv.voucherNumber === ord.orderNumber))
+        );
+
+        ord.stockDeducted = false;
+        ord.stockDeductedAt = '';
+        ord.placedInNegativeStock = false;
+        ord.placedInNegativeStockBy = '';
+        ord.placedInNegativeStockAt = '';
+        ord.undispatchedStockRestoredV96 = true;
+        ord.updatedAt = nowV96;
+      } else {
+        ord.undispatchedStockRestoredV96 = true;
+      }
+    }
+
+    s.deletedIds = Array.from(delSetV96);
+    s.undispatchedStockRestoredV96Done = true;
+  }
+
   return s;
 }
 
@@ -4411,9 +4525,9 @@ function getMyDelayedApprovalsList() {
         badgeText: '2️⃣ موافقة تجهيز المخزن',
         badgeColor: '#0284c7',
         title: `أمر تجهيز طلبية (${ord.orderNumber}) — العميل: ${ord.clientName}`,
-        subtitle: `الكمية: ${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة — ${sc.isReadyToApprove ? 'الرصيد متوفر بالمخزن وجاهز لموافقة التجهيز' : '⚠️ يوجد عجز (' + fmtNum(sc.totalDeficitSheets, 0) + ' قطعة) يتطلب تغطية أو وضع بالسالب'}`,
-        actionLabel: sc.isReadyToApprove ? '✅ موافقة التجهيز والخروج' : '⚠️ معالجة العجز والموافقة',
-        onClickJs: sc.isReadyToApprove ? `closeModal(); approveOrderWarehousePrep('${ord.id}');` : `closeModal(); openOrderStockShortageModal('${ord.id}');`,
+        subtitle: `الكمية: ${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة — تظهر في جدول المخزن كـ (مباع منه) ولا تُخصم من الرصيد الفعلي إلا بعد إذن خروج السيارة${!sc.isReadyToApprove ? ' (تنبيه: يحتاج إنتاج ' + fmtNum(sc.totalDeficitSheets, 0) + ' قطعة قبل خروج السيارة)' : ''}`,
+        actionLabel: '✅ موافقة التجهيز بالمخزن',
+        onClickJs: `closeModal(); approveOrderWarehousePrep('${ord.id}');`,
         secondaryLabel: '📄 بيان الكميات',
         secondaryJs: `closeModal(); openClientOrderStatementModal('${ord.id}');`
       });
@@ -6342,6 +6456,49 @@ function matchPalletToGrade(p, gradeId, gradeName = '') {
   return false;
 }
 
+// Compute reserved/sold sheets ("مباع منه") for a warehouse cell from all active orders that have NOT yet exited via a Vehicle Dispatch Voucher
+function getReservedSoldInfoForCell(thkObj, gradeId, excludeOrderId = '') {
+  if (!thkObj || !gradeId) return { reservedSoldSheets: 0, reservedOrdersList: [], reservedTooltip: '' };
+  let reservedSoldSheets = 0;
+  const reservedOrdersList = [];
+  for (const ord of (state?.productionOrders || [])) {
+    if (!ord) continue;
+    if (excludeOrderId && ord.id === excludeOrderId) continue;
+    if (ord.carDispatchVoucher || ord.stockDeducted || ord.skipWarehouseDeduction || ord.isOldExecutedOrder) continue;
+    const st = ord.stage || ord.status;
+    if (st === 'completed') continue;
+    let ordCellSheets = 0;
+    for (const it of (ord.items || [])) {
+      if (!it) continue;
+      if (veneerFilterWood !== 'all' && it.woodTypeId && it.woodTypeId !== veneerFilterWood) continue;
+      if (!matchesPalletDimensionFilter({ lengthCm: it.lengthCm || 250, widthCm: it.widthCm || 125 }, veneerFilterDimension)) continue;
+      const itemPseudoPallet = {
+        thicknessId: it.thicknessId || `th-${it.thicknessMm}-${it.direction || 'qas'}`,
+        thicknessMm: Number(it.thicknessMm || 1.5),
+        direction: it.direction || 'qas',
+        gradeId: it.gradeId,
+        gradeCode: it.gradeCode,
+        gradeName: it.gradeName
+      };
+      if (matchPalletToThicknessRow(itemPseudoPallet, thkObj) && matchPalletToGrade(itemPseudoPallet, gradeId)) {
+        ordCellSheets += Math.max(0, Number(it.sheetsCount || 0));
+      }
+    }
+    if (ordCellSheets > 0) {
+      reservedSoldSheets += ordCellSheets;
+      reservedOrdersList.push({
+        orderId: ord.id,
+        orderNumber: ord.orderNumber || '',
+        clientName: ord.clientName || 'عميل',
+        stage: st,
+        sheets: ordCellSheets
+      });
+    }
+  }
+  const reservedTooltip = reservedOrdersList.map(r => `${r.clientName} (${r.orderNumber}): ${fmtNum(r.sheets, 0)} قطعة`).join(' | ');
+  return { reservedSoldSheets, reservedOrdersList, reservedTooltip };
+}
+
 function renderFinishedVeneerWarehouse() {
   const thicknesses = [...(state.catalog.thicknesses || [])].sort((a, b) => {
     if (Number(a.mm) !== Number(b.mm)) return Number(a.mm) - Number(b.mm);
@@ -6394,6 +6551,9 @@ function renderFinishedVeneerWarehouse() {
     const soldSheets = soldMovements.reduce((s, m) => s + Number(m.sheetsCount || 0), 0);
     const soldRevenue = soldMovements.reduce((s, m) => s + Number(m.totalSaleAmount || 0), 0);
 
+    // Compute reserved/sold quantity ("مباع منه") from active orders that have NOT yet exited via Vehicle Dispatch Voucher
+    const reservedInfo = getReservedSoldInfoForCell(t, gradeId);
+
     return {
       palletsCount: cellPallets.length,
       sheets,
@@ -6406,6 +6566,9 @@ function renderFinishedVeneerWarehouse() {
       deficitValueByPiece,
       soldSheets,
       soldRevenue: +soldRevenue.toFixed(2),
+      reservedSoldSheets: reservedInfo.reservedSoldSheets,
+      reservedOrdersList: reservedInfo.reservedOrdersList,
+      reservedTooltip: reservedInfo.reservedTooltip,
       customDimBreakdown
     };
   }
@@ -6425,6 +6588,7 @@ function renderFinishedVeneerWarehouse() {
 
   let grandSheets = 0;
   let grandDeficitSheets = 0;
+  let grandReservedSoldSheets = 0;
   let grandM2 = 0;
   let grandM3 = 0;
   let grandStockValueByPiece = 0;
@@ -6437,6 +6601,7 @@ function renderFinishedVeneerWarehouse() {
       const cd = getCellData(t, g.id);
       grandSheets += cd.availableSheets;
       grandDeficitSheets += cd.deficitSheets;
+      grandReservedSoldSheets += cd.reservedSoldSheets;
       if (cd.sheets > 0) {
         grandM2 += cd.areaM2;
         grandM3 += cd.volumeM3;
@@ -6635,6 +6800,7 @@ function renderFinishedVeneerWarehouse() {
                 const dirBadgeText = isSada ? '📏 سدا' : '✂️ قص';
                 let rowSheets = 0;
                 let rowDeficitSheets = 0;
+                let rowReservedSoldSheets = 0;
                 let rowM3 = 0;
                 let rowPallets = 0;
 
@@ -6642,13 +6808,15 @@ function renderFinishedVeneerWarehouse() {
                   const cell = getCellData(t, g.id);
                   rowSheets += cell.availableSheets;
                   rowDeficitSheets += cell.deficitSheets;
+                  rowReservedSoldSheets += cell.reservedSoldSheets;
                   if (cell.sheets > 0) rowM3 += cell.volumeM3;
                   rowPallets += cell.palletsCount;
                   const hasStock = cell.sheets > 0;
                   const hasNegativeStock = cell.sheets < 0;
+                  const hasReserved = cell.reservedSoldSheets > 0;
 
                   return `
-                    <td class="matrix-cell ${hasStock || hasNegativeStock ? 'has-stock' : 'empty-stock'}"
+                    <td class="matrix-cell ${hasStock || hasNegativeStock || hasReserved ? 'has-stock' : 'empty-stock'}"
                         style="${hasNegativeStock ? 'background:rgba(220,38,38,0.10) !important;border:2px solid var(--danger) !important;' : ''}${canEditWh ? '' : 'cursor:default;'}"
                         ${canEditWh ? `onclick="openMatrixCellModal('${t.id}', '${g.id}')"` : ''}>
                       ${hasStock ? `
@@ -6671,6 +6839,11 @@ function renderFinishedVeneerWarehouse() {
                       ` : `
                         <div class="cell-main-qty" style="color:var(--text-muted);font-weight:700;">0</div>
                       `}
+                      ${hasReserved ? `
+                        <div style="margin-top:3px;font-size:0.66rem;background:${cell.reservedSoldSheets > cell.availableSheets ? 'rgba(220,38,38,0.14)' : 'rgba(217,119,6,0.15)'};color:${cell.reservedSoldSheets > cell.availableSheets ? '#b91c1c' : '#b45309'};border:1px solid ${cell.reservedSoldSheets > cell.availableSheets ? '#ef4444' : '#f59e0b'};border-radius:5px;padding:2px 5px;font-weight:900;line-height:1.3;" title="${cell.reservedTooltip}">
+                          مباع منه: ${fmtNum(cell.reservedSoldSheets, 0)}
+                        </div>
+                      ` : ''}
                       ${canEditWh ? `
                       <div class="cell-action-hint">
                         <button type="button" class="cell-mini-btn" style="${hasNegativeStock ? 'background:#dc2626;color:#fff;border-color:#b91c1c;font-weight:800;' : ''}" title="${hasNegativeStock ? 'إضافة إنتاج لتغطية العجز' : 'إضافة كميات إنتاج'}" onclick="event.stopPropagation(); openMatrixCellModal('${t.id}', '${g.id}', 'in')">${hasNegativeStock ? '+تغطية العجز' : '+إنتاج'}</button>
@@ -6706,9 +6879,10 @@ function renderFinishedVeneerWarehouse() {
 
                     ${cellsHtml}
 
-                    <!-- Row Total (Available + Deficit separated) -->
+                    <!-- Row Total (Available + Deficit + Reserved Sold separated) -->
                     <td class="matrix-total-cell">
                       <div class="cell-main-qty" style="color:var(--primary);">${fmtNum(rowSheets, 0)}</div>
+                      ${rowReservedSoldSheets > 0 ? `<div style="margin-top:2px;font-size:0.68rem;color:#b45309;font-weight:900;">مباع منه: ${fmtNum(rowReservedSoldSheets, 0)}</div>` : ''}
                       ${rowDeficitSheets > 0 ? `<div style="margin-top:2px;font-size:0.78rem;color:var(--danger);font-weight:900;">${fmtNum(rowDeficitSheets, 0)} عجز</div>` : ''}
                     </td>
                   </tr>
@@ -6724,20 +6898,24 @@ function renderFinishedVeneerWarehouse() {
                 ${grades.map(g => {
                   let colAvailableSheets = 0;
                   let colDeficitSheets = 0;
+                  let colReservedSoldSheets = 0;
                   for (const t of thicknesses) {
                     const cd = getCellData(t, g.id);
                     colAvailableSheets += cd.availableSheets;
                     colDeficitSheets += cd.deficitSheets;
+                    colReservedSoldSheets += cd.reservedSoldSheets;
                   }
                   return `
                     <td class="matrix-total-cell">
                       <div class="cell-main-qty" style="color:var(--accent);">${fmtNum(colAvailableSheets, 0)}</div>
+                      ${colReservedSoldSheets > 0 ? `<div style="margin-top:2px;font-size:0.68rem;color:#b45309;font-weight:900;">مباع منه: ${fmtNum(colReservedSoldSheets, 0)}</div>` : ''}
                       ${colDeficitSheets > 0 ? `<div style="margin-top:2px;font-size:0.78rem;color:var(--danger);font-weight:900;">${fmtNum(colDeficitSheets, 0)} عجز</div>` : ''}
                     </td>
                   `;
                 }).join('')}
                 <td class="matrix-total-cell" style="background:var(--primary-light) !important;">
                   <div class="cell-main-qty" style="color:var(--primary);font-size:1.12rem;">${fmtNum(grandSheets, 0)}</div>
+                  ${grandReservedSoldSheets > 0 ? `<div style="margin-top:2px;font-size:0.72rem;color:#b45309;font-weight:900;">مباع منه: ${fmtNum(grandReservedSoldSheets, 0)}</div>` : ''}
                   ${grandDeficitSheets > 0 ? `<div style="margin-top:2px;font-size:0.82rem;color:var(--danger);font-weight:900;">${fmtNum(grandDeficitSheets, 0)} عجز</div>` : ''}
                 </td>
               </tr>
@@ -8623,15 +8801,14 @@ function renderProduction() {
                         ` : ''}
 
                         ${st === 'pending_warehouse_prep' && isWarehouseOrAdmin ? `
+                          <button class="btn btn-sm btn-success flash-approval-btn" onclick="approveOrderWarehousePrep('${ord.id}')">
+                            ✅ موافقة التجهيز بالمخزن (مباع منه لحين خروج السيارة)
+                          </button>
                           ${stockCheck && !stockCheck.isReadyToApprove ? `
-                            <button class="btn btn-sm btn-danger flash-approval-btn" onclick="openOrderStockShortageModal('${ord.id}')" title="لا يسمح بالموافقة إلا بعد تغطية رصيد المخزن أو وضعها بالمخزن بالسالب">
-                              ⚠️ تغطية الرصيد أو وضعها بالسالب (${fmtNum(stockCheck.totalDeficitSheets, 0)} ق)
+                            <button class="btn btn-sm btn-outline" style="border-color:var(--success);color:var(--success);font-size:0.72rem;font-weight:800;" onclick="resolveOrderShortageByCoveringStock('${ord.id}', false)" title="اختياري: إضافة كمية العجز للمخزن كإنتاج قبل خروج السيارة">
+                              📥 تغطية العجز بالمخزن (+${fmtNum(stockCheck.totalDeficitSheets, 0)} ق)
                             </button>
-                          ` : `
-                            <button class="btn btn-sm btn-success flash-approval-btn" onclick="approveOrderWarehousePrep('${ord.id}')">
-                              ✅ موافقة التجهيز والخروج بالمخزن
-                            </button>
-                          `}
+                          ` : ''}
                         ` : ''}
 
                         ${st === 'pending_accountant_release' && isAccountantOrExec ? `
@@ -8700,14 +8877,14 @@ function renderApprovals() {
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
           <div>
             <div style="font-weight:900;font-size:1.05rem;color:#b45309;">
-              📦 بانتظار موافقة التجهيز والخروج من المخزن: يوجد (${pendingPrepOrders.length}) طلبية جاهزة لموافقة أمين المخزن أو المدير الإداري!
+              📦 بانتظار موافقة التجهيز بالمخزن: يوجد (${pendingPrepOrders.length}) طلبية جاهزة لموافقة أمين المخزن أو المدير الإداري!
             </div>
             <small style="color:var(--text-main);">
-              بمجرد الضغط على موافقة التجهيز سيتم خصم الكميات من جدول كميات القشرة فوراً وتحويل الطلبية للمحاسب لاعتماد إذن الصرف.
+              الكمية تظهر في جدول المخزن تحت الرصيد الفعلي كـ (مباع منه) ولا تُخصم من الرصيد إلا عند عمل إذن خروج السيارة.
             </small>
           </div>
           <button type="button" class="btn btn-success flash-approval-btn" onclick="approveOrderWarehousePrep('${pendingPrepOrders[0].id}')">
-            ✅ موافقة التجهيز والخروج بالمخزن الآن (${pendingPrepOrders[0].orderNumber})
+            ✅ موافقة التجهيز بالمخزن الآن (${pendingPrepOrders[0].orderNumber})
           </button>
         </div>
       </div>
@@ -11869,32 +12046,22 @@ function openClientOrderStatementModal(orderId) {
 
         ${ord.stage === 'pending_warehouse_prep' && isWarehouseOrAdmin ? (() => {
           const scModal = checkOrderStockAvailability(ord);
-          if (!scModal.isReadyToApprove) {
-            return `
-              <div style="background:rgba(220,38,38,0.12);border:2px solid var(--danger);padding:12px 14px;border-radius:10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-                <div style="font-size:0.85rem;color:var(--danger);">
-                  ⛔ <strong>تنبيه لأمين المخزن (الطلبية غير متوفرة بالكامل بالمخزن — عجز ${fmtNum(scModal.totalDeficitSheets, 0)} قطعة):</strong><br/>
-                  <span style="color:var(--text-main);">لا يسمح بالموافقة على الطلبية إلا بعد <strong>تغطية رصيد المخزن لها</strong> أو <strong>وضعها في المخزن بالسالب لحين إضافتها</strong>.</span>
-                </div>
-                <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                  <button type="button" class="btn btn-sm btn-success" style="font-weight:800;" onclick="resolveOrderShortageByCoveringStock('${ord.id}', true)">
-                    📥 تغطية رصيد المخزن + الموافقة
-                  </button>
-                  <button type="button" class="btn btn-sm btn-danger" style="font-weight:800;" onclick="resolveOrderShortageByNegativeStock('${ord.id}', true)">
-                    📉 وضعها بالمخزن بالسالب + الموافقة
-                  </button>
-                </div>
-              </div>
-            `;
-          }
           return `
             <div style="background:rgba(124,58,237,0.12);border:2px solid #7c3aed;padding:10px 14px;border-radius:10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
               <div style="font-size:0.84rem;">
-                📦 <strong>أمر تجهيز بالمخزن (${ord.placedInNegativeStock ? 'موضوعة بالمخزن بالسالب لحين الإضافة' : 'الرصيد متوفر ومغطى بالمخزن ✅'}):</strong> يمكنك مراجعة الكميات والمقاسات أدناه والضغط مباشرة على زر <strong>موافقة التجهيز والخروج</strong> ليتم تحويلها للمحاسب.
+                📦 <strong>أمر تجهيز بالمخزن (مباع منه: ${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة — لا يُخصم من الرصيد الفعلي إلا بعد إذن خروج السيارة):</strong>
+                ${!scModal.isReadyToApprove ? `<span style="color:var(--danger);font-weight:800;"> (مطلوب إضافة/إنتاج ${fmtNum(scModal.totalDeficitSheets, 0)} قطعة للمخزن قبل خروج السيارة)</span>` : `<span style="color:var(--success);font-weight:800;"> (الرصيد الفعلي بالمخزن يغطي الطلبية ✅)</span>`}
               </div>
-              <button type="button" class="btn btn-sm btn-success" style="font-weight:800;" onclick="saveClientOrderStatementChanges(null, '${ord.id}', false, true)">
-                ✅ موافقة التجهيز والخروج من المخزن الآن
-              </button>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                ${!scModal.isReadyToApprove ? `
+                  <button type="button" class="btn btn-sm btn-outline" style="border-color:var(--success);color:var(--success);font-weight:800;" onclick="resolveOrderShortageByCoveringStock('${ord.id}', false)">
+                    📥 تغطية الرصيد بالمخزن الآن
+                  </button>
+                ` : ''}
+                <button type="button" class="btn btn-sm btn-success" style="font-weight:800;" onclick="saveClientOrderStatementChanges(null, '${ord.id}', false, true)">
+                  ✅ موافقة التجهيز بالمخزن الآن (تحويل للمحاسب)
+                </button>
+              </div>
             </div>
           `;
         })() : ''}
@@ -12592,8 +12759,8 @@ function saveClientOrderStatementChanges(e, orderId, alsoApproveExecutive = fals
     }
   }
 
-  // 2) If order should be deducted from warehouse (and not marked skipWarehouseDeduction), deduct the NEW edited quantities!
-  const shouldBeDeductedNow = !ord.skipWarehouseDeduction && (wasActuallyDeducted || ord.stage === 'completed' || ord.status === 'completed');
+  // 2) If order should be deducted from warehouse (ONLY when it has a Vehicle Dispatch Voucher or is an old executed order, and not marked skipWarehouseDeduction), deduct the NEW edited quantities!
+  const shouldBeDeductedNow = !ord.skipWarehouseDeduction && Boolean(ord.carDispatchVoucher || ord.isOldExecutedOrder || ord.stage === 'completed' || ord.status === 'completed');
   const stockRestoredAndUpdated = wasActuallyDeducted || shouldBeDeductedNow;
   if (shouldBeDeductedNow) {
     const carPlate = ord.carDispatchVoucher?.carPlateNumber || '-';
@@ -12749,8 +12916,7 @@ function ensureOrderStockDeducted(ord, performedBy = '', opDate = '', allowNegat
   return true;
 }
 
-// STAGE 2 -> STAGE 3: Admin Manager or Warehouse Keeper approves preparation/exit from warehouse -> Immediately deducts from Quantities Table & transfers to Accountant
-// RULE: If order items are NOT available in the warehouse, warehouse keeper is NOT allowed to approve unless stock is covered first OR placed in the warehouse in negative balance until added!
+// STAGE 2 -> STAGE 3: Admin Manager or Warehouse Keeper approves preparation in warehouse -> Transfers to Accountant (Stock is NOT deducted until Vehicle Dispatch Voucher is issued; instead it shows in the warehouse matrix as "مباع منه")
 function approveOrderWarehousePrep(orderId) {
   if (!canApproveWarehouseStage(currentUser)) {
     alert('⛔ هذه المرحلة مخصصة لأمين المخزن أو المدير الإداري أو الإدارة!');
@@ -12759,24 +12925,15 @@ function approveOrderWarehousePrep(orderId) {
   const ord = (state.productionOrders || []).find(o => o.id === orderId);
   if (!ord) return;
 
-  const stockCheck = checkOrderStockAvailability(ord);
-  if (!stockCheck.isReadyToApprove) {
-    openOrderStockShortageModal(ord.id);
-    return;
-  }
-
   const now = getMonotonicIso(ord.updatedAt);
   ord.stage = 'pending_accountant_release';
   ord.warehousePrepApprovedBy = currentUser.name;
   ord.warehousePrepApprovedAt = now;
   ord.updatedAt = now;
 
-  // Immediately exit quantities from the Veneer Quantities Matrix upon warehouse exit approval
-  ensureOrderStockDeducted(ord, currentUser.name, ord.date || todayStr(), false);
-
   if (currentUser) markNotifIdsSeen([`ord_stage_${ord.id}_pending_accountant_release`]);
 
-  saveState(`📦 موافقة (${currentUser.name}) على تجهيز وخروج الطلبية (${ord.orderNumber}) للعميل ${ord.clientName} — تم خصم الكميات من جدول كميات القشرة فوراً وتحويلها إلى المحاسب في (اعتماد أذون الصرف)`);
+  saveState(`📦 موافقة (${currentUser.name}) على تجهيز الطلبية (${ord.orderNumber}) للعميل ${ord.clientName} — الرصيد الفعلي بالمخزن مكتوب تحته (مباع منه: ${fmtNum(ord.totalSheetsCount || 0, 0)}) لحين إصدار إذن خروج السيارة، وتم تحويلها للمحاسب في (اعتماد أذون الصرف)`);
 }
 
 function openOrderStockShortageModal(orderId) {
@@ -12986,10 +13143,6 @@ function resolveOrderShortageByNegativeStock(orderId, alsoApprove = true) {
   if (!ord) return;
   const stockCheck = checkOrderStockAvailability(ord);
   const actor = currentUser?.name || 'أمين المخزن';
-  const opDate = ord.date || todayStr();
-
-  // Deduct order items with allowNegative = true so uncovered quantities are placed as negative balance in the warehouse matrix
-  ensureOrderStockDeducted(ord, actor, opDate, true);
   closeModal();
 
   if (alsoApprove) {
@@ -12999,9 +13152,9 @@ function resolveOrderShortageByNegativeStock(orderId, alsoApprove = true) {
     ord.warehousePrepApprovedAt = now;
     ord.updatedAt = now;
     if (currentUser) markNotifIdsSeen([`ord_stage_${ord.id}_pending_accountant_release`]);
-    saveState(`📉 تم وضع عجز الطلبية (${ord.orderNumber}) للعميل ${ord.clientName} في المخزن بالسالب (-${stockCheck.totalDeficitSheets} قطعة لحين إضافتها) والموافقة على التجهيز وتحويلها للمحاسب`);
+    saveState(`📦 تم الموافقة على تجهيز الطلبية (${ord.orderNumber}) للعميل ${ord.clientName} مع ظهور الكمية كـ (مباع منه: ${fmtNum(ord.totalSheetsCount || 0, 0)}) في المخزن بدون خصم الرصيد الفعلي إلا بعد إذن خروج السيارة`);
   } else {
-    saveState(`📉 تم وضع كمية العجز للطلبية (${ord.orderNumber}) للعميل ${ord.clientName} في المخزن بالسالب (-${stockCheck.totalDeficitSheets} قطعة لحين إضافتها) — يمكنك الآن الموافقة على التجهيز`);
+    saveState(`📦 تم تثبيت حالة التجهيز للطلبية (${ord.orderNumber}) للعميل ${ord.clientName} مع ظهور الكمية كـ (مباع منه) في المخزن لحين إذن خروج السيارة`);
   }
 }
 
@@ -13071,7 +13224,8 @@ function openAccountantReleaseModal(orderId) {
   if (!ord) return;
   const clientObj = state.partners.find(p => p.id === ord.clientId || p.name === ord.clientName);
   const clientMetrics = clientObj ? computeClientMetrics(clientObj) : { netDebt: 0, palletsDelivered: 0, palletsReceived: 0, netPalletsAtClient: 0 };
-  const isDeficitOrder = Boolean(ord.placedInNegativeStock);
+  const stockCheckRel = checkOrderStockAvailability(ord);
+  const isDeficitOrder = Boolean(ord.placedInNegativeStock || !stockCheckRel.isReadyToApprove);
 
   const modalRoot = document.getElementById('modal-root');
   modalRoot.innerHTML = `
@@ -13081,7 +13235,7 @@ function openAccountantReleaseModal(orderId) {
           <div>
             <div class="card-title">💳 عمل حسابات العميل والموافقة على إذن الصرف (${ord.orderNumber})</div>
             <small style="color:var(--text-muted);">
-              العميل: <strong>${ord.clientName} (${ord.clientCode || 'CL'})</strong> | حالة المخزن: <strong style="color:${isDeficitOrder ? 'var(--danger)' : 'var(--success)'};">${isDeficitOrder ? '📉 عجز بالمخزن (موضوعة بالسالب لحين الإضافة بواسطة ' + (ord.placedInNegativeStockBy || ord.warehousePrepApprovedBy || 'الإدارة') + ')' : '✅ متوفرة بالمخزن وتم تجهيزها بواسطة ' + (ord.warehousePrepApprovedBy || 'المخزن')}</strong>
+              العميل: <strong>${ord.clientName} (${ord.clientCode || 'CL'})</strong> | حالة المخزن: <strong style="color:${isDeficitOrder ? 'var(--danger)' : 'var(--success)'};">${isDeficitOrder ? `⚠️ مباع منه (${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة — مطلوب إنتاج/إضافة ${fmtNum(stockCheckRel.totalDeficitSheets || ord.totalSheetsCount || 0, 0)} قطعة للمخزن قبل خروج السيارة)` : `✅ متوفرة بالرصيد الفعلي بالمخزن (مباع منه: ${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة — لم تُخصم بعد لحين إذن خروج السيارة)`}</strong>
             </small>
           </div>
           <button class="btn btn-sm btn-outline" onclick="closeModal()">✕</button>
@@ -13090,11 +13244,11 @@ function openAccountantReleaseModal(orderId) {
         ${isDeficitOrder ? `
           <div style="background:rgba(220,38,38,0.1);border:2px solid var(--danger);padding:10px 14px;border-radius:10px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
             <div style="font-size:0.84rem;font-weight:800;color:var(--danger);">
-              ⚠️ تنبيه هام: هذه الطلبية (${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة) <strong>عجز بالمخزن حالياً</strong> وتم تحويلها بوضعها بالسالب لحين إضافة الإنتاج!
+              ⚠️ تنبيه: هذه الطلبية (${fmtNum(ord.totalSheetsCount || 0, 0)} قطعة) مسجلة تحت الخلية كـ <strong>(مباع منه)</strong> ولم يتم خصمها بعد، ويحتاج المخزن لإنتاج/إضافة (${fmtNum(stockCheckRel.totalDeficitSheets || ord.totalSheetsCount || 0, 0)} قطعة) قبل عمل إذن خروج السيارة!
             </div>
             ${(isFullAdmin(currentUser) || canApproveWarehouseStage(currentUser)) ? `
               <button type="button" class="btn btn-sm btn-danger" style="font-weight:900;" onclick="revertOrderToWarehousePrep('${ord.id}')">
-                ↩️ إرجاعها لمرحلة التجهيز وإلغاء الاعتماد المؤقت
+                ↩️ إرجاعها لمرحلة التجهيز بالمخزن
               </button>
             ` : ''}
           </div>
@@ -13206,8 +13360,7 @@ function submitAccountantRelease(e, orderId) {
   };
   ord.updatedAt = now;
 
-  // Ensure stock is deducted from the Veneer Quantities Matrix if not already deducted at warehouse prep stage
-  ensureOrderStockDeducted(ord, currentUser.name, relDate);
+  // NOTE: Stock is NOT deducted at accountant release; it remains in the warehouse marked as "مباع منه" until submitVehicleDispatchVoucher (إذن خروج السيارة) is executed!
 
   // Record the official sales invoice in client's financial transactions
   const itemsSummary = (ord.items || []).map(i => `${i.sheetsCount} قطعة (${i.thicknessMm}مم ${i.direction === 'sada' ? 'سدا' : 'قص'} - ${i.gradeName} [${formatVeneerDimensions(i.lengthCm, i.widthCm, false)}])`).join(' + ');
@@ -13380,13 +13533,13 @@ function submitVehicleDispatchVoucher(e, orderId) {
     }
   }
 
-  // If stock was not yet deducted in earlier stage, deduct it now; otherwise update existing CAR movement details with vehicle & driver info
-  if (!ord.stockDeducted) {
+  // Deduct stock now upon issuing the Vehicle Dispatch Voucher (إذن خروج السيارة)
+  if (!ord.stockDeducted && !ord.skipWarehouseDeduction) {
     for (const it of (ord.items || [])) {
       const thkId = it.thicknessId || `th-${it.thicknessMm}-${it.direction || 'qas'}`;
       const len = Number(it.lengthCm || 250);
       const wid = Number(it.widthCm || 125);
-      deductSheetsFromCellPallets(thkId, it.gradeId, it.woodTypeId, Number(it.sheetsCount || 0), Number(it.unitPrice || 0), len, wid);
+      deductSheetsFromCellPallets(thkId, it.gradeId, it.woodTypeId || 'wt-general', Number(it.sheetsCount || 0), Number(it.unitPrice || 0), len, wid, true, `إذن خروج سيارة للطلبية (${ord.orderNumber}) — العميل: ${ord.clientName}`);
 
       state.warehouseMovements.unshift({
         id: uid('mov'),
@@ -20194,15 +20347,17 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
 
   let grandSheets = 0;
   let grandDeficitSheets = 0;
+  let grandReservedSoldSheets = 0;
   let grandM3 = 0;
   let grandM2 = 0;
   const colTotals = {};
-  grades.forEach(g => { colTotals[g.id] = { sheets: 0, deficitSheets: 0, m3: 0, m2: 0 }; });
+  grades.forEach(g => { colTotals[g.id] = { sheets: 0, deficitSheets: 0, reservedSoldSheets: 0, m3: 0, m2: 0 }; });
 
   const rowsHtml = thicknesses.map(t => {
     const isSada = t.direction === 'sada';
     let rowSheets = 0;
     let rowDeficitSheets = 0;
+    let rowReservedSoldSheets = 0;
     let rowM3 = 0;
     let rowM2 = 0;
 
@@ -20211,6 +20366,8 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
       const sheets = matching.reduce((s, p) => s + Number(p.sheetsCount || 0), 0);
       const availSheets = sheets > 0 ? sheets : 0;
       const deficitSheets = sheets < 0 ? Math.abs(sheets) : 0;
+      const resInfo = getReservedSoldInfoForCell(t, g.id);
+      const reservedSoldSheets = resInfo.reservedSoldSheets;
       const m3 = +(matching.reduce((s, p) => {
         if (Number(p.volumeM3) !== 0) return s + Number(p.volumeM3);
         return s + calculateVeneerMetrics(p.lengthCm || 250, p.widthCm || 125, t.mm, p.sheetsCount).totalVolumeM3;
@@ -20221,23 +20378,26 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
       }, 0)).toFixed(2);
       rowSheets += availSheets;
       rowDeficitSheets += deficitSheets;
+      rowReservedSoldSheets += reservedSoldSheets;
       if (sheets > 0) {
         rowM3 += m3;
         rowM2 += m2;
       }
       colTotals[g.id].sheets += availSheets;
       colTotals[g.id].deficitSheets += deficitSheets;
+      colTotals[g.id].reservedSoldSheets += reservedSoldSheets;
       if (sheets > 0) {
         colTotals[g.id].m3 += m3;
         colTotals[g.id].m2 += m2;
       }
       return `
-        <td style="background:${sheets > 0 ? '#f0fdf4' : sheets < 0 ? '#fef2f2' : '#ffffff'};padding:6px 4px;">
+        <td style="background:${sheets > 0 ? '#f0fdf4' : sheets < 0 ? '#fef2f2' : reservedSoldSheets > 0 ? '#fffbeb' : '#ffffff'};padding:6px 4px;">
           ${sheets < 0 ? `
             <div style="font-weight:900;font-size:14.5px;color:#dc2626;">${fmtNum(deficitSheets, 0)} عجز</div>
           ` : `
             <div style="font-weight:900;font-size:15px;color:${sheets > 0 ? '#0f172a' : '#94a3b8'};direction:ltr;">${fmtNum(sheets, 0)}</div>
           `}
+          ${reservedSoldSheets > 0 ? `<div style="font-size:11px;font-weight:900;color:${reservedSoldSheets > availSheets ? '#dc2626' : '#b45309'};margin-top:2px;">مباع منه: ${fmtNum(reservedSoldSheets, 0)}</div>` : ''}
           ${showM3 ? `<div style="font-size:10.5px;color:${sheets < 0 ? '#dc2626' : '#475569'};direction:ltr;">${fmtNum(Math.abs(m3), 3)} م³</div>` : ''}
           ${showM2 ? `<div style="font-size:10px;color:${sheets < 0 ? '#dc2626' : '#64748b'};direction:ltr;">${fmtNum(Math.abs(m2), 1)} م²</div>` : ''}
         </td>
@@ -20246,6 +20406,7 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
 
     grandSheets += rowSheets;
     grandDeficitSheets += rowDeficitSheets;
+    grandReservedSoldSheets += rowReservedSoldSheets;
     grandM3 += rowM3;
     grandM2 += rowM2;
 
@@ -20257,6 +20418,7 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
         ${cellsHtml}
         <td style="background:#f1f5f9;font-weight:900;padding:6px 4px;">
           <div style="font-size:15px;color:#0f766e;direction:ltr;">${fmtNum(rowSheets, 0)}</div>
+          ${rowReservedSoldSheets > 0 ? `<div style="font-size:11px;color:#b45309;font-weight:900;margin-top:2px;">مباع منه: ${fmtNum(rowReservedSoldSheets, 0)}</div>` : ''}
           ${rowDeficitSheets > 0 ? `<div style="font-size:12.5px;color:#dc2626;font-weight:900;margin-top:2px;">${fmtNum(rowDeficitSheets, 0)} عجز</div>` : ''}
           ${showM3 ? `<div style="font-size:10.5px;color:#0f766e;">${fmtNum(rowM3, 3)} م³</div>` : ''}
           ${showM2 ? `<div style="font-size:10px;color:#475569;">${fmtNum(rowM2, 1)} م²</div>` : ''}
@@ -20283,6 +20445,7 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
           ${grades.map(g => `
             <td style="padding:7px 4px;">
               <div style="font-size:15px;color:#0f172a;direction:ltr;">${fmtNum(colTotals[g.id].sheets, 0)}</div>
+              ${colTotals[g.id].reservedSoldSheets > 0 ? `<div style="font-size:11px;color:#b45309;font-weight:900;margin-top:2px;">مباع منه: ${fmtNum(colTotals[g.id].reservedSoldSheets, 0)}</div>` : ''}
               ${colTotals[g.id].deficitSheets > 0 ? `<div style="font-size:12.5px;color:#dc2626;font-weight:900;margin-top:2px;">${fmtNum(colTotals[g.id].deficitSheets, 0)} عجز</div>` : ''}
               ${showM3 ? `<div style="font-size:10.5px;color:#0f766e;">${fmtNum(colTotals[g.id].m3, 3)} م³</div>` : ''}
               ${showM2 ? `<div style="font-size:10px;color:#475569;">${fmtNum(colTotals[g.id].m2, 1)} م²</div>` : ''}
@@ -20290,6 +20453,7 @@ function buildVeneerQuantitiesMatrixPrintHtml() {
           `).join('')}
           <td style="background:#dcfce7;padding:7px 4px;">
             <div style="font-size:16px;color:#15803d;direction:ltr;">${fmtNum(grandSheets, 0)}</div>
+            ${grandReservedSoldSheets > 0 ? `<div style="font-size:11.5px;color:#b45309;font-weight:900;margin-top:2px;">مباع منه: ${fmtNum(grandReservedSoldSheets, 0)}</div>` : ''}
             ${grandDeficitSheets > 0 ? `<div style="font-size:13px;color:#dc2626;font-weight:900;margin-top:2px;">${fmtNum(grandDeficitSheets, 0)} عجز</div>` : ''}
             ${showM3 ? `<div style="font-size:11px;color:#15803d;">${fmtNum(grandM3, 3)} م³</div>` : ''}
             ${showM2 ? `<div style="font-size:10px;color:#334155;">${fmtNum(grandM2, 1)} م²</div>` : ''}
@@ -21068,8 +21232,8 @@ function deleteOrderWithStockRestore(orderId, skipConfirm = false) {
   const isCompletedOrDeducted = !ord.skipWarehouseDeduction && Boolean(
     ord.stockDeducted ||
     matchingExitMovs.length > 0 ||
-    ord.stage === 'pending_accountant_release' ||
-    ord.stage === 'ready_for_car_dispatch' ||
+    ord.carDispatchVoucher ||
+    ord.isOldExecutedOrder ||
     ord.stage === 'completed' ||
     ord.status === 'completed'
   );
@@ -22680,7 +22844,7 @@ function submitClientOrderPiecePricesBatch(e, clientId) {
         ord.stockDeducted = false;
         ord.skipWarehouseDeduction = true;
         changesLog.push(`تحويل الطلبية (${ord.orderNumber}) إلى (بدون خروج من المخازن) وإرجاع كمياتها لرصيد المخزن`);
-      } else if (!newSkipWh && !ord.stockDeducted) {
+      } else if (!newSkipWh && !ord.stockDeducted && Boolean(ord.carDispatchVoucher || ord.isOldExecutedOrder || ord.stage === 'completed' || ord.status === 'completed')) {
         ord.skipWarehouseDeduction = false;
         ensureOrderStockDeducted(ord, currentUser.name, ord.date || todayStr(), true);
         changesLog.push(`تفعيل خروج الطلبية (${ord.orderNumber}) من المخازن وخصم كمياتها من المخزن`);
